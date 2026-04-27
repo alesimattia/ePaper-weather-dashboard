@@ -1,5 +1,5 @@
 {
-    "sketch": "GxEPD2_1330c_GDEM133Z91.ino",
+    "sketch": "ePaper-weather-dashboard.ino",
     "board": "esp32:esp32:esp32",
     "port": "/dev/tty.usbmodem5ABA0264671",
     "programmer": "esptool",

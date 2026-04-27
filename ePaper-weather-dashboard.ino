@@ -39,7 +39,7 @@
 #define WIFI_ACTIVE_HOUR_END       23  // 23:59
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960.h" //Custom driver
+#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h" //Custom driver
 
 // Fallback offline: l'unica immagine PROGMEM rimasta, mostrata finche' il
 // WiFi non e' su e il server cinema non ha ancora risposto. Generata dal

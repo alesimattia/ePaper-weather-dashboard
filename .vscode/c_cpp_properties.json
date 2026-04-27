@@ -12,7 +12,8 @@
             ],
             "intelliSenseMode": "gcc-x64",
             "includePath": [
-                "/Users/alesimattia/Documents/GxEPD2_1330c_GDEM133Z91",
+                "/Users/alesimattia/Documents/ePaper-weather-dashboard",
+                "/Users/alesimattia/Documents/ePaper-weather-dashboard/GxEPD2_097c_SOLUM_672x960",
                 "/Users/alesimattia/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.8/qio_qspi/include",
                 "/Users/alesimattia/Library/Arduino15/packages/esp32/tools/esp32-libs/3.3.8/include/**",
                 "/Users/alesimattia/Library/Arduino15/packages/esp32/hardware/esp32/3.3.8/cores/esp32",

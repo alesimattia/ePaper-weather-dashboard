@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960.h"
+#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h"
 
 #include <Fonts/FreeSans9pt7b.h>      // condizione IAQ + valore, terza riga indoor
 #include <Fonts/FreeSans12pt7b.h>

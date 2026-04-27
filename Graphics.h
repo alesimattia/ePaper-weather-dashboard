@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960.h"
+#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h"
 
 /**
  * Utility di disegno condivise fra i moduli (Weather, Calendar).
