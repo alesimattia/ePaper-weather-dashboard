@@ -1,0 +1,8 @@
+{
+    "arduino.useArduinoCli": true,
+    "arduino.path": "/opt/homebrew/bin",
+    "arduino.sketchbookPath": "/Users/alesimattia/Documents/Arduino",
+    "arduino.logLevel": "info",
+    "arduino.disableIntelliSenseAutoGen": true,
+    "C_Cpp.intelliSenseEngine": "Tag Parser"
+}
