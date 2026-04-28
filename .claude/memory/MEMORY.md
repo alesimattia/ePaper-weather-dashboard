@@ -1,0 +1,9 @@
+- [ESP32 cinema consumer](esp32_cinema_consumer.md) — fetchCinemaImage nel .ino: trigger boot+CINEMA_DAILY_FETCH_HOUR (default 07:00), PSRAM, fallback PROGMEM
+- [Cautela su firmware Arduino](arduino_root_caution.md) — i .h/.ino in c:\epd\ root sono firmware in produzione, modifiche solo su richiesta
+- [Webapp e' git submodule](webapp_submodule.md) — c:\epd\webapp punta a github.com/alesimattia/cinema-programmation-feed; memorie webapp in webapp\.claude\memory\
+- [Vincoli numerici layout 960x672](layout_invariants.md) — somme che validano costanti pixel + DISPLAY_REFRESH_MIN ↔ BSEC ↔ HOUR_END
+- [Aritmetica blob cinema](cinema_blob_math.md) — stride 78, plane 34320, total 102960 + dipendenza fetch ↔ finestra WiFi
+- [Catena di timeout fetch](timing_chain.md) — WiFi 15s + HTTP 45s vs OTA 180s vs render.com sleep 15min
+- [Design arduino binary header-less](arduino_binary_format.md) — il body di /cinema/arduino e' raw packed, zero metadati
+- [Ordering flag prima del fetch](fetch_flag_ordering.md) — vincolo retry-storm durante OTA loop=10ms
+- [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 e' dereferenza, descriptor unico per Flash/RAM/PSRAM
