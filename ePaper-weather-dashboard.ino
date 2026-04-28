@@ -106,8 +106,7 @@ void initDisplay()
 // TODO: sostituire con l'URL reale del servizio deployato su render.com.
 // L'URL sta nel codice per scelta (vedi richiesta utente): niente Env.h.
 static constexpr const char* CINEMA_URL =
-  "https://cinema-epd.onrender.com/cinema/arduino"
-  "?width=620&height=440&colors=bwry&dither=floyd";
+  "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd";
 
 static constexpr int16_t  CINEMA_W        = 620;
 static constexpr int16_t  CINEMA_H        = 440;

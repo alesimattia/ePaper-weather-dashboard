@@ -444,7 +444,9 @@ namespace Calendar
       int code = http.POST(body);
       if (code != 200)
       {
-        Serial.printf("[OAuth] token refresh failed: http=%d\n", code);
+        String resp = http.getString();
+        Serial.printf("[OAuth] token refresh failed: http=%d body=%s\n",
+                      code, resp.c_str());
         http.end();
         return false;
       }
