@@ -677,7 +677,8 @@ I `#define` in testa allo sketch sono:
   - `OTA_WINDOW_MIN` (3) → durata finestra OTA al boot (AP WiFi per upload firmware).
   Il fetch dell'immagine cinema (vedi sezione [Background cinema](#background-cinema))
   avviene invece su due trigger fissi: **al primo boot** e **ogni giorno
-  alle 23:00 local** (ultima ora attiva prima del blackout notturno).
+  alle `CINEMA_DAILY_FETCH_HOUR` local** (default `7`, prima connessione
+  utile della mattina all'apertura della finestra WiFi).
   Il sampling BME680 (BSEC ULP, 5 min) NON è configurabile: è un vincolo
   del profilo BSEC2 fissato in `Indoor.h`.
 - `WIFI_ACTIVE_HOUR_START` / `WIFI_ACTIVE_HOUR_END` → fascia oraria in cui
@@ -729,24 +730,25 @@ collage locandine + orari scaricato via HTTP dalla webapp
    vengono aggiornati subito dopo il check WiFi (anche su fallimento),
    per evitare retry in loop.
 
-### Trigger giornaliero (refresh 23:00 local)
+### Trigger giornaliero (refresh CINEMA_DAILY_FETCH_HOUR local, default 07:00)
 
 Oltre al primo boot, il fetch si ri-attiva **una volta al giorno** al
-primo ciclo WiFi dell'hour 23 local (Europe/Rome, `WIFI_ACTIVE_HOUR_END`):
-ultima finestra attiva prima del blackout notturno. Al trigger i buffer
-vecchi vengono liberati, `g_cinema_desc` torna temporaneamente al
-fallback PROGMEM durante il download, e se il fetch va a buon fine
-vengono swappati i nuovi buffer con la locandina del prossimo martedi'.
+primo ciclo WiFi dell'hour `CINEMA_DAILY_FETCH_HOUR` local (Europe/Rome,
+default `7`, allineato a `WIFI_ACTIVE_HOUR_START`): prima connessione
+utile della mattina. Al trigger i buffer vecchi vengono liberati,
+`g_cinema_desc` torna temporaneamente al fallback PROGMEM durante il
+download, e se il fetch va a buon fine vengono swappati i nuovi buffer
+con la locandina del prossimo martedi'.
 
 Helper che governa il gate: `shouldFetchCinema()` in
-[GxEPD2_1330c_GDEM133Z91.ino](GxEPD2_1330c_GDEM133Z91.ino). Condizioni:
-primo boot (sempre) OR hour==23 AND `t.tm_yday != g_cinema_last_fetch_day`.
+[ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
+primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
 
 **Cold-start mitigation via GitHub Actions.** Render.com free tier dorme
-dopo 15 min di inattivita'; al fetch delle 23:00 il server sarebbe
+dopo 15 min di inattivita'; al fetch delle 07:00 il server sarebbe
 freddo. Il workflow
 [`webapp/.github/workflows/keep-warm.yml`](webapp/.github/workflows/keep-warm.yml)
-pinga `/health` a 22:55 local (due cron UTC per coprire DST CET/CEST),
+pinga `/health` a 06:55 local (due cron UTC per coprire DST CET/CEST),
 mantenendo render warm nei 5 min prima del fetch ESP32. Setup zero:
 basta pushare il workflow insieme alla webapp su GitHub. Render free
 tier non supporta cron nativi (sono paid-only); GitHub Actions e'
@@ -803,7 +805,8 @@ limiti pubblici documentati:
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 1 000 000 richieste/giorno per progetto |
 
 Il fetch cinema (endpoint render.com) avviene **al boot + una volta al
-giorno alle 23:00 local** e non ha rate limit (è il tuo servizio). Tutti
+giorno alle `CINEMA_DAILY_FETCH_HOUR` local** (default 07:00) e non ha
+rate limit (è il tuo servizio). Tutti
 e 3 i fetch calendario/meteo sono gated dentro la finestra oraria
 `WIFI_ACTIVE_HOUR_START..END`
 (default 07:00–23:59): fuori da questa fascia la radio resta spenta e

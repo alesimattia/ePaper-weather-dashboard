@@ -38,6 +38,12 @@
 #define WIFI_ACTIVE_HOUR_START     7   // 7:00
 #define WIFI_ACTIVE_HOUR_END       23  // 23:59
 
+/** Ora locale del fetch giornaliero immagine cinema. Pensata per cadere
+ *  alla prima connessione utile della mattina, ma intenzionalmente separata
+ *  da WIFI_ACTIVE_HOUR_START cosi' fetch cinema e finestra WiFi possono
+ *  essere spostati indipendentemente. */
+#define CINEMA_DAILY_FETCH_HOUR    7   // 7:00
+
 #include <GxEPD2_3C.h>
 #include "GxEPD2_097c_SOLUM_672x960.h" //Custom driver
 
@@ -129,8 +135,8 @@ static const GxEPDImage::Descriptor* g_cinema_desc = &img_apple_bwry_desc;
 //   - g_cinema_attempted: true dopo il primo tentativo (successo o errore).
 //     Gate il trigger "primo boot".
 //   - g_cinema_last_fetch_day: day-of-year (tm_yday, 0..365) dell'ultimo
-//     tentativo registrato con NTP attivo. Gate il trigger "daily 23:00":
-//     nessun fetch due volte nello stesso giorno.
+//     tentativo registrato con NTP attivo. Gate il trigger "daily
+//     CINEMA_DAILY_FETCH_HOUR": nessun fetch due volte nello stesso giorno.
 //
 // Entrambi i flag vengono settati SUBITO dopo il check WiFi dentro
 // fetchCinemaImage(), PRIMA di qualunque operazione che possa fallire.
@@ -140,8 +146,8 @@ static const GxEPDImage::Descriptor* g_cinema_desc = &img_apple_bwry_desc;
 //     successo, un fallimento del fetch causerebbe retry ogni 10ms
 //     hammerando render.com.
 //   - se il fetch fallisce si mostra il fallback PROGMEM fino al prossimo
-//     trigger valido (daily alle 23:00 del giorno successivo, oppure
-//     reboot).
+//     trigger valido (daily al prossimo CINEMA_DAILY_FETCH_HOUR local,
+//     oppure reboot).
 //   - se WiFi non si connette mai, i flag restano invariati e
 //     fetchCinemaImage() early-return sul check WiFi: appena la radio
 //     sale, il tentativo parte regolarmente.
@@ -196,12 +202,12 @@ static void freeCinemaBuffers()
  *   1. PRIMO BOOT: se non abbiamo mai tentato (g_cinema_attempted = false)
  *      in questa sessione, fetch immediato al primo giro con WiFi up.
  *   2. DAILY REFRESH: una volta al giorno, alla prima finestra WiFi
- *      dell'hour 23 local (ultima ora attiva prima del blackout notturno).
- *      La locandina del "prossimo martedi'" puo' cambiare, vogliamo la
- *      versione piu' fresca prima del blackout.
+ *      dell'hour CINEMA_DAILY_FETCH_HOUR local (apertura della finestra
+ *      WiFi mattutina), cosi' la locandina e' fresca dal primo accesso
+ *      del giorno.
  *
  * Richiede NTP sincronizzato per il trigger daily: senza data/ora corrette
- * non possiamo sapere se siamo a hour 23 e se abbiamo gia' fetchato oggi.
+ * non possiamo sapere se siamo nell'ora target e se abbiamo gia' fetchato oggi.
  */
 static bool shouldFetchCinema()
 {
@@ -210,14 +216,17 @@ static bool shouldFetchCinema()
   if (now < 100000L) return false; // NTP non ancora pronto
   struct tm t;
   localtime_r(&now, &t);
-  if (t.tm_hour != 23) return false;
+  // Trigger daily spostato dalla sera (23:00) al mattino (CINEMA_DAILY_FETCH_HOUR):
+  // pre-warm render.com allineato alla prima connessione utile della giornata.
+  if (t.tm_hour != CINEMA_DAILY_FETCH_HOUR) return false;
   if (t.tm_yday == g_cinema_last_fetch_day) return false; // gia' fatto oggi
   return true;
 }
 
 /**
  * Scarica l'immagine cinema dal server render.com. Due trigger (vedi
- * shouldFetchCinema): primo boot + daily refresh alle 23:00 local.
+ * shouldFetchCinema): primo boot + daily refresh all'ora
+ * CINEMA_DAILY_FETCH_HOUR local.
  * Chiamata DOPO il fetch meteo e PRIMA dei fetch calendari.
  *
  * Sequenza:
@@ -241,7 +250,7 @@ static bool shouldFetchCinema()
  *
  * In caso di qualunque errore (OOM, HTTP != 200, size mismatch, read short)
  * libera i buffer e mantiene il fallback PROGMEM fino al prossimo trigger
- * valido (daily alle 23:00 del giorno successivo, oppure reboot).
+ * valido (daily al prossimo CINEMA_DAILY_FETCH_HOUR local, oppure reboot).
  */
 static void fetchCinemaImage()
 {
