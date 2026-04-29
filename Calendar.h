@@ -39,8 +39,6 @@ extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 
  * Applicata da Calendar::initTimezone() via setenv("TZ", ...) + tzset().
  * Dopo l'init, tutte le chiamate a localtime_r() nel progetto ritornano
  * componenti locali gia' corretti per il DST in corso.
- *
- * @since 21/04/26 Mattia Alesi
  */
 #define CAL_POSIX_TZ            "CET-1CEST,M3.5.0,M10.5.0/3"
 
@@ -49,8 +47,6 @@ extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 
  * endpoint. "common" consente sia account personali Microsoft sia
  * account organizzativi; altrimenti si puo' mettere il GUID del
  * tenant specifico per limitare l'accesso.
- *
- * @since 21/04/26 Mattia Alesi
  */
 #define CAL_MSGRAPH_TENANT_ID   "common"
 
@@ -95,18 +91,22 @@ namespace Calendar
    */
   static constexpr uint8_t MAX_EVENTS_DISPLAYED = 5;
 
+  /**
+   * Soglia di tentativi consecutivi falliti per i fetch calendario
+   * (Outlook/Google) oltre la quale si interrompe il retry immediato e si
+   * aspetta INTERVAL_FETCH_MS come un ciclo normale. Evita hammering degli
+   * endpoint OAuth in caso di credenziali errate o server irraggiungibile,
+   * sopratutto durante la finestra OTA (loop ogni ~10ms). 
+   * Dichiarato in .ino; Fallback here. 
+   */
+  #ifndef MAX_CALENDAR_ATTEMPTS
+  #define MAX_CALENDAR_ATTEMPTS 2
+  #endif
+
   namespace Outlook
   {
     /** Numero di eventi cacheati da questa sorgente. */
     static constexpr uint8_t MAX_EVENTS = 5;
-
-    /**
-     * Soglia di tentativi consecutivi falliti oltre la quale si interrompe
-     * il retry immediato e si aspetta INTERVAL_FETCH_MS come un ciclo normale.
-     * Evita hammering dell'endpoint Graph in caso di credenziali errate o
-     * server irraggiungibile, specie durante la finestra OTA (loop ogni ~10ms).
-     */
-    static constexpr uint8_t MAX_FAILED_ATTEMPTS = 2;
 
     /**
      * Intervallo minimo fra due fetch consecutivi (ms). Deriva da
@@ -125,13 +125,9 @@ namespace Calendar
     /** Numero di eventi cacheati da questa sorgente. */
     static constexpr uint8_t MAX_EVENTS = 5;
 
-    /** Vedi Outlook::MAX_FAILED_ATTEMPTS. */
-    static constexpr uint8_t MAX_FAILED_ATTEMPTS = 2;
-
     /**
-     * Intervallo minimo fra due fetch consecutivi (ms). Deriva da
-     * CAL_GOOGLE_FETCH_MIN dichiarato nello sketch .ino; il fallback
-     * rende l'header autonomamente compilabile.
+     * Intervallo minimo fra due fetch consecutivi (ms)
+     * Dichiarato in .ino; Fallback here. 
      */
     #ifndef CAL_GOOGLE_FETCH_MIN
     #define CAL_GOOGLE_FETCH_MIN 20
@@ -149,30 +145,22 @@ namespace Calendar
     // -----------------------------------------------------------------------
     // Layout del riquadro mese (screen 960x672, sidebar x=640..960 w=320).
     // -----------------------------------------------------------------------
-    // modificato 21/04/26: 650 -> 630 e 300 -> 320 per sfruttare la sidebar
-    // allargata (area immagine 640x480 -> 620x460). Bordo destro invariato
-    // (x=950). CAL_W=320 rende gridW=308 divisibile esattamente per 7 (44
-    // px/cella) -> centratura orizzontale celle risolta.
-    inline constexpr int16_t CAL_X   = 630;   // era 650
+    // (area immagine 620x460). 
+    // CAL_W=320 rende gridW=308 divisibile esattamente per 7 
+    // (44  px/cella) -> centratura orizzontale celle risolta.
+    inline constexpr int16_t CAL_X   = 630;
     inline constexpr int16_t CAL_Y   = 10;
-    inline constexpr int16_t CAL_W   = 320;   // era 300
+    inline constexpr int16_t CAL_W   = 320;
     inline constexpr int16_t CAL_H   = 200;
-    // modificato 22/04/26: 8 -> 14 per bordi piu' morbidi, coerenti con
-    // il raggio usato nel banner meteo.
     inline constexpr int16_t CAL_R   = 14;   // raggio round-rect cornice mese
     inline constexpr int16_t CELL_R  = 4;    // raggio round-rect cella oggi
     inline constexpr int16_t CAL_PAD = 6;
-    // modificato 22/04/26: 34 -> 20. Il titolo mese ora e' disegnato in
-    // stile fieldset sul bordo superiore (non piu' dentro) quindi serve
-    // solo il margine per il cap-height del 18pt che sconfina nel
+    // Titolo mese ora disegnato in stile fieldset sul bordo superiore (non piu' dentro) 
+    // quindi serve solo il margine per il cap-height del 18pt che sconfina nel
     // riquadro dalla linea del bordo (~10 px sopra, ~10 sotto).
     inline constexpr int16_t TITLE_H = 20;
-    // modificato 21/04/26: 22 -> 26 per accomodare header giorni in
-    // FreeSans12pt7b.
-    inline constexpr int16_t HDR_H   = 26;
-    // nuovo 21/04/26: margine verticale fra la linea orizzontale sotto
-    // L M M G V S e la prima riga di celle giorno (prima era a filo).
-    inline constexpr int16_t GRID_TOP_PAD = 3;
+    inline constexpr int16_t HDR_H   = 26; // per accomodare header giorni in FreeSans12pt7b.
+    inline constexpr int16_t GRID_TOP_PAD = 3; //margine verticale fra la linea orizzontale sotto L M M G V S e la prima riga di celle giorno
 
     // -----------------------------------------------------------------------
     // Layout area eventi (sotto al mese, fino al top del banner meteo y=480).
@@ -182,13 +170,10 @@ namespace Calendar
     inline constexpr int16_t EVT_W       = CAL_W;                // 300
     // modificato 21/04/26: 250 -> 230 per stare in sidebar alta 460 (era 480).
     // Con CAL a 10..210 + 10 px gap -> events 220..450 + 10 px gap -> banner 460.
-    inline constexpr int16_t EVT_H       = 230;                  // era 250
+    inline constexpr int16_t EVT_H       = 230;
     inline constexpr int16_t EVT_ROW_H   = EVT_H / Calendar::MAX_EVENTS_DISPLAYED;  // 46 (era 50)
     inline constexpr int16_t EVT_SEP_PAD  = 15;   // inset orizzontale separatori
     inline constexpr int16_t EVT_PAD      = 8;    // padding interno (destra)
-    /** Padding sinistro del testo titolo evento.
-     *  Modifica 22/04/26: 8 -> 3 per avvicinare il titolo al bordo
-     *  sinistro del riquadro eventi (date/ora a destra restano a EVT_PAD). */
     inline constexpr int16_t EVT_PAD_LEFT = 3;
 
     // -----------------------------------------------------------------------
@@ -226,7 +211,7 @@ namespace Calendar
     inline uint32_t  outlookTokenExpiresAtMs = 0;
     inline uint32_t  lastOutlookFetchMs      = 0;
     inline bool      outlookFirstFetch       = true;
-    // Tentativi consecutivi falliti: al raggiungimento di MAX_FAILED_ATTEMPTS
+    // Tentativi consecutivi falliti: al raggiungimento di MAX_CALENDAR_ATTEMPTS
     // il counter viene azzerato e lastOutlookFetchMs posticipato di INTERVAL_FETCH_MS.
     inline uint8_t   outlookFailedAttempts   = 0;
 
@@ -241,10 +226,6 @@ namespace Calendar
     // Helpers generici
     // =======================================================================
 
-    /**
-     * Ritorna true se l'anno e' bisestile (regola gregoriana).
-     * @since 20/04/26 Mattia Alesi
-     */
     inline bool isLeapY(int year)
     {
       return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
@@ -252,7 +233,6 @@ namespace Calendar
 
     /**
      * Converte componenti UTC (Y,M,D,h,m,s) in epoch UNIX.
-     * @since 21/04/26 Mattia Alesi
      */
     inline time_t ymdhmsToUtcEpoch(int Y, int M, int D, int h, int m, int s)
     {
@@ -266,7 +246,7 @@ namespace Calendar
     }
 
     /**
-     * Parsifica una stringa ISO 8601 con offset opzionale (Z, +HH:MM,
+     * Parse di una stringa ISO 8601 con offset opzionale (Z, +HH:MM,
      * -HH:MM) e la converte in epoch UTC. Se non c'e' offset esplicito
      * interpreta come UTC (comportamento atteso per Outlook con
      * `Prefer: outlook.timezone=UTC`).
@@ -276,8 +256,6 @@ namespace Calendar
      *   "2026-04-21T14:00:00Z"
      *   "2026-04-21T14:00:00+02:00"
      *   "2026-04-21T14:00:00.123Z"
-     *
-     * @since 21/04/26 Mattia Alesi
      */
     inline bool parseIsoDateTimeToUtc(const char* str, time_t& outUtc)
     {
@@ -307,8 +285,7 @@ namespace Calendar
     }
 
     /**
-     * Parsifica "YYYY-MM-DD" (evento all-day) come mezzanotte UTC del giorno.
-     * @since 21/04/26 Mattia Alesi
+     * Parse "YYYY-MM-DD" (evento all-day) come mezzanotte UTC del giorno.
      */
     inline bool parseIsoDateToUtc(const char* str, time_t& outUtc)
     {
@@ -322,7 +299,6 @@ namespace Calendar
     /**
      * Disegna una stringa centrata orizzontalmente sulla colonna `centerX`
      * con la baseline alla y specificata, usando il font gia' impostato.
-     * @since 20/04/26 Mattia Alesi
      */
     inline void drawCentered(const char* txt, int16_t centerX, int16_t baselineY, uint16_t color)
     {
@@ -336,7 +312,6 @@ namespace Calendar
 
     /**
      * Disegna una stringa allineata a destra.
-     * @since 21/04/26 Mattia Alesi
      */
     inline void drawRightAligned(const char* txt, int16_t rightX, int16_t baselineY, uint16_t color)
     {
@@ -350,8 +325,8 @@ namespace Calendar
 
     /**
      * Tronca la stringa in `buf` in-place finche' la sua resa non rientra
-     * in `maxW` pixel. Se tronca inserisce ".." come indicatore finale.
-     * @since 21/04/26 Mattia Alesi
+     * in `maxW` pixel. 
+     * Se tronca inserisce ".." come indicatore finale.
      */
     inline void truncateToWidth(char* buf, int16_t maxW)
     {
@@ -373,7 +348,6 @@ namespace Calendar
     /**
      * Ricava un epoch UTC "adesso" affidabile: RTC di sistema se sincronizzato,
      * altrimenti 0 come sentinella.
-     * @since 21/04/26 Mattia Alesi
      */
     inline time_t nowUtcEpoch()
     {
@@ -975,7 +949,7 @@ namespace Calendar
      * Le credenziali arrivano da Env.h (MSGRAPH_* define).
      *
      * Su fallimento incrementa un counter di tentativi consecutivi: dopo
-     * MAX_FAILED_ATTEMPTS (2) "consuma" lo slot fissando lastOutlookFetchMs
+     * MAX_CALENDAR_ATTEMPTS (2) "consuma" lo slot fissando lastOutlookFetchMs
      * al now e disattivando outlookFirstFetch, cosi' pendingFetch() tornera'
      * true solo dopo INTERVAL_FETCH_MS (evita hammering durante OTA).
      *
@@ -992,8 +966,13 @@ namespace Calendar
         outlookFailedAttempts = 0;
         return true;
       }
-      if (++outlookFailedAttempts >= MAX_FAILED_ATTEMPTS)
+      ++outlookFailedAttempts;
+      Serial.printf("[Outlook] runFetch fallito (tentativo %u/%u)\n",
+                    (unsigned)outlookFailedAttempts, (unsigned)MAX_CALENDAR_ATTEMPTS);
+      if (outlookFailedAttempts >= MAX_CALENDAR_ATTEMPTS)
       {
+        Serial.printf("[Outlook] soglia tentativi raggiunta, prossimo retry tra %u min\n",
+                      (unsigned)(INTERVAL_FETCH_MS / 60000UL));
         lastOutlookFetchMs    = millis();
         outlookFirstFetch     = false;
         outlookFailedAttempts = 0;
@@ -1037,7 +1016,7 @@ namespace Calendar
 
     /**
      * Refresh del token + GET degli eventi. Presuppone STA connessa.
-     * Su fallimento: stesso meccanismo di Outlook::runFetch() (MAX_FAILED_ATTEMPTS
+     * Su fallimento: stesso meccanismo di Outlook::runFetch() (MAX_CALENDAR_ATTEMPTS
      * tentativi consecutivi, poi attesa di INTERVAL_FETCH_MS).
      * @return true se almeno un evento valido e' entrato in cache.
      */
@@ -1052,8 +1031,13 @@ namespace Calendar
         googleFailedAttempts = 0;
         return true;
       }
-      if (++googleFailedAttempts >= MAX_FAILED_ATTEMPTS)
+      ++googleFailedAttempts;
+      Serial.printf("[Google] runFetch fallito (tentativo %u/%u)\n",
+                    (unsigned)googleFailedAttempts, (unsigned)MAX_CALENDAR_ATTEMPTS);
+      if (googleFailedAttempts >= MAX_CALENDAR_ATTEMPTS)
       {
+        Serial.printf("[Google] soglia tentativi raggiunta, prossimo retry tra %u min\n",
+                      (unsigned)(INTERVAL_FETCH_MS / 60000UL));
         lastGoogleFetchMs    = millis();
         googleFirstFetch     = false;
         googleFailedAttempts = 0;

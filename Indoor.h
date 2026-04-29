@@ -164,7 +164,6 @@ namespace Indoor
      * Ripristina lo stato BSEC da NVS se presente.
      * Chiamata da begin() prima di updateSubscription() per permettere a
      * BSEC di inizializzarsi gia' calibrato.
-     * @since 21/04/26 Mattia Alesi
      */
     inline void restoreBsecState()
     {
@@ -198,9 +197,7 @@ namespace Indoor
    * Inizializza Wire, avvia BSEC2 sul BME680, ripristina l'eventuale
    * stato salvato in NVS e sottoscrive gli output in modalita' ULP
    * (un sample ogni 300 s, coerente col light sleep del ciclo main).
-   * Se il sensore non risponde si degrada silenziosamente: il resto
-   * del firmware (meteo/calendario/display) continua a funzionare.
-   * @since 21/04/26 Mattia Alesi
+   * Se il sensore non risponde il resto del firmware (meteo/calendario/display) continua a funzionare.
    */
   inline void begin()
   {
@@ -212,8 +209,7 @@ namespace Indoor
 
     Wire.begin(BME680_SDA_PIN, BME680_SCL_PIN);
 
-    if (!bsec.begin(BME680_I2C_ADDR, Wire))
-    {
+    if (!bsec.begin(BME680_I2C_ADDR, Wire)) {
       Serial.printf("[BME680] init failed (bsec=%d, sensor=%d)\n",
                     bsec.status, bsec.sensor.status);
       return;
@@ -232,8 +228,7 @@ namespace Indoor
     };
     const uint8_t sensorCount = sizeof(sensorList) / sizeof(sensorList[0]);
 
-    if (!bsec.updateSubscription(sensorList, sensorCount, BSEC_SAMPLE_RATE_ULP))
-    {
+    if (!bsec.updateSubscription(sensorList, sensorCount, BSEC_SAMPLE_RATE_ULP)) {
       Serial.printf("[BME680] updateSubscription failed: %d\n", bsec.status);
       return;
     }
@@ -252,7 +247,6 @@ namespace Indoor
    * @return true se un nuovo campione e' stato prodotto in questa
    *         chiamata: il chiamante usa il valore per innescare un
    *         refresh del display via Weather::markDirty().
-   * @since 21/04/26 Mattia Alesi
    */
   inline bool refresh()
   {

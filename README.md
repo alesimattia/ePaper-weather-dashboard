@@ -12,7 +12,7 @@ bianco, nero, rosso, giallo) che aggiunge:
   B/N (formato [image2cpp](https://javl.github.io/image2cpp/));
 - **3 API siblings uniformi** `writeImageBlack` / `writeImageRed` /
   `writeImageYellow` per scrittura single-channel, usate nel flusso
-  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](#perché-il-yellow-è-out-of-band-nel-flusso-paged));
+  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_097c_SOLUM_672x960/README.md#3-perché-il-yellow-è-out-of-band-nel-flusso-paged));
 - un **sistema di descrittori universale** (`GxEPDImage::Descriptor`) che
   porta con sé formato e dimensioni dell'immagine (BW / BWR / BWRY);
 - **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
@@ -54,10 +54,10 @@ ogni modifica dei parametri.
 - [Hardware supportato](#hardware-supportato)
 - [Struttura del repository](#struttura-del-repository)
 - [Configurazione (Env.h)](#configurazione-envh)
-- [Driver custom GxEPD2_097c_SOLUM_672x960](#driver-custom-gxepd2_097c_solum_672x960)
-  - [Perché il yellow è out-of-band nel flusso paged](#3-perché-il-yellow-è-out-of-band-nel-flusso-paged)
+- [Driver custom GxEPD2_097c_SOLUM_672x960](#driver-custom-gxepd2_097c_solum_672x960) (→ [doc dedicata](GxEPD2_097c_SOLUM_672x960/README.md))
 - [Moduli applicativi](#moduli-applicativi)
 - [Sketch principale](#sketch-principale)
+- [Flussi di boot e timeout](#flussi-di-boot-e-timeout)
 - [Background cinema](#background-cinema)
 - [Rate limit API esterne](#rate-limit-api-esterne)
 - [Convertitore immagini Python](#convertitore-immagini-python)
@@ -171,250 +171,29 @@ costanti locali al modulo, non segreti.
 
 ## Driver custom GxEPD2_097c_SOLUM_672x960
 
-### Origine
-
-Il driver è **header-only** (`inline` nell'`.h`, nessuna `.cpp`) e nasce
-come fork del driver upstream
+Il driver e' **header-only** (`inline` nell'`.h`, nessuna `.cpp`) e nasce
+come fork di
 [`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/master/src/epd3c/GxEPD2_1330c_GDEM133Z91.cpp)
-(pannello Good Display 13.3" 3-colori). Eredita da `GxEPD2_EPD` (classe
-base della libreria) e implementa la sequenza di comandi specifica del
-pannello SOLUM 9.7" su controller SSD1677:
+(pannello Good Display 13.3" 3-colori, stesso controller SSD1677).
+Implementa la sequenza di comandi specifica del SOLUM 9.7" e introduce
+**4 estensioni** rispetto ai driver stock di GxEPD2:
 
-- soft-reset (`0x12`)
-- soft-start (`0x0C`)
-- MUX per 680 gate lines (`0x01 = 0xA7 0x02 0x00`)
-- bordo bianco (`0x3C = 0x01`)
-- entry-mode x/y increase (`0x11 = 0x03`)
-- full-window refresh (`0x22 = 0xF7` + `0x20`)
-- power-off (`0x22 = 0xC3`)
+1. **`GxEPDImage::showImage()`** — unica funzione pubblica per stampare
+   un'immagine, supporta BW / BWR / BWRY con yellow gestito internamente.
+2. **API single-channel** `writeImageBlack` / `writeImageRed` /
+   `writeImageYellow` per scrittura diretta sul controller.
+3. **Pattern "yellow out-of-band"** — il giallo (`0x28`) viene iniettato
+   prima del loop paged e protetto via `preserveYellow(true)`, perche' il
+   template upstream `GxEPD2_3C` ha un'architettura hard-coded a 2 canali.
+4. **Sistema di descrittori universali** (`GxEPDImage::Descriptor`) con
+   formato + dimensioni dell'immagine (BW / BWR / BWRY).
 
-Rispetto ai driver stock di GxEPD2 per pannelli simili, questa versione
-introduce:
+Lista completa di tutto: motivazione, API, esempi d'uso (7 casi), pitfall
+sul `drawPixel(GxEPD_YELLOW)`, ottimizzazioni rispetto al driver stock
+(tabella 14 righe + dettaglio bullet), tracking della page corrente
+parallelo a `_current_page` privato del template, in:
 
-### 1. `GxEPDImage::showImage()` — unico entry-point pubblico
-
-Free function template nel namespace `GxEPDImage` (vive nel driver `.h`):
-
-```cpp
-template<typename DisplayT>
-void GxEPDImage::showImage(DisplayT& display,
-                           const GxEPDImage::Descriptor& d,
-                           int16_t x = 0, int16_t y = 0);
-```
-
-È **l'unica funzione pubblica per stampare un'immagine** sul pannello.
-Va chiamata **dentro** un loop `firstPage()`/`nextPage()` del template
-`GxEPD2_3C`, dopo `fillScreen()` e prima di `nextPage()`. Supporta tutti
-e 3 i formati del descrittore (BW / BWR / BWRY) — gestisce internamente
-il yellow out-of-band per il caso BWRY.
-
-Pattern minimale one-shot:
-
-```cpp
-display.firstPage();
-do {
-  display.fillScreen(GxEPD_WHITE);
-  GxEPDImage::showImage(display, *my_desc_ptr);
-} while (display.nextPage());
-display.hibernate();
-```
-
-Per immagini raw image2cpp B/N basta wrappare con la macro `GXEPD_BW_IMAGE`:
-
-```cpp
-GxEPDImage::showImage(display, GXEPD_BW_IMAGE(my_array, 960, 672));
-```
-
-Il chiamante è responsabile di: aprire il loop paged e chiamare
-`hibernate()` se vuole spegnere il pannello. Il reset di
-`preserveYellow(false)` per il caso BWRY è **gestito automaticamente**
-dentro `refresh()` del driver al termine del loop paged.
-
-**Idempotency canale yellow.** Per i descrittori BWRY, `showImage`
-scrive il canale 0x28 al MASSIMO una volta per loop paged. Le iterazioni
-2..8 di `nextPage()` trovano `isYellowPreserved()==true` e saltano la
-chiamata `writeImageYellow` (risparmio ~110 ms per refresh @ 10 MHz SPI).
-
-In più, se il chiamante ha già scritto yellow su 0x28 e attivato
-`preserveYellow(true)` PRIMA di `firstPage()` (uso avanzato per
-compositing yellow custom), `showImage` rispetta quello stato e non
-sovrascrive.
-
-#### Casi d'uso e firme
-
-| # | Caso d'uso | Firma array (in `.h` incluso) | Firma chiamata |
-|---|---|---|---|
-| 1 | Bitmap **B/N raw** (image2cpp) | `const unsigned char img_xxx[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BW_IMAGE(img_xxx, w, h));` |
-| 2 | **BWR** da `epd_image_converter.pyw` | `const GxEPDImage::Descriptor img_xxx_desc;` *(auto-generato)* | `GxEPDImage::showImage(display, img_xxx_desc);` |
-| 3 | **BWRY** da `epd_image_converter.pyw` | `const GxEPDImage::Descriptor img_xxx_desc;` *(auto-generato)* | `GxEPDImage::showImage(display, img_xxx_desc);` |
-| 4 | **BWR raw inline** (2 piani separati) | `const unsigned char img_b[], img_r[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWR_IMAGE(img_b, img_r, w, h));` |
-| 5 | **BWRY raw inline** (3 piani separati) | `const unsigned char img_b[], img_r[], img_y[] PROGMEM = { … };` | `GxEPDImage::showImage(display, GXEPD_BWRY_IMAGE(img_b, img_r, img_y, w, h));` |
-| 6 | **BWRY con yellow pre-iniettato** (compositing yellow custom) | `const unsigned char img_b[], img_r[], img_y[] PROGMEM = { … };` | `display.epd2.writeImageYellow(custom_y, x, y, w, h, pgm);` + `display.epd2.preserveYellow(true);` + `GxEPDImage::showImage(display, GXEPD_BWR_IMAGE(img_b, img_r, w, h));` |
-| 7 | **Single-channel diretto** (no GFX) | `const unsigned char img_b[], img_r[], img_y[] PROGMEM = { … };` | `display.epd2.writeImageBlack(img_b, x, y, w, h, true);` + `…Red(…)` + `…Yellow(…)` + `display.epd2.refresh(false);` |
-
-Casi **1–6** vanno chiamati dentro un loop `firstPage()` / `nextPage()`
-con `fillScreen()` prima, e seguiti da `display.hibernate()` se si vuole
-spegnere il pannello. Il reset del flag `preserveYellow(false)` per il
-caso BWRY è gestito automaticamente dentro `refresh()` del driver, non
-serve farlo a mano.
-
-- Per i casi **3** e **5** (BWRY senza pre-write), `showImage` scrive il
-  canale 0x28 una sola volta per refresh grazie all'idempotency-check
-  (le iterazioni 2..8 del paged loop saltano la riscrittura).
-- Per il caso **6**, il pre-write del chiamante su 0x28 ha la precedenza:
-  `showImage` non sovrascrive il yellow custom. Va usato il descrittore
-  BWR (non BWRY) per non passare a `showImage` un `data2` che verrebbe
-  comunque ignorato.
-
-Il caso **7** bypassa il template GFX e si chiama standalone (incluso
-`refresh()` esplicito).
-
-### 2. Tre API siblings single-channel uniformi
-
-I 3 canali del controller SSD1677 sono esposti con shape identica per
-scritture single-channel (no refresh):
-
-```cpp
-void writeImageBlack (const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x24
-void writeImageRed   (const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x26
-void writeImageYellow(const uint8_t* bitmap, int16_t x, int16_t y,
-                      int16_t w, int16_t h, bool pgm = true);  // cmd 0x28
-```
-
-Convenzione bitmap input: bit=1 dove il pixel **non** appartiene a quel
-canale (formato compatibile con lo script Python e image2cpp). Per gli
-accent (red/yellow) il driver applica `~data` prima del transfer SPI
-per allinearsi alla polarity nativa SSD1677 (bit=1 in RAM = colorante
-acceso).
-
-### 3. Perché il yellow è "out-of-band" nel flusso paged
-
-Il driver custom origina da `GxEPD2_1330c_GDEM133Z91`, un driver del
-ramo **`epd3c`** di GxEPD2, pensato per pannelli a **3 colori**
-(bianco/nero/+1 accent). Tutta l'organizzazione del rendering di GxEPD2
-ruota attorno al template `GxEPD2_3C<Driver, page_height>`, che fa da
-intermediario tra il layer GFX (Adafruit_GFX) e il driver. Questo
-template ha un'architettura **hard-coded su 2 canali**:
-
-- mantiene un buffer GFX paged in RAM con **due piani** (black + accent)
-- nel loop `firstPage()` / `nextPage()` invoca **una sola hook** sul
-  driver: `writeImagePart(black, color, ...)`
-- non ha né campi né API per un terzo canale
-
-Quando abbiamo confermato che il pannello SOLUM supporta nativamente un
-quarto colore (giallo via comando `0x28`), l'opzione "pulita" sarebbe
-stata scrivere un template `GxEPD2_4C` custom — fork con buffer paged a
-3 piani e nuova hook `writeImagePart(black, red, yellow, ...)`. Sarebbe
-stato un refactor invasivo della libreria upstream, fuori scope.
-
-La soluzione pragmatica adottata è il pattern **"yellow out-of-band"**:
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│  writeImageYellow(buffer_giallo, ...)    ← scrive 0x28 PRIMA   │
-│  preserveYellow(true)                    ← protegge 0x28       │
-│                                                                 │
-│  display.firstPage();                                           │
-│  do {                                                           │
-│    fillScreen(WHITE);                                           │
-│    drawBitmap(...);    // GFX nel buffer paged 2-canali (B+R)  │
-│    drawText(...);      // GFX                                  │
-│    ...                                                          │
-│  } while (display.nextPage());                                  │
-│  ↓                                                              │
-│  ogni nextPage() chiama writeImagePart(black, color, ...)       │
-│  che internamente NON tocca 0x28 finché _preserve_yellow=true   │
-│                                                                 │
-│  preserveYellow(false)                   ← ripristina cleanup   │
-└────────────────────────────────────────────────────────────────┘
-```
-
-Il giallo viene **iniettato manualmente** prima del loop paged e
-**protetto** dal cleanup automatico tramite il flag `_preserve_yellow`.
-Il flag viene **resettato automaticamente** dentro `refresh()` del
-driver, chiamato dal template alla fine del loop paged: il chiamante
-non deve preoccuparsene.
-
-Tutta questa complessità (writeImageYellow + preserveYellow + decodifica
-bitmap pixel-per-pixel + auto-reset) è incapsulata nella free function
-template `GxEPDImage::showImage(display, desc)` (vedi §1): il chiamante
-deve solo aprire il loop paged.
-
-**Idempotency.** `showImage` è idempotente sul canale 0x28: scrive
-`writeImageYellow` al massimo una volta per loop paged grazie al check
-`isYellowPreserved()`. Le iterazioni 2..8 di `nextPage()` trovano il
-flag attivo e saltano la riscrittura (~110 ms risparmiati per refresh).
-Se il chiamante ha già scritto yellow su 0x28 e attivato `preserveYellow(true)`
-prima di `firstPage()`, `showImage` non sovrascrive — utile per
-compositing yellow custom (vedi caso 6 della tabella in §1).
-
-I 3 siblings `writeImageBlack` / `writeImageRed` / `writeImageYellow`
-sono **simmetrici a livello di API**, ma in pratica B+R sono scritti
-dal template e Y è scritto manualmente — l'asimmetria viene dal
-template GxEPD2_3C, non dal driver.
-
-### 4. Sistema di descrittori universali (`namespace GxEPDImage`)
-
-```cpp
-namespace GxEPDImage {
-  enum Format : uint8_t {
-    FORMAT_BW_1BPP   = 0,   // 1 buffer 1bpp (compat image2cpp)
-    FORMAT_BWR_1BPP  = 1,   // buffer separati black + red
-    FORMAT_BWRY_1BPP = 2,   // buffer separati black + red + yellow
-  };
-
-  struct Descriptor {
-    Format format;
-    uint16_t width, height;
-    const uint8_t *data0, *data1, *data2;
-  };
-}
-```
-
-Il descrittore porta con sé formato e dimensioni. Per costruire
-descrittori inline lo header espone tre macro di comodo:
-
-```cpp
-GXEPD_BW_IMAGE(ptr, w, h)
-GXEPD_BWR_IMAGE(black, red, w, h)
-GXEPD_BWRY_IMAGE(black, red, yellow, w, h)
-```
-
-Lo script Python `epd_image_converter.pyw` genera automaticamente una
-variabile `img_<nome>_desc` ad ogni conversione, pronta per essere
-passata a `showImage()`.
-
-### 5. Ottimizzazioni rispetto al driver stock
-
-- **`_setPartialRamArea()`** non riscrive più l'entry-mode ad ogni draw
-  (spostato una tantum in `_InitDisplay`).
-- **Dirty-flag** `_color_dirty` / `_yellow_dirty`: il cleanup di 0x26 e
-  0x28 in `writeImage(bw)` viene saltato se i flag sono zero, evitando
-  ~160 ms di SPI per draw quando si concatenano frame B/N.
-- **Helper `_cleanAccentIfDirty(cmd, flag)`** centralizza la pulizia
-  scrivendo `0x00` (polarity nativa SSD1677 = accent spento), corretto
-  rispetto al precedente `0xFF` che scriveva "accent ON ovunque" — bug
-  latente mascherato da hibernate+SWRESET ad ogni wake.
-- **`hibernate()`** protetto contro chiamate multiple (early return se
-  `_hibernating == true`); resetta i dirty-flag perché il SWRESET
-  successivo riporta la RAM controller a stato noto.
-- **`delay(1)` rimossi** da `_writeImage` / `_writeImagePart` (servivano
-  come yield WDT per ESP8266; ESP32 ha task WDT 5 s, ampio margine).
-  Risparmio ~64 ms per refresh paged completo.
-
-### 6. API completa
-
-La lista degli overload `drawImage*` / `writeImage*` / `writeImagePart*`
-ereditati dalla base class è in
-[DOCS/drawImage_overloads_it.md](DOCS/drawImage_overloads_it.md) (o la
-versione inglese [drawImage_overloads.md](DOCS/drawImage_overloads.md)).
-Sono override di virtual del base class `GxEPD2_EPD` necessari al
-contratto della libreria — non sono pensati per uso diretto: lo sketch
-chiama `showImage()` per immagini singole, oppure il template
-`GxEPD2_3C` invoca `writeImagePart(black, color)` durante il flusso
-paged.
+> 📘 **[GxEPD2_097c_SOLUM_672x960/README.md](GxEPD2_097c_SOLUM_672x960/README.md)** — documentazione dedicata del driver custom.
 
 ---
 
@@ -686,6 +465,165 @@ I `#define` in testa allo sketch sono:
   Fuori da questa finestra la radio resta spenta e le API non vengono
   chiamate. Se la connessione fallisce durante la finestra, il display
   mostra i dati esistenti senza logica di retry aggiuntiva.
+
+---
+
+## Flussi di boot e timeout
+
+Lo sketch garantisce che **il primo refresh del display avvenga sempre**,
+indipendentemente dalla disponibilità di rete o di singoli endpoint, in
+modo che il dispositivo non resti mai con lo schermo bianco al boot. Il
+flusso e i relativi timeout sono pensati per dare priorità all'esperienza
+utente sul campo (tecnici senza competenze IT) rispetto alla "purezza"
+dei dati: meglio una UI parziale subito che una UI completa dopo minuti.
+
+### Costanti configurabili (in testa allo sketch `.ino`)
+
+| Define | Default | Unità | Effetto |
+|---|---|---|---|
+| `DISPLAY_REFRESH_MIN` | `5` | min | Periodo di light sleep fuori finestra OTA. Massima latenza di propagazione di un nuovo dato (Indoor / Weather / Calendar) sul display. |
+| `WEATHER_FORECAST_FETCH_MIN` | `10` | min | Cadenza chiamata One Call 3.0 (corrente + previsioni in unica request). |
+| `CAL_OUTLOOK_FETCH_MIN` | `10` | min | Cadenza fetch Microsoft Graph `/me/events`. |
+| `CAL_GOOGLE_FETCH_MIN` | `10` | min | Cadenza fetch Google Calendar API v3. |
+| `OTA_WINDOW_MIN` | `3` | min | Durata della finestra OTA al boot (AP attivo + STA in parallelo). |
+| `MAX_CALENDAR_ATTEMPTS` | `2` | tentativi | Tentativi consecutivi falliti per i fetch Outlook/Google prima di "consumare" lo slot e attendere `CAL_*_FETCH_MIN`. Evita hammering OAuth durante OTA. |
+| `WIFI_ACTIVE_HOUR_START` | `7` | ora local | Inizio finestra in cui la radio può essere accesa per i fetch (post-OTA). |
+| `WIFI_ACTIVE_HOUR_END` | `23` | ora local | Fine finestra (inclusiva fino a `23:59`). Fuori da `[START..END]` la radio resta spenta. |
+| `BOOT_WIFI_TIMEOUT_MS` | `15000` | ms | Timeout di boot per la STA: scaduto questo tempo senza `WL_CONNECTED`, il primo refresh viene sbloccato comunque con i soli dati locali. |
+| `CINEMA_DAILY_FETCH_HOUR` | `7` | ora local | Ora del refresh giornaliero del wallpaper cinema. Tipicamente coincide con `WIFI_ACTIVE_HOUR_START` ma è disaccoppiata. |
+
+### Costanti interne (timeout hard-coded)
+
+| Costante | Valore | Posizione | Effetto |
+|---|---|---|---|
+| `wifiOn()` connect timeout | `15000` ms | `.ino` | Attesa massima `WL_CONNECTED` nel ramo non-OTA prima di rinunciare al fetch. |
+| HTTP cinema | `setTimeout(45000)` ms | `.ino` `fetchCinemaImage` | Timeout HTTP per gestire il cold start del free tier render.com (10–30 s tipici). |
+| Read body cinema per piano | `45000` ms | `.ino` `fetchCinemaImage` | Tempo massimo di lettura per ciascuno dei 3 piani BWRY in stream. |
+| Token margin OAuth | `60` s | `Calendar.h` | Refresh anticipato del token Outlook/Google se mancano meno di 60 s alla scadenza. |
+| BSEC2 ULP sample | `5` min | profilo BSEC fissato in `Indoor.h` | Cadenza di sampling del BME680 in modalità ultra-low-power. **Non configurabile**: vincolato al profilo BSEC. |
+
+### Flusso al boot — finestra OTA aperta (primi `OTA_WINDOW_MIN` minuti)
+
+`setup()` apre la radio in modalità `WIFI_AP_STA` (AP per upload firmware,
+STA verso il router di casa) e segna `g_boot_start_ms = millis()`. Da qui
+il `loop()` gira ogni ~10 ms (no light sleep, altrimenti il `WebServer`
+non risponderebbe).
+
+I quattro casi possibili per il **primo refresh** sono:
+
+#### Caso 1 — Tutto disponibile (30s)
+
+```
+t=0       setup() → AP+STA up, OTA window aperta
+t≈2-5s    STA WL_CONNECTED
+          ├─ Weather::runFetch (One Call 3.0) → slots[0..3] valid
+          ├─ fetchCinemaImage (~5-30 s) → buffer RAM/PSRAM popolati
+          ├─ Calendar::Outlook::runFetch (1° tentativo) → outlookEvents valid
+          ├─ Calendar::Google::runFetch (1° tentativo) → googleEvents valid
+          └─ Weather::forceFirstRender() → sblocca gate
+t+~30s    Weather::render() → primo refresh display (~22 s) con tutti i dati
+```
+
+#### Caso 2 — WiFi OK, calendari non configurati / token errato
+
+```
+t≈2-5s    WL_CONNECTED
+          ├─ Weather OK
+          ├─ Cinema OK (o fallback apple PROGMEM se render.com giù)
+          ├─ Outlook runFetch fallisce (1° tentativo)  → log seriale
+          ├─ Google runFetch fallisce (1° tentativo)  → log seriale
+          └─ forceFirstRender() → sblocca gate
+t+~30s    primo refresh: meteo OK + cinema + 5 trattini "--" calendario
+t+10ms    iterazione successiva del loop OTA:
+          ├─ Outlook 2° tentativo → fail → "consumed" (silenzio per CAL_OUTLOOK_FETCH_MIN)
+          └─ Google 2° tentativo → fail → "consumed"
+```
+
+Quando le credenziali tornano valide, al prossimo trigger
+(`CAL_*_FETCH_MIN` scaduto) il counter si azzera al primo successo e
+gli eventi vengono visualizzati senza reboot.
+
+#### Caso 3 — WiFi OK, endpoint cinema non disponibile
+
+```
+t≈2-5s    WL_CONNECTED
+          ├─ Weather OK
+          ├─ fetchCinemaImage → HTTP status != 200 oppure timeout 45 s
+          │   → freeCinemaBuffers() + g_cinema_desc = &img_apple_bwry_desc
+          ├─ Outlook OK
+          ├─ Google OK
+          └─ forceFirstRender()
+t+~50s    primo refresh: meteo + apple PROGMEM + calendario completo
+          (next retry cinema: domani alle CINEMA_DAILY_FETCH_HOUR oppure reboot)
+```
+
+#### Caso 4 — Nessuna connessione internet
+
+```
+t=0       setup()
+t=0..15s  STA tentativi associazione, mai WL_CONNECTED
+t=15s     (millis() - g_boot_start_ms) >= BOOT_WIFI_TIMEOUT_MS
+          → forceFirstRender() sul ramo `else if`
+t≈37s     primo refresh display: solo dati indoor BME680 (se almeno
+          1 sample ULP è arrivato; altrimenti tutti placeholder "--")
+          + fallback apple PROGMEM
+loop      la STA continua a tentare in background; se sale durante
+          OTA window il ramo "if WL_CONNECTED" riprende ed esegue i
+          fetch → markDirty → secondo refresh con i dati arrivati
+```
+
+### Flusso a regime — finestra OTA chiusa
+
+Scaduti `OTA_WINDOW_MIN` minuti, `Ota::endNow()` spegne AP e radio. Il
+`loop()` passa al regime energetico: light sleep `DISPLAY_REFRESH_MIN`
+minuti fra un wake e l'altro, radio accesa solo poco prima del fetch e
+spenta subito dopo.
+
+#### Wake up dentro `[WIFI_ACTIVE_HOUR_START..END]`
+
+```
+wake      Weather/Outlook/Google::pendingFetch() valutati
+          if (almeno uno è dovuto):
+            wifiOn() (timeout 15 s)
+            ├─ se WL_CONNECTED: fetch sequenziali (weather + cinema +
+            │   outlook + google), markDirty su successo
+            └─ se timeout: forceFirstRender() (no-op se già fatto)
+            wifiOff() (anche su fallimento, radio sempre spenta)
+          Indoor::refresh() → markDirty se nuovo sample ULP
+          Weather::render() (refresh display ~22 s solo se needsRefresh)
+sleep     esp_light_sleep_start() per DISPLAY_REFRESH_MIN minuti
+```
+
+#### Wake up fuori `[WIFI_ACTIVE_HOUR_START..END]` (notte)
+
+```
+wake      isActiveHour() == false → ramo wifiOn saltato del tutto
+          Indoor::refresh() → eventuale markDirty
+          Weather::render() (refresh ~22 s solo se markDirty)
+sleep     light sleep DISPLAY_REFRESH_MIN minuti
+```
+
+In pratica di notte il display si aggiorna solo quando arriva un nuovo
+sample BME680 (ogni 5 min). Le cache di meteo e calendari restano
+"frozen" all'ultimo fetch riuscito prima delle 23:59.
+
+### Cosa succede se un fetch fallisce a regime
+
+| Tipo di fallimento | Comportamento | Quando si riprova |
+|---|---|---|
+| Weather (OWM 401/429/timeout) | Cache meteo invariata, banner mantiene ultimi valori validi | Prossimo wake con `WEATHER_FORECAST_FETCH_MIN` scaduto |
+| Outlook / Google (1° fail) | Counter `outlookFailedAttempts++`, log seriale, eventi cache invariati | Iterazione successiva del loop |
+| Outlook / Google (2° fail) | Slot "consumed", `lastFetchMs = millis()`, counter reset, log "soglia raggiunta" | Solo dopo `CAL_*_FETCH_MIN` (default 10 min) |
+| Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Domani alle `CINEMA_DAILY_FETCH_HOUR`, oppure al reboot |
+| BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
+
+### Tempi caratteristici da aspettarsi
+
+- **Boot → primo refresh con WiFi e tutti i fetch OK**: ~30–60 s (15–30 s di fetch HTTP sequenziali + 22 s di refresh full-window).
+- **Boot → primo refresh senza WiFi**: ~37 s (15 s timeout boot + 22 s refresh).
+- **Boot → primo refresh con cinema cold start render.com**: fino a ~75 s (45 s timeout HTTP cinema + 22 s refresh) se il keep-warm GitHub Actions non ha tenuto warm il free tier.
+- **Refresh successivo a regime**: ~22 s (full-window, il pannello non supporta refresh parziale).
+- **Latenza di un nuovo dato sul display**: massimo `DISPLAY_REFRESH_MIN` minuti (5 di default) tra il wake up e il render successivo.
 
 ---
 
