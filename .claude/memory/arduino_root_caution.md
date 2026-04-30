@@ -12,5 +12,5 @@ I file in `c:\epd\` root (`ePaper-weather-dashboard.ino`, `Calendar.h`, `Weather
 - Se una richiesta della webapp implicherebbe toccare questi file, prima conferma con l'utente.
 - Puoi LEGGERLI per riferimento (es. `epd_image_converter.pyw` contiene le funzioni di dithering/packing portate in `c:\epd\webapp\dithering.py`; il `.ino` contiene la logica del consumer cinema).
 - Se l'utente chiede esplicitamente di modificarli, procedi.
-- Lo sketch principale e' `ePaper-weather-dashboard.ino` (NON `GxEPD2_1330c_GDEM133Z91.ino` come citato in alcuni commenti vecchi nel codice e nei file `Indoor.h`/`Ota.h`).
-- `Env.h` e' gitignored: contiene credenziali (WiFi, OWM key, Microsoft Graph refresh token, Google Calendar OAuth, posizione GPS). Il template e' `Env_template.h`.
+- Lo sketch principale è `ePaper-weather-dashboard.ino` (NON `GxEPD2_1330c_GDEM133Z91.ino` come citato in alcuni commenti vecchi nel codice e nei file `Indoor.h`/`Ota.h`).
+- `Env.h` è gitignored: contiene credenziali (WiFi, OWM key, Microsoft Graph refresh token, Google Calendar OAuth, posizione GPS). Il template è `Env_template.h`.

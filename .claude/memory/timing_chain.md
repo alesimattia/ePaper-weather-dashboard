@@ -25,7 +25,7 @@ I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
 - OTA window 180s contiene anche il caso freddo (~50s fetch + altri fetch in parallelo: meteo + 2 calendari).
 
 **Budget durante OTA:**
-- `loop()` gira con `delay(10)` durante OTA window per `WebServer::handleClient()`. Un fetch cinema bloccante da 45s congela l'AP per 45s: utenti che provano `/update` durante quel periodo vedono timeout dal browser. Accettato perche' la finestra OTA e' rara e l'utente se ne accorge.
+- `loop()` gira con `delay(10)` durante OTA window per `WebServer::handleClient()`. Un fetch cinema bloccante da 45s congela l'AP per 45s: utenti che provano `/update` durante quel periodo vedono timeout dal browser. Accettato perchè la finestra OTA è rara e l'utente se ne accorge.
 
 **Daily 07:00:**
 - Render.com sleep di 15 min + keep-warm alle 06:55 = sicuramente sveglio alle 07:00. Se la cron Action GitHub fallisce (ad es. account quota esaurita) il fetch ESP32 paga il cold start ma resta entro 45s. Robustezza accettabile.

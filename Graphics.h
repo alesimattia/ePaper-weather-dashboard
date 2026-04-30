@@ -26,7 +26,7 @@ namespace Graphics
    * Disegna un rettangolo a bordi arrotondati con un titolo "stile fieldset"
    * incastrato nel bordo superiore: il bordo viene interrotto da un rettangolo
    * di sfondo sotto il testo, dando l'impressione che il titolo sia seduto
-   * sulla linea. Il titolo e' sempre nero; il rettangolo e' nero anch'esso.
+   * sulla linea. Il titolo è sempre nero; il rettangolo è nero anch'esso.
    *
    * Precondizioni: il chiamante deve aver impostato il font prima di chiamare
    * questa funzione (viene usato per misurare e disegnare il titolo).
@@ -60,7 +60,7 @@ namespace Graphics
     /**
      * Copri una striscia di sfondo dietro il testo per "spezzare" il bordo
      * superiore del rettangolo. Alta 3 px centrata sulla linea y (il bordo
-     * e' di 1 px quindi 3 px danno margine sicuro su entrambi i lati).
+     * è di 1 px quindi 3 px danno margine sicuro su entrambi i lati).
      */
     const int16_t PAD_H = 3;
     const int16_t stripX = x + titleLeftOffset;

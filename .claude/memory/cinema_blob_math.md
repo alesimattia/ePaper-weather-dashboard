@@ -17,8 +17,8 @@ Calcoli derivati (non visibili come singoli valori in nessun file, vanno ricostr
 - Senza PSRAM (modulo WROOM bare): `ESP.getFreeHeap()` ≈ 200 KB libere → 100 KB su heap interno passano al limite, lasciano poco margine per ArduinoJson/HTTPClient. Da qui la preferenza PSRAM in `allocPlaneBuffer()`.
 
 **Encoding bit (compatibilita' GxEPD2):**
-- `pack_mask_msb` riceve `mask = (indices != color_idx)` → bit=1 dove pixel NON e' di quel colore.
-- Conseguenza dedotta: padding di riga (per width non multiplo di 8) viene riempito con `1` perche' `np.ones(...)` nel pad. Coerente con la convenzione "1 = bianco/default": il pad non viene mai "acceso" su nessun canale.
+- `pack_mask_msb` riceve `mask = (indices != color_idx)` → bit=1 dove pixel NON è di quel colore.
+- Conseguenza dedotta: padding di riga (per width non multiplo di 8) viene riempito con `1` perchè `np.ones(...)` nel pad. Coerente con la convenzione "1 = bianco/default": il pad non viene mai "acceso" su nessun canale.
 
 **Catena dimensioni → URL → ESP32:**
 - Cambiare `CINEMA_W` o `CINEMA_H` nel `.ino` SENZA aggiornare anche `width=`/`height=` in `CINEMA_URL` produce `Content-Length` mismatch silenzioso e fallback PROGMEM perpetuo. Stessa cosa per `colors`: se nel `.ino` si vuole BWR (2 piani) bisogna cambiare URL E sostituire i 3 buffer/loop con 2.

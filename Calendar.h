@@ -19,12 +19,12 @@
 
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Va dichiarata a livello
-// globale perche' il simbolo lato .ino non vive in alcun namespace.
+// globale perchè il simbolo lato .ino non vive in alcun namespace.
 // ---------------------------------------------------------------------------
 extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 8> display;
 
 // ---------------------------------------------------------------------------
-// Configurazione non-segreta del modulo. Non sta in Env.h perche' non
+// Configurazione non-segreta del modulo. Non sta in Env.h perchè non
 // sono credenziali: sono parametri di dominio che l'utente modifica
 // direttamente qui.
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 
  *
  * Il disegno avviene dentro il loop paged firstPage()/nextPage() del
  * display e-paper (invocato da Weather::render). I fetch presuppongono
- * STA gia' connessa: la radio e' gestita dallo sketch .ino.
+ * STA gia' connessa: la radio è gestita dallo sketch .ino.
  *
  * API:
  *  - Calendar::initTimezone()    : applica CAL_POSIX_TZ al sistema;
@@ -87,7 +87,7 @@ namespace Calendar
   /**
    * Numero massimo di eventi effettivamente renderizzati nella lista.
    * Le fonti (Outlook, Google) alimentano ciascuna una propria cache;
-   * la lista mostrata e' il merge ordinato per data di inizio.
+   * la lista mostrata è il merge ordinato per data di inizio.
    */
   static constexpr uint8_t MAX_EVENTS_DISPLAYED = 5;
 
@@ -247,7 +247,7 @@ namespace Calendar
 
     /**
      * Parse di una stringa ISO 8601 con offset opzionale (Z, +HH:MM,
-     * -HH:MM) e la converte in epoch UTC. Se non c'e' offset esplicito
+     * -HH:MM) e la converte in epoch UTC. Se non c'è offset esplicito
      * interpreta come UTC (comportamento atteso per Outlook con
      * `Prefer: outlook.timezone=UTC`).
      *
@@ -324,7 +324,7 @@ namespace Calendar
     }
 
     /**
-     * Tronca la stringa in `buf` in-place finche' la sua resa non rientra
+     * Tronca la stringa in `buf` in-place finchè la sua resa non rientra
      * in `maxW` pixel. 
      * Se tronca inserisce ".." come indicatore finale.
      */
@@ -686,7 +686,7 @@ namespace Calendar
       int firstCol     = (firstWdaySun + 6) % 7;
 
       /** Sfondo bianco + cornice arrotondata in stile fieldset: il nome
-       *  del mese e' incastrato sul bordo superiore interrotto (niente
+       *  del mese è incastrato sul bordo superiore interrotto (niente
        *  piu' titolo interno + linea separatrice).
        *  @modified 22/04/26 */
       display.fillRoundRect(CAL_X, CAL_Y, CAL_W, CAL_H, CAL_R, GxEPD_WHITE);
@@ -935,7 +935,7 @@ namespace Calendar
       outlookFailedAttempts   = 0;
     }
 
-    /** True se la cache e' scaduta o mai valorizzata: serve un nuovo fetch. */
+    /** True se la cache è scaduta o mai valorizzata: serve un nuovo fetch. */
     inline bool pendingFetch()
     {
       using namespace detail;
@@ -953,7 +953,7 @@ namespace Calendar
      * al now e disattivando outlookFirstFetch, cosi' pendingFetch() tornera'
      * true solo dopo INTERVAL_FETCH_MS (evita hammering durante OTA).
      *
-     * @return true se almeno un evento valido e' entrato in cache.
+     * @return true se almeno un evento valido è entrato in cache.
      */
     inline bool runFetch()
     {
@@ -1005,7 +1005,7 @@ namespace Calendar
       googleFailedAttempts   = 0;
     }
 
-    /** True se la cache e' scaduta o mai valorizzata: serve un nuovo fetch. */
+    /** True se la cache è scaduta o mai valorizzata: serve un nuovo fetch. */
     inline bool pendingFetch()
     {
       using namespace detail;
@@ -1018,7 +1018,7 @@ namespace Calendar
      * Refresh del token + GET degli eventi. Presuppone STA connessa.
      * Su fallimento: stesso meccanismo di Outlook::runFetch() (MAX_CALENDAR_ATTEMPTS
      * tentativi consecutivi, poi attesa di INTERVAL_FETCH_MS).
-     * @return true se almeno un evento valido e' entrato in cache.
+     * @return true se almeno un evento valido è entrato in cache.
      */
     inline bool runFetch()
     {

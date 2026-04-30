@@ -4,7 +4,7 @@
 // Origine:
 //   - Libreria base: GxEPD2 (https://github.com/ZinggJM/GxEPD2).
 //   - Driver di partenza: GxEPD2_1330c_GDEM133Z91 (Good Display GDEM133Z91,
-//     controller SSD1677). La logica di init, write RAM e refresh e' ereditata
+//     controller SSD1677). La logica di init, write RAM e refresh è ereditata
 //     da li' e poi adattata al pannello SOLUM recuperato da ESL dismesse.
 //
 // Pannello pilotato (personalizzazione rispetto all'originale):
@@ -59,7 +59,7 @@
 //   showImage skippa le righe sorgente che non intersecano la page corrente
 //   del template GxEPD2_3C, riducendo il loop pixel a 1/8 delle iterazioni
 //   complessive (~145 ms risparmiati per refresh full-screen). Per dedurre
-//   quale page e' in corso (il template tiene _current_page private senza
+//   quale page è in corso (il template tiene _current_page private senza
 //   getter pubblico) il driver mantiene un counter _show_image_page_hint:
 //     - reset a 0 dentro setPaged() (override del virtual base, chiamato da
 //       GxEPD2_3C::firstPage() del template all'inizio di ogni loop paged)
@@ -132,11 +132,11 @@ namespace GxEPDImage
    *   - canale yellow (0x28): scritto direttamente sul controller la prima
    *     volta che la funzione gira, e protetto durante il loop paged via
    *     preserveYellow(true). Il template GxEPD2_3C upstream vede solo 2
-   *     canali (black + red) e non puo' pilotare il giallo: questa e'
+   *     canali (black + red) e non puo' pilotare il giallo: questa è
    *     l'unica via per pilotare il 4o colore del pannello.
    *   - canali black + red: decodificati pixel-per-pixel con drawPixel,
-   *     perche' la convenzione bit=1=NOT color delle bitmap (output dello
-   *     script python e di image2cpp invertito) e' opposta a quella di
+   *     perchè la convenzione bit=1=NOT color delle bitmap (output dello
+   *     script python e di image2cpp invertito) è opposta a quella di
    *     Adafruit_GFX::drawBitmap (bit=1=IS color), e BWR richiede
    *     compositing di 2 piani che drawBitmap non fa nativamente.
    *
@@ -223,7 +223,7 @@ namespace GxEPDImage
         display.drawPixel(x + px, y + py, color);
       }
     }
-    // Nessun avanzamento del page-hint qui: e' fatto dentro
+    // Nessun avanzamento del page-hint qui: è fatto dentro
     // writeImage(black, color, ...) quando GxEPD2_3C::nextPage() chiude la
     // page sul controller. showImage puo' essere chiamata 0, 1 o N volte
     // nella stessa page senza desincronizzare il counter.
@@ -298,7 +298,7 @@ class GxEPD2_097c_SOLUM_672x960 : public GxEPD2_EPD
     //
     // Usati in flusso paged (writeImageYellow prima di firstPage() +
     // preserveYellow(true) durante il loop) o per compositing manuale
-    // multi-canale. NON chiamano refresh: e' responsabilita' del chiamante.
+    // multi-canale. NON chiamano refresh: è responsabilita' del chiamante.
     // ------------------------------------------------------------------
     void writeImageBlack (const uint8_t* bitmap, int16_t x, int16_t y,
                           int16_t w, int16_t h, bool pgm = true);
@@ -317,7 +317,7 @@ class GxEPD2_097c_SOLUM_672x960 : public GxEPD2_EPD
     // chiamato dal template GxEPD2_3C al termine del loop paged. Il
     // chiamante NON deve fare preserveYellow(false) manualmente.
     //
-    // Nota: red non ha un flag analogo perche' il template lo gestisce gia'.
+    // Nota: red non ha un flag analogo perchè il template lo gestisce gia'.
     void preserveYellow(bool preserve) { _preserve_yellow = preserve; }
 
     // Getter del flag preserveYellow. Usato da GxEPDImage::showImage come
@@ -326,7 +326,7 @@ class GxEPD2_097c_SOLUM_672x960 : public GxEPD2_EPD
     // un yellow gia' scritto dal chiamante prima di firstPage().
     bool isYellowPreserved() const { return _preserve_yellow; }
 
-    // L'entry-point pubblico di stampa immagine e' la free function template
+    // L'entry-point pubblico di stampa immagine è la free function template
     // GxEPDImage::showImage(display, desc) definita nel namespace sopra.
     // Va chiamata dentro un loop firstPage()/nextPage() del template GFX.
 
@@ -342,7 +342,7 @@ class GxEPD2_097c_SOLUM_672x960 : public GxEPD2_EPD
     // page corrente, riducendo il loop pixel a 1/8 delle iterazioni.
     int16_t showImagePageHint() const { return _show_image_page_hint; }
   private:
-    // Pulizia selettiva di un canale accent: se il flag dirty e' attivo
+    // Pulizia selettiva di un canale accent: se il flag dirty è attivo
     // scrive 0x00 ovunque (polarity nativa SSD1677 = "accent spento") e
     // resetta il flag. Centralizza la semantica "clean accent" per evitare
     // il bug latente 0xFF (= accent ON ovunque) che esisteva in versioni
@@ -386,7 +386,7 @@ class GxEPD2_097c_SOLUM_672x960 : public GxEPD2_EPD
 // Scelta header-only: l'intero driver vive qui (no compilation unit .cpp).
 // Tutti i metodi sono definiti `inline` per permettere l'inclusione da piu'
 // TU senza violare la ODR; nel progetto attuale l'header viene incluso solo
-// dal .ino, quindi e' sempre una sola TU.
+// dal .ino, quindi è sempre una sola TU.
 // =============================================================================
 
 inline GxEPD2_097c_SOLUM_672x960::GxEPD2_097c_SOLUM_672x960(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
@@ -572,7 +572,7 @@ inline void GxEPD2_097c_SOLUM_672x960::_writeImagePart(uint8_t command, const ui
   // di riga di max WIDTH/8 = 120 byte, flush via writeBytes una volta per
   // riga invece di per-byte transfer().
   // Nota: nel progetto attuale il template GxEPD2_3C usa solo full-window
-  // mode (setFullWindow), quindi questo overload non e' in hot path. Lo
+  // mode (setFullWindow), quindi questo overload non è in hot path. Lo
   // refactoriamo per simmetria con _writeImage.
   const int16_t rowBytes = w1 / 8;
   uint8_t rowBuf[120];
@@ -607,7 +607,7 @@ inline void GxEPD2_097c_SOLUM_672x960::_writeImagePart(uint8_t command, const ui
 // chiama questa overload (non writeImagePart) - vedi GxEPD2_3C.h:368.
 // Modalita' 3-colori: puliamo il canale giallo se dirty (residuo di un
 // precedente draw BWRY) per evitare pixel gialli fantasma sul nuovo frame.
-// Eccezione: se _preserve_yellow e' true il chiamante sta proteggendo un
+// Eccezione: se _preserve_yellow è true il chiamante sta proteggendo un
 // giallo iniettato out-of-band (slider Weather, o pre-firstPage write); in
 // tal caso NON puliamo, identico al path writeImagePart sotto.
 inline void GxEPD2_097c_SOLUM_672x960::writeImage(const uint8_t* black, const uint8_t* color, int16_t x, int16_t y, int16_t w, int16_t h, bool invert, bool mirror_y, bool pgm)
@@ -682,7 +682,7 @@ inline void GxEPD2_097c_SOLUM_672x960::drawNative(const uint8_t* data1, const ui
   refresh(x, y, w, h);
 }
 
-// Il reset di _preserve_yellow dopo refresh e' centralizzato in _Update_Full()
+// Il reset di _preserve_yellow dopo refresh è centralizzato in _Update_Full()
 // (vedi sotto). Entrambi gli overload di refresh chiamano _Update_Full, quindi
 // non serve duplicare il reset qui.
 inline void GxEPD2_097c_SOLUM_672x960::refresh(bool /*partial_update_mode*/)
@@ -701,8 +701,8 @@ inline void GxEPD2_097c_SOLUM_672x960::powerOff()
 }
 
 // Porta il controller in deep sleep. Protetto contro chiamate multiple:
-// se e' gia' _hibernating la funzione non invia nuovamente la sequenza 0x10.
-// I flag dirty vengono azzerati perche' al prossimo wake _InitDisplay()
+// se è gia' _hibernating la funzione non invia nuovamente la sequenza 0x10.
+// I flag dirty vengono azzerati perchè al prossimo wake _InitDisplay()
 // invochera' SWRESET che riporta la RAM del controller a uno stato noto.
 inline void GxEPD2_097c_SOLUM_672x960::hibernate()
 {
@@ -719,13 +719,13 @@ inline void GxEPD2_097c_SOLUM_672x960::hibernate()
     // Simmetria con refresh(): se l'ibernazione interrompe un loop paged
     // BWRY prima del refresh finale, il flag rimarrebbe alto e al wake il
     // primo writeImage(black,color) salterebbe il cleanup di 0x28 anche se
-    // ormai e' fisicamente azzerato dal SWRESET. Reset esplicito.
+    // ormai è fisicamente azzerato dal SWRESET. Reset esplicito.
     _preserve_yellow = false;
   }
 }
 
 // Imposta l'area RAM parziale del controller SSD1677.
-// L'entry mode (comando 0x11) non e' piu' inviato qui: e' configurato una sola
+// L'entry mode (comando 0x11) non è piu' inviato qui: è configurato una sola
 // volta in _InitDisplay() per evitare scritture SPI ridondanti ad ogni draw.
 inline void GxEPD2_097c_SOLUM_672x960::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
@@ -804,7 +804,7 @@ inline void GxEPD2_097c_SOLUM_672x960::_InitDisplay()
 // Esegue il ciclo di refresh elettroforetico full-window (~22 s). Il byte
 // 0xF7 al cmd 0x22 attiva clock + analog + load temp + load LUT + disable
 // analog + disable clock: include power-on/off implicito, percio' non serve
-// chiamare _PowerOn() prima ne' _PowerOff() dopo (oltre a settare il flag).
+// chiamare _PowerOn() prima nè _PowerOff() dopo (oltre a settare il flag).
 //
 // Reset di _preserve_yellow: il "ciclo di rendering" termina qui (sia che
 // refresh sia chiamato dal template GxEPD2_3C al fine del paged loop, sia

@@ -46,12 +46,12 @@ extern void drawTestBackground();
  * sunset, rain.1h, pop, daily.feels_like.morn/eve) vengono memorizzati
  * per un uso futuro ma non ancora visualizzati.
  *
- * Il WiFi NON e' gestito qui: runFetch() presuppone che sia gia' connesso
+ * Il WiFi NON è gestito qui: runFetch() presuppone che sia gia' connesso
  * (lo sketch .ino si occupa di wifiOn()/wifiOff() immediatamente intorno
  * alla chiamata). Cosi' la radio resta spenta fra un fetch e l'altro.
  *
  * Credenziali WiFi e API key OWM sono in Env.h. Posizione GPS (LAT/LON)
- * pure in Env.h. Il fuso orario e' gestito da Calendar::initTimezone()
+ * pure in Env.h. Il fuso orario è gestito da Calendar::initTimezone()
  * (POSIX TZ in Calendar.h): localtime_r() applica CET/CEST in automatico.
  */
 namespace Weather
@@ -355,7 +355,7 @@ namespace Weather
      * mantenere la cadenza della precedente /forecast?cnt=3).
      *
      * URL: exclude=minutely,alerts (scarta cio' che non serve; daily rimane
-     * perche' ne leggiamo morn/eve). Il Filter ArduinoJson sotto restringe
+     * perchè ne leggiamo morn/eve). Il Filter ArduinoJson sotto restringe
      * ulteriormente i campi conservati in memoria.
      *
      * Oltre ai campi base memorizza alcuni parametri aggiuntivi (sunrise,
@@ -485,13 +485,13 @@ namespace Weather
     }
 
     /**
-     * Disegna una temperatura nel formato "<num>°C". Il pallino ° e' un
-     * cerchietto disegnato fra numero e "C" perche' i font FreeSans*pt7b
+     * Disegna una temperatura nel formato "<num>°C". Il pallino ° è un
+     * cerchietto disegnato fra numero e "C" perchè i font FreeSans*pt7b
      * sono "7b" (ASCII 0x20..0x7E) e non contengono il glifo 0xB0.
      *
      * @param numStr     parte numerica gia' formattata (es. "22", "22.5", "-10.5").
-     * @param anchorX    se centered=true e' il centro orizzontale del blocco
-     *                   composito; se centered=false e' il bordo sinistro
+     * @param anchorX    se centered=true è il centro orizzontale del blocco
+     *                   composito; se centered=false è il bordo sinistro
      *                   del numero.
      * @param baselineY  baseline del testo (condivisa da numero e "C").
      * @param color      colore di numero, ° e "C".
@@ -535,12 +535,12 @@ namespace Weather
 
     /**
      * Compone la stringa della riga description di un blocco meteo.
-     * Quando la condizione di pioggia e' attiva (pop>0 o rain1h>0) la
+     * Quando la condizione di pioggia è attiva (pop>0 o rain1h>0) la
      * description italiana viene sostituita o arricchita da valori
      * quantitativi (POP % e mm attesi nell'ultima ora):
      *   - slot 0 (current): OWM non fornisce pop per `current` quindi
      *     viene mantenuta la description e appeso " X.Xmm" solo se
-     *     rain1h e' valorizzato.
+     *     rain1h è valorizzato.
      *   - slot 1..3 (forecast): la description viene sostituita da
      *     "<pop>% X.Xmm".
      * Altrimenti restituisce la description testuale invariata.
@@ -567,7 +567,7 @@ namespace Weather
 
       if (slotIdx == 0)
       {
-        // current: description + " X.Xmm" solo se rain1h e' valorizzato.
+        // current: description + " X.Xmm" solo se rain1h è valorizzato.
         if (hasRain) snprintf(out, outLen, "%s %.1fmm", s.description, rain);
         else         copyStr(out, outLen, s.description);
       }
@@ -605,7 +605,7 @@ namespace Weather
       const uint8_t* icon = iconFromCode(s.iconCode);
       display.drawBitmap(centerX - ICON_SIZE / 2, ICON_Y + yOffset, icon, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
 
-      /** Description (nero, font tondo sans-serif). Se c'e' pioggia
+      /** Description (nero, font tondo sans-serif). Se c'è pioggia
        *  prevista (pop>0 o rain1h>0) la description testuale viene
        *  sostituita/arricchita con valori quantitativi — vedi
        *  composeDescLine(). */
@@ -647,7 +647,7 @@ namespace Weather
      * @param txt       stringa testo a destra dell'icona.
      * @param startX    x (px) del bordo sinistro dell'icona; il testo parte
      *                  a startX + INDOOR_ICON_SIZE + INDOOR_ICON_GAP.
-     * @param baselineY baseline del testo (l'icona e' posizionata con il
+     * @param baselineY baseline del testo (l'icona è posizionata con il
      *                  bordo inferiore grosso modo allineato alla baseline).
      * @param color     colore del testo (icona sempre GxEPD_BLACK).
      * @since 21/04/26 Mattia Alesi
@@ -673,7 +673,7 @@ namespace Weather
     // =======================================================================
     // Barra temp-range (morn..eve) con indicatore current feels_like.
     //
-    // Il canale giallo del pannello SOLUM 672x960 e' "out-of-band" rispetto
+    // Il canale giallo del pannello SOLUM 672x960 è "out-of-band" rispetto
     // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
     // usiamo le API del driver custom GxEPD2_097c_SOLUM_672x960:
     //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
@@ -783,7 +783,7 @@ namespace Weather
      *                punto medio della barra (allineato con il centro
      *                orizzontale della riga sunset sopra).
      * @param cellY   y assoluto sul display del pixel (0,0) del buffer.
-     * @return true se la barra e' stata disegnata; false se dati non validi
+     * @return true se la barra è stata disegnata; false se dati non validi
      *         (in tal caso il canale 0x28 non viene toccato).
      * @since 22/04/26
      */
@@ -922,7 +922,7 @@ namespace Weather
      *   3. qualita' aria (nera,  label + IAQ + pedice accuracy)
      *   4. pressione     (nera,  "%.0f hPa")
      *
-     * Il titolo "Indoor" e' disegnato dal chiamante in stile fieldset sul
+     * Il titolo "Indoor" è disegnato dal chiamante in stile fieldset sul
      * bordo superiore del riquadro (via Graphics::drawFieldsetRect).
      *
      * @param rrX  x (px) del bordo sinistro del riquadro Indoor.
@@ -1034,7 +1034,7 @@ namespace Weather
       /** Row 3: cifre + cerchietti ° (nero) della barra temp-range.
        *  Le decorazioni gialle (barra + triangolo) sono gia' sul canale
        *  0x28 grazie a drawTempRangeBarYellow chiamata prima di
-       *  firstPage(). Il centro orizzontale e' allineato al centro della
+       *  firstPage(). Il centro orizzontale è allineato al centro della
        *  riga sunset sopra. */
       drawTempRangeBarLabels(sunsetRowCenterX(colX), INDOOR_ROW3_BASELINE);
 
@@ -1097,7 +1097,7 @@ namespace Weather
     {
       display.setFullWindow();
       /**
-       * Epoch di riferimento per il calendario: se il meteo corrente e' valido
+       * Epoch di riferimento per il calendario: se il meteo corrente è valido
        * (modifica 20/04/26: ripreso da slots[0] per garantire data reale),
        * lo usiamo come "ora"; altrimenti Calendar::draw ripieghera' su time().
        */
@@ -1131,7 +1131,7 @@ namespace Weather
         /**
          * Calendar::draw riempie di bianco il proprio riquadro: riduce di fatto
          * l'area visibile dell'immagine di background. Il riquadro calendario
-         * e' posizionato subito a sinistra della sidebar. Il TZ applicato e'
+         * è posizionato subito a sinistra della sidebar. Il TZ applicato è
          * quello impostato da Calendar::initTimezone() in setup().
          */
         Calendar::draw(calEpoch);
@@ -1180,7 +1180,7 @@ namespace Weather
   }
 
   /**
-   * Ritorna FETCH_BOTH se e' scaduto INTERVAL_FORECAST (pilotato da
+   * Ritorna FETCH_BOTH se è scaduto INTERVAL_FORECAST (pilotato da
    * WEATHER_FORECAST_FETCH_MIN), altrimenti FETCH_NONE. Funzione pura:
    * non modifica stato e non tocca il WiFi. Usato da loop() nel .ino
    * per decidere se accendere il WiFi.
@@ -1197,10 +1197,10 @@ namespace Weather
 
   /**
    * Esegue il fetch indicato. Presuppone che il WiFi sia gia' connesso
-   * (WL_CONNECTED); non accende ne' spegne la radio. In caso di successo
-   * aggiorna entrambi i timer (current + forecast) perche' One Call 3.0
+   * (WL_CONNECTED); non accende nè spegne la radio. In caso di successo
+   * aggiorna entrambi i timer (current + forecast) perchè One Call 3.0
    * restituisce i due gruppi di dati in un'unica risposta, e marca il
-   * banner come "da ridisegnare". Ritorna true se la richiesta e' andata
+   * banner come "da ridisegnare". Ritorna true se la richiesta è andata
    * a buon fine.
    */
   inline bool runFetch(FetchKind kind)
@@ -1215,7 +1215,7 @@ namespace Weather
       needsRefresh   = true;
     }
     /**
-     * firstRun resta true finche' NON abbiamo sia meteo corrente che almeno
+     * firstRun resta true finchè NON abbiamo sia meteo corrente che almeno
      * una previsione valida: cosi' pendingFetch() continua a ritornare
      * FETCH_BOTH e ripete al giro successivo senza dover attendere l'intero
      * INTERVAL_*. La retry resta comunque throttled dal timeout HTTP.
@@ -1235,7 +1235,7 @@ namespace Weather
     if (needsRefresh)
     {
       /**
-       * Blocca il primo refresh finche' non arrivano meteo corrente (slots[0])
+       * Blocca il primo refresh finchè non arrivano meteo corrente (slots[0])
        * e almeno la prima previsione futura (slots[1]): evita un refresh
        * sprecato (~22 s) col banner a "--" al boot. Una volta disegnato il
        * primo frame i refresh successivi (rotazione bg, markDirty, ecc.)
@@ -1265,7 +1265,7 @@ namespace Weather
    * Sblocca il gate del primo refresh anche se i dati meteo non sono ancora
    * arrivati (es. timeout WiFi, API OWM irraggiungibile). Il banner verra'
    * disegnato con i placeholder "--" al posto dei valori mancanti.
-   * No-op se il primo refresh e' gia' stato eseguito: chiamate ripetute da
+   * No-op se il primo refresh è gia' stato eseguito: chiamate ripetute da
    * tentativi di connessione successivi non producono refresh inutili.
    */
   inline void forceFirstRender()

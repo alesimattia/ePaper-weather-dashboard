@@ -6,11 +6,11 @@
 
 /**
  * Icone meteo per il banner OpenWeatherMap.
- * Ogni icona e' un bitmap 1bpp 88x88 in PROGMEM (88*88/8 = 968 byte).
- * Il codice icona OpenWeatherMap e' del tipo "01d", "02n", ecc.
+ * Ogni icona è un bitmap 1bpp 88x88 in PROGMEM (88*88/8 = 968 byte).
+ * Il codice icona OpenWeatherMap è del tipo "01d", "02n", ecc.
  * (vedi https://openweathermap.org/weather-conditions).
  *
- * Le icone vere saranno sostituite dall'utente; qui c'e' solo un placeholder
+ * Le icone vere saranno sostituite dall'utente; qui c'è solo un placeholder
  * tutto bianco come fallback per far compilare lo sketch.
  *
  * Usato da: Weather.h (funzione renderBlock)
@@ -33,7 +33,7 @@ static const uint8_t ICON_PLACEHOLDER[ICON_SIZE * ICON_SIZE / 8] PROGMEM = {
 /**
  * Lookup dell'icona a partire dal codice OpenWeatherMap.
  * Ritorna un puntatore a un bitmap 88x88 1bpp in PROGMEM, oppure il
- * placeholder se il codice non e' mappato.
+ * placeholder se il codice non è mappato.
  *
  * Usato da: Weather.h (renderBlock)
  *
@@ -147,8 +147,8 @@ static const uint8_t INDOOR_ICON_PRESSURE[INDOOR_ICON_SIZE * 3] PROGMEM = {
 
 /**
  * Icona sunrise 20x20: 10 linee orizzontali progressivamente piu' larghe
- * verso l'alto. La riga piu' larga (20 px) e' in cima, la piu' stretta
- * (2 px) e' in basso: rappresenta il sole che sorge emanando raggi
+ * verso l'alto. La riga piu' larga (20 px) è in cima, la piu' stretta
+ * (2 px) è in basso: rappresenta il sole che sorge emanando raggi
  * crescenti. Spaziatura verticale di 1 riga vuota fra linee.
  * @since 22/04/26
  */
@@ -177,8 +177,8 @@ static const uint8_t INDOOR_ICON_SUNRISE[INDOOR_ICON_SIZE * 3] PROGMEM = {
 
 /**
  * Icona sunset 20x20: semicerchio (sole) che "tocca" una linea orizzontale
- * di orizzonte immediatamente sotto la base. Il semicerchio e' riempito e
- * copre la meta' superiore, la linea di orizzonte e' una singola riga a
+ * di orizzonte immediatamente sotto la base. Il semicerchio è riempito e
+ * copre la meta' superiore, la linea di orizzonte è una singola riga a
  * larghezza massima che si appoggia contro la base del sole.
  * @since 22/04/26
  */

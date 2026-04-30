@@ -5,7 +5,7 @@ Interfaccia grafica semplice per convertire PNG/JPG/WEBP/BMP/GIF in array
 PROGMEM C++ pronti da includere in uno sketch Arduino/ESP32.
 
 Output: file 'img_<nomeoriginale>.h' nella stessa cartella dello script,
-dove <nomeoriginale> e' lo stem dell'immagine sorgente sanitizzato per C
+dove <nomeoriginale> è lo stem dell'immagine sorgente sanitizzato per C
 (caratteri non alfanumerici sostituiti con underscore).
 
 Modalita' colore supportate (in ordine nella UI):
@@ -21,7 +21,7 @@ con l'input previsto dai metodi writeImage(black, color) dei driver GxEPD2).
 Dithering disponibili: Floyd-Steinberg, Atkinson, Bayer 8x8, nessuno (soglia).
 In RGB565 selezionando un dithering l'immagine viene prima quantizzata alla
 palette BWRY (4 colori) con l'algoritmo scelto e poi ricodificata in RGB565:
-il risultato e' un'immagine a colori saturi con pattern di dithering che il
+il risultato è un'immagine a colori saturi con pattern di dithering che il
 driver on-device rimappera' in modo pulito sulla propria palette nativa.
 
 Drag-and-drop: trascina un file immagine sulla finestra per caricarlo
@@ -55,7 +55,7 @@ except ImportError as e:
     )
     sys.exit(1)
 
-# tkinterdnd2 e' opzionale: se assente il drag-and-drop viene disabilitato
+# tkinterdnd2 è opzionale: se assente il drag-and-drop viene disabilitato
 # ma lo script resta utilizzabile con il pulsante "Sfoglia...".
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -294,7 +294,7 @@ def indices_to_channel_masks(indices, color_mode):
     """
     masks = {}
     if color_mode == "bw":
-        # Solo canale nero: True dove il pixel e' bianco (indice 0).
+        # Solo canale nero: True dove il pixel è bianco (indice 0).
         masks["black"] = (indices == 0)
     elif color_mode == "bwr":
         masks["black"] = (indices != 1)
@@ -314,7 +314,7 @@ def sanitize_identifier(stem):
     Sostituisce caratteri non alfanumerici con underscore, collassa underscore
     multipli e si assicura che il nome non inizi con una cifra. Il prefisso
     'img_' viene aggiunto dal chiamante, quindi un primo carattere numerico
-    e' comunque gestito automaticamente.
+    è comunque gestito automaticamente.
     """
     cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", stem)
     cleaned = re.sub(r"_+", "_", cleaned).strip("_")
@@ -509,7 +509,7 @@ class ConverterApp:
         Esegue fit alle dimensioni target e poi thumbnail a max 320 px di
         lato: la quantizzazione lavora su un'immagine piccola (velocissima
         anche per Atkinson). Restituisce (result_array, color_mode) oppure
-        None se non c'e' nulla da mostrare.
+        None se non c'è nulla da mostrare.
         """
         path = self.input_path.get().strip()
         if not path or not os.path.isfile(path):
@@ -655,7 +655,7 @@ class ConverterApp:
 
     def _load_and_process(self):
         """Carica, ridimensiona e quantizza. Restituisce (result, color_mode)
-        dove 'result' e' un np.ndarray di indici di palette per le modalita'
+        dove 'result' è un np.ndarray di indici di palette per le modalita'
         1bpp oppure un np.ndarray uint16 RGB565 per la modalita' 'rgb565'.
         """
         path = self.input_path.get().strip()
@@ -727,7 +727,7 @@ class ConverterApp:
                 "//",
                 "// NOTA: questo file usa GxEPDImage::Descriptor. Includilo DOPO",
                 "// l'header del driver (es. \"GxEPD2_097c_SOLUM_672x960.h\") che",
-                "// definisce il namespace GxEPDImage. Se il tipo non e' presente",
+                "// definisce il namespace GxEPDImage. Se il tipo non è presente",
                 "// puoi comunque usare gli array raw direttamente.",
                 "",
                 f"#ifndef {header_guard}",

@@ -9,26 +9,14 @@
 /**
  * Modulo header-only del sensore ambientale Bosch BME680 (I2C).
  *
- * Integrazione con libreria Bosch BSEC2 in modalita' ULP (sample period
- * = 300 s). BSEC fornisce T e RH heat-compensated, pressione raw e IAQ
- * calibrato (0-500) con livello di accuratezza 0..3. Lo stato del
- * calibratore viene salvato su NVS (namespace "bme680") ogni 6 ore e
- * ripristinato all'avvio, azzerando il warm-up dopo un power cycle.
+ * Integrazione con libreria Bosch BSEC2 in modalita' ULP (sample period = 300 s). 
+ * BSEC fornisce T e RH heat-compensated, pressione raw e IAQ calibrato (0-500) con livello di accuratezza 0..3. 
+ * Lo stato del calibratore viene salvato su NVS (namespace "bme680") ogni 6 ore 
+ * e ripristinato all'avvio, azzerando il warm-up dopo un power cycle.
  *
- * Il modulo e' locale: nessuna rete, nessuna UI in questa fase.
  * Lo sketch chiama refresh() ad ogni giro di loop() e, quando la
  * funzione ritorna true (nuovo campione BSEC pronto), invoca
  * Weather::markDirty() per innescare il refresh del display.
- *
- * Usato da: GxEPD2_1330c_GDEM133Z91.ino
- *
- * @since 21/04/26 Mattia Alesi
- */
-
-/* --- Configurazione BME680 (I2C) ---
- * Costanti locali al modulo: non sono segreti e non hanno motivo di
- * stare in Env.h. Cambiare qui se si sposta il sensore su altri pin
- * o se il breakout espone indirizzo 0x76 (SDO a GND).
  */
 #define BME680_I2C_ADDR   0x77
 #define BME680_SDA_PIN    21
@@ -37,10 +25,10 @@
 namespace Indoor
 {
   /**
-   * Ultimo campione prodotto dalla libreria BSEC2. Finche' BSEC non
-   * ha stabilizzato il primo output, valid=false e tutti i campi a
+   * Ultimo campione prodotto dalla libreria BSEC2. 
+   * Finchè BSEC non ha stabilizzato il primo output, valid=false e tutti i campi a
    * zero; dopo un cold start ci vogliono ~5 min per il primo sample
-   * (immediato invece quando lo stato e' stato ripristinato da NVS).
+   * (immediato invece quando lo stato è stato ripristinato da NVS).
    */
   struct Sample
   {
@@ -90,7 +78,7 @@ namespace Indoor
     }
 
     /**
-     * Callback invocato da BSEC quando e' pronto un nuovo set di output.
+     * Callback invocato da BSEC quando è pronto un nuovo set di output.
      * Aggiorna la cache `current` e setta il flag `hasNewSample` che
      * Indoor::refresh() leggera' al ritorno da bsec.run().
      * Firma imposta dalla libreria Bsec2.
@@ -132,7 +120,7 @@ namespace Indoor
 
     /**
      * Salva il blob dello stato BSEC in NVS. Chiamata solo quando
-     * l'accuratezza e' almeno 1 (evita di persistere stati transitori).
+     * l'accuratezza è almeno 1 (evita di persistere stati transitori).
      * @since 21/04/26 Mattia Alesi
      */
     inline void saveBsecState()
@@ -242,9 +230,9 @@ namespace Indoor
 
   /**
    * Polling non bloccante da chiamare ad ogni giro di loop().
-   * BSEC temporizza internamente i 5 min, quindi la chiamata e' a
-   * costo trascurabile quando nessun sample e' dovuto.
-   * @return true se un nuovo campione e' stato prodotto in questa
+   * BSEC temporizza internamente i 5 min, quindi la chiamata è a
+   * costo trascurabile quando nessun sample è dovuto.
+   * @return true se un nuovo campione è stato prodotto in questa
    *         chiamata: il chiamante usa il valore per innescare un
    *         refresh del display via Weather::markDirty().
    */
@@ -257,7 +245,7 @@ namespace Indoor
     if (!bsec.run())
     {
       // run() ritorna false anche quando semplicemente non ci sono dati:
-      // non e' un errore fatale. Logghiamo solo se lo status lo segnala.
+      // non è un errore fatale. Logghiamo solo se lo status lo segnala.
       if (bsec.status < BSEC_OK || bsec.sensor.status < BME68X_OK)
         Serial.printf("[BME680] run error (bsec=%d, sensor=%d)\n",
                       bsec.status, bsec.sensor.status);

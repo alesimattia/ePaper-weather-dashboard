@@ -12,7 +12,7 @@
 /**
  * Necessaria per GxEPD2 per indicare che il display usa il bus HSPI
  * (non il VSPI di default su ESP32).
- * Obbligatorio perche' la Waveshare E-Paper ESP32 Driver Board collega SCK/MISO/MOSI ai pin HSPI (13/12/14).
+ * Obbligatorio perchè la Waveshare E-Paper ESP32 Driver Board collega SCK/MISO/MOSI ai pin HSPI (13/12/14).
  */
 #define USE_HSPI_FOR_EPD
 
@@ -20,7 +20,7 @@
 // Cadenze operative del dispositivo. Tutti i valori sono in minuti interi
 // (WIFI_ACTIVE_HOUR_* sono ore locali).
 //
-// Il sampling BME680 (BSEC ULP, 5 min) NON e' configurabile da qui: fissato nel modulo Indoor.h
+// Il sampling BME680 (BSEC ULP, 5 min) NON è configurabile da qui: fissato nel modulo Indoor.h
 // I #define vanno dichiarati PRIMA degli include di Weather.h/Calendar.h/Ota.h
 // cosi' che i loro fallback #ifndef li raccolgano.
 // ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@
 
 /**
  * Timeout di boot per la connessione WiFi (millisecondi). Se entro questo
- * tempo dal setup() la STA non e' WL_CONNECTED, il primo refresh del display
+ * tempo dal setup() la STA non è WL_CONNECTED, il primo refresh del display
  * viene comunque sbloccato con i soli dati gia' disponibili (BME680 indoor +
  * placeholder "--" per meteo/calendari/cinema). Coerente col timeout di
  * wifiOn() usato fuori finestra OTA.
@@ -89,7 +89,7 @@ void initDisplay()
 {
 	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS
 	/**
-	 * 10 MHz e' il massimo raccomandato per i pannelli SSD1677 sul cablaggio
+	 * 10 MHz è il massimo raccomandato per i pannelli SSD1677 sul cablaggio
 	 * della Waveshare ESP32 Driver Board senza adattamenti.
 	 */
 	display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
@@ -137,7 +137,7 @@ static constexpr uint16_t CINEMA_STRIDE = (CINEMA_W + 7) / 8;					// 78
 static constexpr uint32_t CINEMA_PLANE_SZ = (uint32_t)CINEMA_STRIDE * CINEMA_H; // 34320
 static constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * 3;				// 102960
 
-// Buffer dinamici dei 3 piani scaricati (nullptr finche' il fetch non riesce).
+// Buffer dinamici dei 3 piani scaricati (nullptr finchè il fetch non riesce).
 static uint8_t *g_cinema_black = nullptr;
 static uint8_t *g_cinema_red = nullptr;
 static uint8_t *g_cinema_yellow = nullptr;
@@ -181,7 +181,7 @@ static bool g_cinema_attempted = false;
 static int g_cinema_last_fetch_day = -1;
 
 // Timestamp di boot (millis() al termine di setup()): usato per misurare il
-// timeout BOOT_WIFI_TIMEOUT_MS oltre il quale, se WiFi non si e' ancora
+// timeout BOOT_WIFI_TIMEOUT_MS oltre il quale, se WiFi non si è ancora
 // connesso, si sblocca comunque il primo refresh del display.
 static uint32_t g_boot_start_ms = 0;
 
@@ -230,14 +230,14 @@ static void freeCinemaBuffers()
 }
 
 /**
- * Decide se e' il momento di fare un fetch dell'immagine cinema.
+ * Decide se è il momento di fare un fetch dell'immagine cinema.
  *
  * Due trigger possibili:
  *   1. PRIMO BOOT: se non abbiamo mai tentato (g_cinema_attempted = false)
  *      in questa sessione, fetch immediato al primo giro con WiFi up.
  *   2. DAILY REFRESH: una volta al giorno, alla prima finestra WiFi
  *      dell'hour CINEMA_DAILY_FETCH_HOUR local (apertura della finestra
- *      WiFi mattutina), cosi' la locandina e' fresca dal primo accesso
+ *      WiFi mattutina), cosi' la locandina è fresca dal primo accesso
  *      del giorno.
  *
  * Richiede NTP sincronizzato per il trigger daily: senza data/ora corrette
@@ -268,7 +268,7 @@ static bool shouldFetchCinema()
  * Chiamata DOPO il fetch meteo e PRIMA dei fetch calendari.
  *
  * Sequenza:
- *   1. Early return se shouldFetchCinema() nega (gia' tentato / non e' il
+ *   1. Early return se shouldFetchCinema() nega (gia' tentato / non è il
  *      momento / NTP non pronto).
  *   2. Early return se WiFi non connesso: fallback PROGMEM fino al prossimo
  *      giro con WiFi up.
@@ -309,7 +309,7 @@ static void fetchCinemaImage()
 		}
 	}
 	// Libera l'immagine precedente (no-op al primo boot) e ripristina il
-	// fallback PROGMEM come "immagine corrente" finche' il nuovo download
+	// fallback PROGMEM come "immagine corrente" finchè il nuovo download
 	// non completa con successo.
 	freeCinemaBuffers();
 	g_cinema_desc = &img_apple_bwry_desc;
@@ -370,7 +370,7 @@ static void fetchCinemaImage()
 		size_t read = 0;
 		uint32_t t0 = millis();
 		// Wall-clock guard 45s per piano: se readBytes ritorna in modo
-		// frazionario (n>0 ma < richiesto) e la rete e' lenta, evita di
+		// frazionario (n>0 ma < richiesto) e la rete è lenta, evita di
 		// accumulare timeout >45s totali sul singolo piano.
 		while (read < CINEMA_PLANE_SZ && (millis() - t0) < 45000UL)
 		{
@@ -402,8 +402,8 @@ static void fetchCinemaImage()
  * Disegna il background corrente (PROGMEM fallback o dinamico scaricato)
  * dentro il paged loop di Weather::renderFrame().
  *
- * GxEPDImage::showImage() e' compatibile con entrambi i tipi di buffer:
- * su ESP32 pgm_read_byte() e' una normale dereferenza, funziona identica
+ * GxEPDImage::showImage() è compatibile con entrambi i tipi di buffer:
+ * su ESP32 pgm_read_byte() è una normale dereferenza, funziona identica
  * su PROGMEM e su RAM/PSRAM.
  *
  * --- ESEMPIO USO CON IMMAGINE PROGMEM (storica, commentato) --------------
@@ -470,7 +470,7 @@ static void wifiOff()
 /**
  * Restituisce true se l'ora locale rientra nella finestra di fetch
  * (WIFI_ACTIVE_HOUR_START..WIFI_ACTIVE_HOUR_END). Fuori da questa fascia
- * il WiFi resta spento. Se NTP non e' ancora sincronizzato lascia passare
+ * il WiFi resta spento. Se NTP non è ancora sincronizzato lascia passare
  * per permettere il primo sync all'avvio.
  */
 static bool isActiveHour()
@@ -517,7 +517,7 @@ void setup()
  *
  * Durante la finestra OTA (OTA_WINDOW_MIN dal boot) la radio resta accesa in
  * AP_STA: il web server processa eventuali upload firmware,
- * e in parallelo non appena la STA e' WL_CONNECTED,
+ * e in parallelo non appena la STA è WL_CONNECTED,
  * Weather::runFetch() scarica il meteo.
  * Niente light sleep qui, altrimenti il WebServer non risponderebbe.
  *
@@ -534,7 +534,7 @@ void loop()
 	{
 		Ota::handle();
 		/**
-		 * La STA e' gia' in risalita grazie ad AP_STA: quando e' connessa, smaltiamo
+		 * La STA è gia' in risalita grazie ad AP_STA: quando è connessa, smaltiamo
 		 * i fetch pendenti senza passare per wifiOn()/wifiOff()
 		 * (che spegnerebbero anche l'AP in corso)
 		 */
@@ -556,7 +556,7 @@ void loop()
 			/**
 			 * Sblocca il gate del primo refresh dopo il primo tentativo di fetch:
 			 * cosi' il display viene disegnato non appena il meteo viene scaricato, anche
-			 * se la chiamata One Call e' fallita (placeholder "--" per i dati mancanti).
+			 * se la chiamata One Call è fallita (placeholder "--" per i dati mancanti).
 			 * No-op dopo il primo refresh.
 			 */
 			Weather::forceFirstRender();

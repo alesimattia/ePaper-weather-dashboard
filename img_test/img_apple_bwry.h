@@ -5,7 +5,7 @@
 //
 // NOTA: questo file usa GxEPDImage::Descriptor. Includilo DOPO
 // l'header del driver (es. "GxEPD2_097c_SOLUM_672x960.h") che
-// definisce il namespace GxEPDImage. Se il tipo non e' presente
+// definisce il namespace GxEPDImage. Se il tipo non è presente
 // puoi comunque usare gli array raw direttamente.
 
 #ifndef IMG_APPLE_BWRY_H

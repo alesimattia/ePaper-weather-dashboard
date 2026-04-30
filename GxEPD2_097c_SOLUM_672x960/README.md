@@ -313,6 +313,7 @@ adottati negli altri driver moderni della libreria.
 | Reset `_preserve_yellow` post-refresh | n/a | centralizzato in `_Update_Full()` | ✓ corretto |
 | Reset `_preserve_yellow` in `hibernate()` | n/a | sì (simmetria con refresh) | ✓ corretto |
 | Loop pixel di `showImage` | itera tutti i pixel × tutte le 8 page (drawPixel early-return) | row-skip rotation-aware via page-hint counter (1/8 delle iterazioni) | ✓ ottimizzato (~145 ms/refresh) |
+| Transfer SPI verso il controller | per-byte `_pSPIx->transfer(uint8_t)` (~1.5 μs/byte) | row-buffered via `_pSPIx->writeBytes(buf, n)` (FIFO 64-byte ESP32, ~0.1 μs/byte effettivi) | ✓ ottimizzato (~290 ms/refresh) |
 
 ### Dettaglio delle ottimizzazioni
 
@@ -354,6 +355,24 @@ adottati negli altri driver moderni della libreria.
   fuori dal loop interno e fallback al loop completo per rotation 1/3
   (90°, dove la skip-by-row non si applica perché le righe sorgente
   mappano sull'asse x dell'output).
+- **Bulk SPI transfer**: i tre hot path SPI (`_writeImage`,
+  `_writeImagePart`, `_writeScreenBuffer`) usano `_pSPIx->writeBytes(buf, n)`
+  invece di `_transfer(uint8_t)` per-byte. Il base class `GxEPD2_EPD`
+  espone `_pSPIx` come `protected`, quindi il subclass può chiamarlo
+  direttamente. Il loop interno popola un buffer di stack
+  (120 byte/riga per le immagini, 256 byte di chunk per la scrittura
+  costante) e lo scarica con `writeBytes` che usa la FIFO 64-byte
+  dell'ESP32 + DMA, raggiungendo il limite teorico del clock SPI
+  (~0.1 μs/byte effettivi vs ~1.5 μs/byte della transfer per-byte upstream
+  — `_writeData(buf, n)` di `GxEPD2_EPD` è anch'esso un loop per-byte di
+  `transfer()`, NON un bulk vero, vedi
+  [GxEPD2-master/src/GxEPD2_EPD.cpp:197-207](../GxEPD2-master/src/GxEPD2_EPD.cpp#L197-L207)).
+  Su un refresh full-window worst-case (~322 KB SPI con cleanup accent
+  dirty), il tempo totale di transfer SPI passa da ~480 ms a ~190 ms:
+  **risparmio ~290 ms per refresh**. Stack temporaneo aggiunto:
+  ~120 byte per `_writeImage`/`_writeImagePart`, ~256 byte per
+  `_writeScreenBuffer`. API pubblica invariata, ottimizzazione
+  trasparente.
 
 ## 6. API completa
 

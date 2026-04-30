@@ -14,10 +14,10 @@ Il puntatore `g_cinema_desc` viene swappato a `&g_cinema_dynamic_desc` solo all'
 
 **Integrazione con il loop:** chiamato sia nel ramo OTA window sia nel ramo on-demand WiFi, sempre tra `Weather::runFetch()` e i fetch calendari (Outlook/Google), nella stessa finestra WiFi.
 
-**Why:** L'utente vuole il risveglio render.com alla prima connessione utile della mattina, allineato all'apertura della finestra WiFi (`WIFI_ACTIVE_HOUR_START = 7`). La costante `CINEMA_DAILY_FETCH_HOUR` e' tenuta separata da `WIFI_ACTIVE_HOUR_START` per poter spostare l'una senza toccare l'altra.
+**Why:** L'utente vuole il risveglio render.com alla prima connessione utile della mattina, allineato all'apertura della finestra WiFi (`WIFI_ACTIVE_HOUR_START = 7`). La costante `CINEMA_DAILY_FETCH_HOUR` è tenuta separata da `WIFI_ACTIVE_HOUR_START` per poter spostare l'una senza toccare l'altra.
 
 **How to apply:**
 - L'URL e i parametri stanno hardcoded nel `.ino` (scelta esplicita: niente `Env.h`).
-- Render.com free tier dorme dopo 15 min: c'e' un workflow GitHub Actions `webapp/.github/workflows/keep-warm.yml` che pinga `/health` alle 06:55 CET/CEST per scaldare il server prima del fetch ESP32 alle 07:00.
+- Render.com free tier dorme dopo 15 min: c'è un workflow GitHub Actions `webapp/.github/workflows/keep-warm.yml` che pinga `/health` alle 06:55 CET/CEST per scaldare il server prima del fetch ESP32 alle 07:00.
 - HTTP timeout = 45s (accomoda cold start render.com 10-30s).
-- Se modifichi il formato del body lato webapp, aggiorna anche il parser nel `.ino`: oggi e' `for (p = 0..2) readBytes(planes[p], CINEMA_PLANE_SZ)`.
+- Se modifichi il formato del body lato webapp, aggiorna anche il parser nel `.ino`: oggi è `for (p = 0..2) readBytes(planes[p], CINEMA_PLANE_SZ)`.

@@ -1,6 +1,6 @@
 ---
 name: Fallback PROGMEM e RAM/PSRAM via descriptor unico
-description: Perche' GxEPDImage::showImage funziona uguale per dati Flash e dati RAM su ESP32
+description: Perchè GxEPDImage::showImage funziona uguale per dati Flash e dati RAM su ESP32
 type: project
 ---
 
@@ -12,7 +12,7 @@ type: project
 
 **Why (deduzione architetturale, non documentata esplicitamente nel driver):**
 - Su AVR (Arduino UNO, Mega) `PROGMEM` vive in spazio Harvard separato dalla RAM: per leggere serve `pgm_read_byte()` con un opcode dedicato.
-- Su ESP32 (memoria piatta von Neumann, mappa lineare) `pgm_read_byte(p)` e' definito come `(*(const uint8_t*)(p))`, cioe' una normale dereferenza, indipendentemente da dove punta `p` (Flash, IRAM, DRAM, PSRAM).
+- Su ESP32 (memoria piatta von Neumann, mappa lineare) `pgm_read_byte(p)` è definito come `(*(const uint8_t*)(p))`, cioè una normale dereferenza, indipendentemente da dove punta `p` (Flash, IRAM, DRAM, PSRAM).
 - Quindi `GxEPDImage::showImage` puo' usare `pgm_read_byte()` in modo uniforme: legge correttamente sia da `.h` PROGMEM hardcoded sia da `malloc()`/`heap_caps_malloc(MALLOC_CAP_SPIRAM)`.
 
 **Conseguenze pratiche:**
@@ -21,5 +21,5 @@ type: project
 - Se in futuro il firmware girasse su un AVR (improbabile ma possibile come retrofit didattico), questo trucco si rompe: serve duplicare `showImage` in versione "PROGMEM-only" e "RAM-only".
 
 **Effetto sulla progettazione del fetch:**
-- `freeCinemaBuffers()` libera la RAM e ripuntare `g_cinema_desc = &img_apple_bwry_desc` riporta a un descrittore in Flash. Lo swap e' atomico per il rendering perche' il puntatore e' una variabile statica (anche se non `volatile`, il loop del display e' single-thread sul core principale: nessun lock necessario).
+- `freeCinemaBuffers()` libera la RAM e ripuntare `g_cinema_desc = &img_apple_bwry_desc` riporta a un descrittore in Flash. Lo swap è atomico per il rendering perchè il puntatore è una variabile statica (anche se non `volatile`, il loop del display è single-thread sul core principale: nessun lock necessario).
 - L'immagine fallback PROGMEM costa solo Flash (~100 KB) gia' inclusa nel firmware: nessun runtime overhead.

@@ -171,7 +171,7 @@ costanti locali al modulo, non segreti.
 
 ## Driver custom GxEPD2_097c_SOLUM_672x960
 
-Il driver e' **header-only** (`inline` nell'`.h`, nessuna `.cpp`) e nasce
+Il driver è **header-only** (`inline` nell'`.h`, nessuna `.cpp`) e nasce
 come fork di
 [`GxEPD2_1330c_GDEM133Z91`](https://github.com/ZinggJM/GxEPD2/blob/master/src/epd3c/GxEPD2_1330c_GDEM133Z91.cpp)
 (pannello Good Display 13.3" 3-colori, stesso controller SSD1677).
@@ -183,7 +183,7 @@ Implementa la sequenza di comandi specifica del SOLUM 9.7" e introduce
 2. **API single-channel** `writeImageBlack` / `writeImageRed` /
    `writeImageYellow` per scrittura diretta sul controller.
 3. **Pattern "yellow out-of-band"** — il giallo (`0x28`) viene iniettato
-   prima del loop paged e protetto via `preserveYellow(true)`, perche' il
+   prima del loop paged e protetto via `preserveYellow(true)`, perchè il
    template upstream `GxEPD2_3C` ha un'architettura hard-coded a 2 canali.
 4. **Sistema di descrittori universali** (`GxEPDImage::Descriptor`) con
    formato + dimensioni dell'immagine (BW / BWR / BWRY).
@@ -258,7 +258,7 @@ Scheduler + fetch OpenWeather One Call 3.0 + rendering del banner meteo.
   tentativo di fetch durante la finestra OTA, cosi' il display si
   aggiorna non appena il meteo scende, e (b) su timeout `wifiOn()` nel
   ramo normale, cosi' il display parte comunque con placeholder `--`
-  dove mancano dati. Dopo il primo refresh la funzione e' un no-op:
+  dove mancano dati. Dopo il primo refresh la funzione è un no-op:
   i refresh successivi tornano a essere pilotati da `needsRefresh`
   (rotazione background, `markDirty()`, nuovi sample BME680).
 
@@ -350,6 +350,32 @@ parallelo al router di casa in modo che `Weather::runFetch()` possa
 girare anche durante la finestra OTA. Scaduta la finestra, `endNow()`
 spegne AP e WebServer e mette la radio in `WIFI_OFF`, restituendo il
 ciclo normale a light-sleep on-demand.
+
+#### Pagina `/update` nativa minimale
+
+`Ota.h` serve una pagina HTML **propria** (`detail::UPDATE_PAGE_HTML` in
+`PROGMEM`, ~210 byte) sia su `GET /` che su `GET /update`, sostituendo
+la pagina default di `HTTPUpdateServer` (~600 byte di HTML con CSS
+inline non necessario per il caso d'uso "tecnico di campo, una sola
+volta per device"). I nostri handler sono registrati **prima** di
+`updater.setup()`: il `WebServer` ESP32 matcha i route in ordine FIFO
+(first-match-wins), quindi la nostra pagina vince sul default su
+`GET /update`. Il `POST /update` (logica reale di upload + flash) resta
+gestito da `HTTPUpdateServer`, intoccato — niente conflitto perché i
+metodi HTTP differiscono.
+
+Vantaggio rispetto alla soluzione precedente con redirect 301 `/` → `/update`:
+
+| Pattern di accesso | Prima (301 + default page) | Adesso (pagina nativa) | Saving |
+|---|---|---|---|
+| Client digita `http://192.168.4.1/` | 2 round-trip TCP + ~650 byte | 1 round-trip + ~210 byte | **~10-25 ms + ~440 byte** |
+| Client digita `http://192.168.4.1/update` | 1 round-trip + ~600 byte | 1 round-trip + ~210 byte | **~1 ms + ~390 byte** |
+
+Il guadagno principale viene dall'eliminazione del round-trip extra del
+301 (su AP WiFi locale ~5-20 ms per RTT) e dal payload HTML 65% più
+piccolo. Costo: ~210 byte di flash aggiuntivi per la stringa PROGMEM.
+La pagina default di `HTTPUpdateServer` resta nel codice della libreria
+(non eliminabile senza forkarla) ma non viene mai servita.
 
 ---
 
@@ -689,7 +715,7 @@ freddo. Il workflow
 pinga `/health` a 06:55 local (due cron UTC per coprire DST CET/CEST),
 mantenendo render warm nei 5 min prima del fetch ESP32. Setup zero:
 basta pushare il workflow insieme alla webapp su GitHub. Render free
-tier non supporta cron nativi (sono paid-only); GitHub Actions e'
+tier non supporta cron nativi (sono paid-only); GitHub Actions è
 gratis (~30 min/mese consumati).
 
 ### Dimensionamento e PSRAM

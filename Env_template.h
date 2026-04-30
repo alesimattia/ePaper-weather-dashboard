@@ -24,14 +24,14 @@
 /**
  * Credenziali della rete AP che il dispositivo espone al boot per la
  * finestra di aggiornamento OTA (durata OTA_WINDOW_MIN, default 3 min).
- * La password deve essere lunga almeno 8 caratteri perche' WPA2 lo richiede.
+ * La password deve essere lunga almeno 8 caratteri perchè WPA2 lo richiede.
  */
 #define OTA_AP_SSID     "ePaper-OTA"
 #define OTA_AP_PASSWORD "epaper"
 
 /**
  * Credenziali Microsoft Graph per leggere il calendario Outlook.
- * Il flusso e' "refresh token"-based: il dispositivo non fa login
+ * Il flusso è "refresh token"-based: il dispositivo non fa login
  * interattivo, ma usa un refresh token ottenuto una tantum da PC.
  *
  * Come ricavare i valori:
@@ -41,7 +41,7 @@
  *  3. Eseguire un auth-code-flow su PC per ottenere il refresh token
  *     (es. script Python con MSAL) e incollarlo qui sotto.
  *
- * Il TENANT_ID non e' un segreto: sta in Calendar.h come
+ * Il TENANT_ID non è un segreto: sta in Calendar.h come
  * CAL_MSGRAPH_TENANT_ID.
  */
 #define MSGRAPH_CLIENT_ID     "00000000-0000-0000-0000-000000000000"

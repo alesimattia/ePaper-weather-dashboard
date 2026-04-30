@@ -4,7 +4,7 @@ description: /cinema/arduino ritorna solo i piani 1bpp MSB-packed concatenati, s
 type: feedback
 ---
 
-Il body HTTP di `/cinema/arduino` e' SOLO i piani 1bpp MSB-packed concatenati, nessun header. Ordine piani deterministico: `bw=[black]`, `bwr=[black,red]`, `bwry=[black,red,yellow]`. Convenzione bit compatibile GxEPD2: `1` = pixel NON appartiene a quel colore (cioe' bianco/default per quel canale).
+Il body HTTP di `/cinema/arduino` è SOLO i piani 1bpp MSB-packed concatenati, nessun header. Ordine piani deterministico: `bw=[black]`, `bwr=[black,red]`, `bwry=[black,red,yellow]`. Convenzione bit compatibile GxEPD2: `1` = pixel NON appartiene a quel colore (cioè bianco/default per quel canale).
 
 Stride = `ceil(width/8)`. Padding di riga riempito con bit=1. `Content-Length` atteso = `N_planes * stride * height` (vedi `cinema_blob_math.md` per i numeri concreti).
 
