@@ -83,7 +83,11 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 
 ```
 .
-├── GxEPD2_097c_SOLUM_672x960.h     # Driver custom header-only (classe + namespace GxEPDImage)
+├── GxEPD2_097c_SOLUM_672x960/      # Cartella driver SOLUM 9.7"
+│   ├── GxEPD2_097c_SOLUM_672x960.h     # Driver custom header-only (classe + namespace GxEPDImage)
+│   ├── README.md                       # Documentazione dedicata del driver
+│   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
+│   └── drawImage_overloads_it.md       # Idem in italiano
 ├── GxEPD2_1330c_GDEM133Z91.ino     # Sketch principale: orchestra Weather/Calendar/Ota
 ├── Env.h                           # Segreti (WiFi, OWM, OTA, OAuth) + posizione GPS
 ├── Weather.h                       # Fetch OWM + rendering banner meteo (4 blocchi)
@@ -96,9 +100,7 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
 ├── img_test/
 │   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
-├── DOCS/
-│   ├── drawImage_overloads.md      # Lista signature drawImage* (EN)
-│   └── drawImage_overloads_it.md   # Idem in italiano
+├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
 ├── LICENSE
 └── README.md
 ```
@@ -465,8 +467,14 @@ Layout finale sul pannello 960×672:
 | Banner Weather    | `x=169..475, y=465..667`  | 306×202 fieldset, meteo corrente + sub-col sun a destra |
 | Banner Forecast   | `x=485..955, y=465..667`  | 470×202 fieldset, 3 slot previsioni da ~156 px          |
 
-L'anteprima statica del layout è in
-[`preview.html`](preview.html) (aprire in un browser).
+Anteprima statica del layout (rendering nativo GitHub via SVG):
+
+![Anteprima layout 960×672](DOCS/preview.svg)
+
+> La versione HTML interattiva equivalente è in [`preview.html`](preview.html)
+> (offre stile più ricco, calendario popolato dinamicamente da JS sul mese
+> corrente e lista eventi di esempio; il contenuto strutturale è lo stesso
+> dell'SVG sopra). Aprire in un browser per la consultazione offline.
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner

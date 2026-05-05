@@ -65,7 +65,7 @@
 #include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h" //Custom driver
 
 // Fallback wallpaper offline: immagine PROGMEM
-#include "img_test/img_apple_bwry.h" //img_apple_bwry_desc
+#include "img_wallpaper/img_apple_bwry.h" //img_apple_bwry_desc
 
 /** Weather.h contiene logica, fetch OpenWeather One Call 3.0, cache,
  * rendering banner. Il .ino si limita ad accendere/spegnere il WiFi
@@ -124,7 +124,7 @@ static constexpr const char *CINEMA_URL =
  * GxEPDImage::showImage() disegna pixel per pixel da (0,0) usando la
  * width/height del Descriptor, senza alcun clipping rispetto a queste
  * costanti. Significa che la sorgente (sia il dinamico fetchato dal
- * server cinema sia il fallback PROGMEM in img_test/img_apple_bwry.h)
+ * server cinema sia il fallback PROGMEM in img_wallpaper/img_apple_bwry.h)
  * deve essere generata gia' a 620x440 esatti.
  * Una sorgente piu' alta di 440 invade la fascia bianca 440..460 di
  * separazione e arriva fino al banner (BANNER_Y=460); una sorgente piu'
@@ -410,7 +410,7 @@ static void fetchCinemaImage()
  *   // Se in futuro vuoi tornare a un'immagine PROGMEM hardcoded (es.
  *   // slideshow multi-immagine generato da epd_image_converter.pyw):
  *   //
- *   // #include "img_test/my_image.h"   // genera my_image_desc
+ *   // #include "img_wallpaper/my_image.h"   // genera my_image_desc
  *   // GxEPDImage::showImage(display, my_image_desc);
  *   //
  *   // Per piu' immagini in rotazione:
