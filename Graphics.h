@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h"
+#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
 
 /**
  * Utility di disegno condivise fra i moduli (Weather, Calendar).
@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino).
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 8> display;
+extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display;
 
 namespace Graphics
 {

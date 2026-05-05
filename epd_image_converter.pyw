@@ -726,7 +726,7 @@ class ConverterApp:
                 f"// Generato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 "//",
                 "// NOTA: questo file usa GxEPDImage::Descriptor. Includilo DOPO",
-                "// l'header del driver (es. \"GxEPD2_097c_SOLUM_672x960.h\") che",
+                "// l'header del driver (es. \"GxEPD2_SOLUM_097c_960x672.h\") che",
                 "// definisce il namespace GxEPDImage. Se il tipo non è presente",
                 "// puoi comunque usare gli array raw direttamente.",
                 "",
@@ -797,7 +797,7 @@ class ConverterApp:
             # Descrittore unificato prima degli array.
             # Forward declarations necessarie perché gli array sono definiti dopo.
             lines.extend([
-                "#ifdef _GxEPD2_097c_SOLUM_672x960_H_",
+                "#ifdef _GxEPD2_SOLUM_097c_960x672_H_",
                 *fwd_decls,
                 "",
                 f"const GxEPDImage::Descriptor {descriptor_name} = {{",

@@ -4,7 +4,7 @@ description: Perchè g_cinema_attempted e g_cinema_last_fetch_day vengono settat
 type: feedback
 ---
 
-In `ePaper-weather-dashboard.ino:fetchCinemaImage()` i flag di stato sono aggiornati IMMEDIATAMENTE dopo il check WiFi, PRIMA di qualunque operazione che possa fallire (alloc PSRAM, HTTP begin/GET, readBytes):
+In `ePaper-weather-dashboard-097c.ino:fetchCinemaImage()` i flag di stato sono aggiornati IMMEDIATAMENTE dopo il check WiFi, PRIMA di qualunque operazione che possa fallire (alloc PSRAM, HTTP begin/GET, readBytes):
 
 ```cpp
 g_cinema_attempted = true;

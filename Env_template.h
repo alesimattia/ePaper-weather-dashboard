@@ -48,16 +48,26 @@
 #define MSGRAPH_REFRESH_TOKEN "paste_refresh_token_here"
 
 /**
- * Credenziali Google Calendar API (OAuth2 refresh-token flow).
+ * Credenziali Google API (OAuth2 refresh-token flow).
+ * Lo stesso refresh_token e' condiviso fra Calendar.h (Calendar::Google) e
+ * Mail.h: l'access_token risultante deve coprire ENTRAMBI gli scope.
  *
  * Come ricavare i valori:
- *  1. Google Cloud Console -> crea progetto -> abilita "Google Calendar API".
- *  2. OAuth consent screen -> External, aggiungi scope
- *     "https://www.googleapis.com/auth/calendar.readonly".
+ *  1. Google Cloud Console -> crea progetto -> abilita "Google Calendar API"
+ *     E "Gmail API".
+ *  2. OAuth consent screen -> External, aggiungi ENTRAMBI gli scope:
+ *     "https://www.googleapis.com/auth/calendar.readonly"
+ *     "https://www.googleapis.com/auth/gmail.readonly"
  *  3. Crea credenziali OAuth 2.0 Client ID di tipo "Desktop app":
  *     annota CLIENT_ID e CLIENT_SECRET.
  *  4. Esegui un auth-code flow su PC (es. script Python con
- *     google-auth-oauthlib) per ottenere il refresh token e incollalo.
+ *     google-auth-oauthlib) chiedendo entrambi gli scope con prompt=consent
+ *     per forzare la riemissione del refresh_token. Incolla il valore qui.
+ *
+ * IMPORTANTE: se aggiungi lo scope Gmail a un consent gia' esistente, il
+ * vecchio refresh_token NON ottiene automaticamente il nuovo scope: va
+ * rieseguito il flusso di autorizzazione e sostituito GOOGLE_REFRESH_TOKEN.
+ * Verifica con curl ENTRAMBI gli endpoint prima di sostituire il valore qui.
  */
 #define GOOGLE_CLIENT_ID      "0000000000-xxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
 #define GOOGLE_CLIENT_SECRET  "paste_client_secret_here"

@@ -1,5 +1,5 @@
 ---
-name: Driver custom GxEPD2_097c_SOLUM_672x960
+name: Driver custom GxEPD2_SOLUM_097c_960x672
 description: Pointer al README dedicato + sintesi vincoli architetturali del driver SOLUM 4-color SSD1677
 type: reference
 ---
@@ -7,7 +7,7 @@ type: reference
 Il driver custom del pannello SOLUM 9.7" (672×960, controller SSD1677, 4 colori
 nativi B/W/R/Y) ha una **doc dedicata** in:
 
-[c:\epd\GxEPD2_097c_SOLUM_672x960\README.md](../../GxEPD2_097c_SOLUM_672x960/README.md)
+[c:\epd\GxEPD2_SOLUM_097c_960x672\README.md](../../GxEPD2_SOLUM_097c_960x672/README.md)
 
 Quel file contiene tutto il dettaglio: motivazione, API (`showImage`,
 `writeImageBlack/Red/Yellow`, `preserveYellow`), pattern "yellow out-of-band",

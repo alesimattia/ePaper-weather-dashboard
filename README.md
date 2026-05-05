@@ -12,7 +12,7 @@ bianco, nero, rosso, giallo) che aggiunge:
   B/N (formato [image2cpp](https://javl.github.io/image2cpp/));
 - **3 API siblings uniformi** `writeImageBlack` / `writeImageRed` /
   `writeImageYellow` per scrittura single-channel, usate nel flusso
-  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_097c_SOLUM_672x960/README.md#3-perché-il-yellow-è-out-of-band-nel-flusso-paged));
+  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_SOLUM_097c_960x672/README.md#3-perché-il-yellow-è-out-of-band-nel-flusso-paged));
 - un **sistema di descrittori universale** (`GxEPDImage::Descriptor`) che
   porta con sé formato e dimensioni dell'immagine (BW / BWR / BWRY);
 - **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
@@ -37,6 +37,9 @@ Lo sketch principale compone uno schermo completo con:
   (Microsoft Graph) e **Google Calendar** ordinati per inizio: gli
   eventi di oggi sono colorati in rosso, gli altri in nero, con evento
   in corso (end nel futuro) mantenuto fino al termine effettivo;
+- **lettura ultime mail Gmail** in cache (default 5 mail, INBOX).
+  Modulo `Mail.h` solo download/cache: per ora **niente UI**, predisposto
+  per il rendering futuro. Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
   impostato da `Calendar::initTimezone()` in `setup()`);
 - **finestra OTA** al boot (default 3 min, `OTA_WINDOW_MIN`) via AP WiFi
@@ -54,7 +57,7 @@ ogni modifica dei parametri.
 - [Hardware supportato](#hardware-supportato)
 - [Struttura del repository](#struttura-del-repository)
 - [Configurazione (Env.h)](#configurazione-envh)
-- [Driver custom GxEPD2_097c_SOLUM_672x960](#driver-custom-gxepd2_097c_solum_672x960) (→ [doc dedicata](GxEPD2_097c_SOLUM_672x960/README.md))
+- [Driver custom GxEPD2_SOLUM_097c_960x672](#driver-custom-gxepd2_solum_097c_960x672) (→ [doc dedicata](GxEPD2_SOLUM_097c_960x672/README.md))
 - [Moduli applicativi](#moduli-applicativi)
 - [Sketch principale](#sketch-principale)
 - [Flussi di boot e timeout](#flussi-di-boot-e-timeout)
@@ -83,11 +86,16 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 
 ```
 .
-├── GxEPD2_097c_SOLUM_672x960.h     # Driver custom header-only (classe + namespace GxEPDImage)
+├── GxEPD2_SOLUM_097c_960x672/      # Cartella driver SOLUM 9.7"
+│   ├── GxEPD2_SOLUM_097c_960x672.h     # Driver custom header-only (classe + namespace GxEPDImage)
+│   ├── README.md                       # Documentazione dedicata del driver
+│   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
+│   └── drawImage_overloads_it.md       # Idem in italiano
 ├── GxEPD2_1330c_GDEM133Z91.ino     # Sketch principale: orchestra Weather/Calendar/Ota
 ├── Env.h                           # Segreti (WiFi, OWM, OTA, OAuth) + posizione GPS
 ├── Weather.h                       # Fetch OWM + rendering banner meteo (4 blocchi)
 ├── Calendar.h                      # Mese + lista eventi Outlook+Google + TZ Europe/Rome
+├── Mail.h                          # Lettura ultime N mail Gmail via batch endpoint (cache only, no UI)
 ├── Indoor.h                        # Sensore BME680 via I2C (BSEC2 ULP, IAQ+T+RH, persistenza NVS)
 ├── Ota.h                           # Finestra OTA (OTA_WINDOW_MIN, default 3 min) via AP WiFi dedicato
 ├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
@@ -96,9 +104,7 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
 ├── img_test/
 │   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
-├── DOCS/
-│   ├── drawImage_overloads.md      # Lista signature drawImage* (EN)
-│   └── drawImage_overloads_it.md   # Idem in italiano
+├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
 ├── LICENSE
 └── README.md
 ```
@@ -153,9 +159,18 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 | `OTA_AP_PASSWORD`       | si | Minimo 8 caratteri (limite WPA2). Unico gate sulla `/update`.    |
 | `MSGRAPH_CLIENT_ID`     | opz | Client pubblico Azure AD con scope `Calendars.Read offline_access`. Omettere tutti e due i MSGRAPH_* se non si usa Outlook. |
 | `MSGRAPH_REFRESH_TOKEN` | opz | Refresh token ottenuto da PC via MSAL.                          |
-| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa Google Calendar. |
+| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa ne' Google Calendar ne' Gmail. |
 | `GOOGLE_CLIENT_SECRET`  | opz | Client secret della stessa app.                                 |
-| `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly`.                    |
+| `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly` **e/o** `gmail.readonly` (vedi sotto). |
+
+> ℹ️ **Refresh token Google condiviso fra Calendar e Mail**. `Mail.h` riusa
+> `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REFRESH_TOKEN`: se
+> abiliti entrambi i moduli (Calendar Google + Mail), il refresh_token deve
+> essere stato emesso con **scope unificati** `calendar.readonly` +
+> `gmail.readonly`. Per aggiungere il modulo Mail a un progetto che gia'
+> usa il Calendar: ri-esegui il flusso OAuth (con `prompt=consent`)
+> chiedendo entrambi gli scope, sostituisci `GOOGLE_REFRESH_TOKEN` con il
+> nuovo valore e abilita la **Gmail API** sullo stesso progetto Cloud.
 
 I parametri **non-sensibili e non-accoppiati ai segreti** (fuso orario,
 tenant Azure pubblico) non stanno in `Env.h` ma nei moduli consumer:
@@ -169,7 +184,7 @@ costanti locali al modulo, non segreti.
 
 ---
 
-## Driver custom GxEPD2_097c_SOLUM_672x960
+## Driver custom GxEPD2_SOLUM_097c_960x672
 
 Il driver è **header-only** (`inline` nell'`.h`, nessuna `.cpp`) e nasce
 come fork di
@@ -193,13 +208,13 @@ sul `drawPixel(GxEPD_YELLOW)`, ottimizzazioni rispetto al driver stock
 (tabella 14 righe + dettaglio bullet), tracking della page corrente
 parallelo a `_current_page` privato del template, in:
 
-> 📘 **[GxEPD2_097c_SOLUM_672x960/README.md](GxEPD2_097c_SOLUM_672x960/README.md)** — documentazione dedicata del driver custom.
+> 📘 **[GxEPD2_SOLUM_097c_960x672/README.md](GxEPD2_SOLUM_097c_960x672/README.md)** — documentazione dedicata del driver custom.
 
 ---
 
 ## Moduli applicativi
 
-Oltre al driver e al convertitore, lo sketch si appoggia a quattro
+Oltre al driver e al convertitore, lo sketch si appoggia a cinque
 moduli applicativi disaccoppiati, ciascuno **header-only**. Il `.ino`
 ne **orchestra** solo il ciclo di vita; tutta la logica (stato,
 helper, API pubblica) sta dentro il singolo header del modulo,
@@ -305,6 +320,82 @@ Non dipende dalla rete per il disegno: se il fetch fallisce o non è mai
 stato fatto, la lista mostra 5 placeholder `--`. L'epoch di riferimento
 per "oggi" arriva da `Weather::slots[0].epoch` (fallback a
 `time(nullptr)`).
+
+### Mail (`Mail.h`)
+
+Modulo di **sola lettura** delle ultime N mail della propria casella Gmail.
+**Niente UI**: scarica e mantiene una cache RAM accessibile via
+`Mail::count()` e `Mail::at(i)`, predisposto per la futura resa grafica.
+
+**API pubblica**
+
+| Funzione | Effetto |
+|---|---|
+| `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
+| `Mail::pendingFetch()` | `true` al primo fetch o se sono passati `MAIL_GOOGLE_FETCH_MIN` minuti dall'ultimo. |
+| `Mail::runFetch()` | Esegue il fetch (best-effort). Ritorna `true` se la cache e' aggiornata. |
+| `Mail::count()` | Numero di mail attualmente in cache (0..`MAIL_MAX_MESSAGES`). |
+| `Mail::at(i)` | Slot `i` della cache (`MailMessage`: `sender`, `subject`, `receivedUtc`, `unread`). |
+
+**Flusso di un fetch (1 GET + 1 POST batch, 2 handshake TLS totali)**
+
+1. **Refresh token** condiviso con `Calendar::Google` — `Mail.h` non
+   mantiene una propria cache di access_token: invoca direttamente
+   `Calendar::detail::refreshGoogleToken()` e legge
+   `Calendar::detail::cachedGoogleToken`. Una sola POST al token endpoint
+   per ciclo (anche con entrambi i moduli attivi).
+2. **List `messages.list`** —
+   `GET /gmail/v1/users/me/messages?maxResults=N&labelIds=INBOX&fields=messages(id)`.
+   Il `fields=` filter riduce la risposta a ~150 byte; un `DeserializationOption::Filter`
+   ArduinoJson scarta in fase di parse i campi non richiesti.
+3. **Batch `messages.get`** — UNA POST `multipart/mixed` verso
+   `https://gmail.googleapis.com/batch/gmail/v1` con N sub-request:
+   `format=metadata&metadataHeaders=From,Subject,Date&fields=internalDate,labelIds,payload/headers(name,value)`.
+   Sostituisce N GET separate con un singolo handshake TLS. Il `Bearer`
+   token va solo nell'header esterno: il batch endpoint lo propaga alle
+   sub-request.
+4. **Parsing multipart** in streaming: helper `extractBoundary()` +
+   split sul boundary; ogni JSON sub-response viene deserializzato con
+   filter (`internalDate`, `labelIds`, `payload.headers[name,value]`).
+   Una sub-response 4xx/5xx singola non blocca le altre (best-effort).
+5. **Cache aggiornata**: `lastFetchMs = millis()`,
+   `failedAttempts = 0`, log seriale con riassunto delle mail.
+
+**Cosa viene memorizzato per ogni mail** (struct `Mail::MailMessage`):
+- `sender` (max 64 char) — header `From` troncato.
+- `subject` (max **60 char**) — header `Subject` troncato.
+- `receivedUtc` — `internalDate` Gmail (timestamp UTC autoritativo del
+  server, **non** l'header `Date` che puo' essere falso/vuoto).
+- `unread` — `true` se `labelIds` contiene `UNREAD`.
+- `valid` — slot popolato.
+
+**Configurazione (in `Mail.h`, override-abile dal `.ino`)**
+
+| `#define` | Default | Effetto |
+|---|---|---|
+| `MAIL_GOOGLE_FETCH_MIN` | `15` | Cadenza fetch in minuti, **indipendente** da `CAL_GOOGLE_FETCH_MIN`. Il `.ino` la imposta a `10` per allinearla ai calendari. |
+| `MAIL_MAX_MESSAGES` | `5` | Numero massimo di mail da scaricare/cachare. |
+| `MAIL_ONLY_UNREAD` | `0` | `1` per filtrare solo non lette (`labelIds=INBOX&labelIds=UNREAD`, AND lato Gmail). |
+| `MAIL_GMAIL_HOST` | `https://gmail.googleapis.com` | Host base API. |
+| `MAIL_GMAIL_BATCH_URL` | `https://gmail.googleapis.com/batch/gmail/v1` | Endpoint batch multipart. |
+| `MAIL_GMAIL_SCOPE` | `gmail.readonly` (URL-encoded) | Scope OAuth richiesto. |
+| `MAIL_SENDER_LEN` | `64` | Lunghezza buffer mittente. |
+| `MAIL_SUBJECT_LEN` | `60` | Lunghezza buffer oggetto. |
+| `MAIL_FETCH_BUDGET_MS` | `10000` | Wall-clock budget end-to-end di `runFetch()`. Oltre la soglia interrompe la fase metadata e lascia in cache le mail gia' parseate (cache parziale, non e' un errore). Evita che un fetch mail patologicamente lento eroda il tempo dei fetch calendario successivi. |
+
+**Resilienza** — `Mail::runFetch()` e' best-effort: se WiFi cade durante
+il fetch, se l'inbox e' vuota, se il batch HTTP risponde con errore o
+se il budget scade, il flusso software del `.ino` **prosegue normalmente**
+con i fetch calendario successivi. Backoff `MAX_CALENDAR_ATTEMPTS=2` per
+evitare hammering del token endpoint durante la finestra OTA (loop a
+10 ms): dopo 2 tentativi consecutivi falliti il modulo posticipa il
+prossimo retry di `MAIL_GOOGLE_FETCH_MIN` minuti.
+
+**Setup OAuth (una tantum)** — vedi tabella `Env.h` sopra. Il modulo
+non aggiunge **nessun nuovo segreto**: riusa `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. Il refresh_token deve
+pero' essere stato emesso con scope `calendar.readonly` **+**
+`gmail.readonly` (consent unificato).
 
 ### Indoor (`Indoor.h`)
 
@@ -465,8 +556,14 @@ Layout finale sul pannello 960×672:
 | Banner Weather    | `x=169..475, y=465..667`  | 306×202 fieldset, meteo corrente + sub-col sun a destra |
 | Banner Forecast   | `x=485..955, y=465..667`  | 470×202 fieldset, 3 slot previsioni da ~156 px          |
 
-L'anteprima statica del layout è in
-[`preview.html`](preview.html) (aprire in un browser).
+Anteprima statica del layout (rendering nativo GitHub via SVG):
+
+![Anteprima layout 960×672](DOCS/preview.svg)
+
+> La versione HTML interattiva equivalente è in [`preview.html`](preview.html)
+> (offre stile più ricco, calendario popolato dinamicamente da JS sul mese
+> corrente e lista eventi di esempio; il contenuto strutturale è lo stesso
+> dell'SVG sopra). Aprire in un browser per la consultazione offline.
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner
@@ -479,6 +576,7 @@ I `#define` in testa allo sketch sono:
   - `WEATHER_FORECAST_FETCH_MIN` (10) → fetch meteo One Call 3.0 (corrente + previsioni in una singola chiamata);
   - `CAL_OUTLOOK_FETCH_MIN` (10) → fetch calendario Outlook;
   - `CAL_GOOGLE_FETCH_MIN` (10) → fetch calendario Google;
+  - `MAIL_GOOGLE_FETCH_MIN` (10) → fetch ultime mail Gmail (cadenza separata e indipendente);
   - `OTA_WINDOW_MIN` (3) → durata finestra OTA al boot (AP WiFi per upload firmware).
   Il fetch dell'immagine cinema (vedi sezione [Background cinema](#background-cinema))
   avviene invece su due trigger fissi: **al primo boot** e **ogni giorno
@@ -511,8 +609,9 @@ dei dati: meglio una UI parziale subito che una UI completa dopo minuti.
 | `WEATHER_FORECAST_FETCH_MIN` | `10` | min | Cadenza chiamata One Call 3.0 (corrente + previsioni in unica request). |
 | `CAL_OUTLOOK_FETCH_MIN` | `10` | min | Cadenza fetch Microsoft Graph `/me/events`. |
 | `CAL_GOOGLE_FETCH_MIN` | `10` | min | Cadenza fetch Google Calendar API v3. |
+| `MAIL_GOOGLE_FETCH_MIN` | `10` | min | Cadenza fetch Gmail API (lettura ultime mail). Indipendente da `CAL_GOOGLE_FETCH_MIN`. |
 | `OTA_WINDOW_MIN` | `3` | min | Durata della finestra OTA al boot (AP attivo + STA in parallelo). |
-| `MAX_CALENDAR_ATTEMPTS` | `2` | tentativi | Tentativi consecutivi falliti per i fetch Outlook/Google prima di "consumare" lo slot e attendere `CAL_*_FETCH_MIN`. Evita hammering OAuth durante OTA. |
+| `MAX_CALENDAR_ATTEMPTS` | `2` | tentativi | Tentativi consecutivi falliti per i fetch Outlook/Google/Mail prima di "consumare" lo slot e attendere `CAL_*_FETCH_MIN` / `MAIL_GOOGLE_FETCH_MIN`. Evita hammering OAuth durante OTA. |
 | `WIFI_ACTIVE_HOUR_START` | `7` | ora local | Inizio finestra in cui la radio può essere accesa per i fetch (post-OTA). |
 | `WIFI_ACTIVE_HOUR_END` | `23` | ora local | Fine finestra (inclusiva fino a `23:59`). Fuori da `[START..END]` la radio resta spenta. |
 | `BOOT_WIFI_TIMEOUT_MS` | `15000` | ms | Timeout di boot per la STA: scaduto questo tempo senza `WL_CONNECTED`, il primo refresh viene sbloccato comunque con i soli dati locali. |
@@ -705,7 +804,7 @@ download, e se il fetch va a buon fine vengono swappati i nuovi buffer
 con la locandina del prossimo martedi'.
 
 Helper che governa il gate: `shouldFetchCinema()` in
-[ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
+[ePaper-weather-dashboard-097c.ino](ePaper-weather-dashboard-097c.ino). Condizioni:
 primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
 
 **Cold-start mitigation via GitHub Actions.** Render.com free tier dorme
@@ -767,6 +866,7 @@ limiti pubblici documentati:
 | OpenWeather One Call 3.0 | `WEATHER_FORECAST_FETCH_MIN` | 10 min | 1 000 chiamate/giorno (piano gratuito "One Call by Call") |
 | Microsoft Graph (Outlook) | `CAL_OUTLOOK_FETCH_MIN`      | 10 min | 10 000 richieste ogni 10 min per app    |
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 1 000 000 richieste/giorno per progetto |
+| Gmail API (Mail)          | `MAIL_GOOGLE_FETCH_MIN`      | 10 min | 250 quota units/utente/secondo, 1 B unit/giorno per progetto. Un fetch (`messages.list` + 1× batch con N `messages.get`) consuma ~30 unit, ben sotto la soglia. |
 
 Il fetch cinema (endpoint render.com) avviene **al boot + una volta al
 giorno alle `CINEMA_DAILY_FETCH_HOUR` local** (default 07:00) e non ha
@@ -808,7 +908,7 @@ pronto da includere nello sketch.
   variabili interne seguono lo stesso pattern con i suffissi di canale.
 - **Descrittore**: ogni file `.h` generato include una variabile
   `img_<nome>_desc` di tipo `GxEPDImage::Descriptor` protetta da
-  `#ifdef _GxEPD2_097c_SOLUM_672x960_H_`, passabile direttamente a
+  `#ifdef _GxEPD2_SOLUM_097c_960x672_H_`, passabile direttamente a
   `display.epd2.showImage(...)` nello sketch.
 
 ### Dipendenze

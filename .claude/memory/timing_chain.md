@@ -6,7 +6,7 @@ type: project
 
 I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
 
-**Firmware (`ePaper-weather-dashboard.ino`):**
+**Firmware (`ePaper-weather-dashboard-097c.ino`):**
 - `wifiOn()` timeout = 15s (loop `while (status != WL_CONNECTED && millis()-t0 < 15000)`).
 - `http.setTimeout(45000)` per il fetch cinema (45s).
 - `OTA_WINDOW_MIN = 3` → finestra OTA da 180s al boot.

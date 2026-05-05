@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h"
+#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
 
 #include <Fonts/FreeSans9pt7b.h>      // condizione IAQ + valore, terza riga indoor
 #include <Fonts/FreeSans12pt7b.h>
@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino).
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 8> display;
+extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display;
 
 // ---------------------------------------------------------------------------
 // Helper definito nello sketch .ino: disegna l'immagine di background
@@ -675,7 +675,7 @@ namespace Weather
     //
     // Il canale giallo del pannello SOLUM 672x960 è "out-of-band" rispetto
     // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
-    // usiamo le API del driver custom GxEPD2_097c_SOLUM_672x960:
+    // usiamo le API del driver custom GxEPD2_SOLUM_097c_960x672:
     //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
     //   - preserveYellow(true)                        -> sopravvive al paged
     // Cifre dei numeri invece restano nere e sono disegnate normalmente con

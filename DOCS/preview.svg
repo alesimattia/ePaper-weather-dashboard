@@ -1,0 +1,208 @@
+<svg viewBox="0 0 980 700" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <!-- Sfondo cornice schermo 960x672 (offset 10,14 per margine) -->
+  <rect x="10" y="14" width="960" height="672" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+
+  <!-- ====== Wallpaper 620x440 a (0,0) ====== -->
+  <defs>
+    <pattern id="wp" width="36" height="36" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="18" height="36" fill="#d9dde0"/>
+      <rect x="18" width="18" height="36" fill="#c8ccd0"/>
+    </pattern>
+  </defs>
+  <rect x="10" y="14" width="620" height="440" fill="url(#wp)"/>
+  <rect x="240" y="220" width="160" height="28" fill="#ffffff" fill-opacity="0.7"/>
+  <text x="320" y="239" text-anchor="middle" font-size="14" letter-spacing="2" fill="#555">WALLPAPER 620 × 440</text>
+
+  <!-- Fascia bianca 440..460 (separazione wallpaper/banner) -->
+  <rect x="10" y="454" width="620" height="20" fill="#ffffff"/>
+
+  <!-- ====== Sidebar bianca 620..960 x 0..460 ====== -->
+  <line x1="630" y1="14" x2="630" y2="474" stroke="#bbbbbb" stroke-dasharray="3,3"/>
+
+  <!-- ====== Calendario fieldset 320x200 @ (630,10) ====== -->
+  <!-- Bordo arrotondato con interruzione per titolo "Maggio" -->
+  <path d="M 654 24 L 640 24 A 14 14 0 0 0 626 38 L 626 210 A 14 14 0 0 0 640 224 L 936 224 A 14 14 0 0 0 950 210 L 950 38 A 14 14 0 0 0 936 24 L 715 24"
+        fill="none" stroke="#000000" stroke-width="1"/>
+  <text x="685" y="29" text-anchor="middle" font-size="16" font-weight="600">Maggio</text>
+
+  <!-- Header giorni settimana L M M G V S D -->
+  <g font-size="13" font-weight="600" text-anchor="middle">
+    <text x="660" y="49">L</text>
+    <text x="703" y="49">M</text>
+    <text x="745" y="49">M</text>
+    <text x="788" y="49">G</text>
+    <text x="831" y="49">V</text>
+    <text x="873" y="49">S</text>
+    <text x="916" y="49">D</text>
+  </g>
+  <line x1="638" y1="55" x2="938" y2="55" stroke="#000000" stroke-width="0.7"/>
+
+  <!-- Griglia mese maggio 2026 (1 maggio = venerdi) - oggi=5 (martedi) -->
+  <g font-size="13" text-anchor="middle">
+    <!-- Riga 1: 1=ven, 2=sab, 3=dom (lun-mer vuoti) -->
+    <text x="831" y="78">1</text>
+    <text x="873" y="78">2</text>
+    <text x="916" y="78">3</text>
+    <!-- Riga 2: 4=lun, 5=mar (today rosso), 6,7,8,9,10 -->
+    <text x="660" y="105">4</text>
+    <rect x="688" y="89" width="30" height="22" rx="4" fill="#d7263d"/>
+    <text x="703" y="105" fill="#ffffff" font-weight="700">5</text>
+    <text x="745" y="105">6</text>
+    <text x="788" y="105">7</text>
+    <text x="831" y="105">8</text>
+    <text x="873" y="105">9</text>
+    <text x="916" y="105">10</text>
+    <!-- Riga 3 -->
+    <text x="660" y="132">11</text>
+    <text x="703" y="132">12</text>
+    <text x="745" y="132">13</text>
+    <text x="788" y="132">14</text>
+    <text x="831" y="132">15</text>
+    <text x="873" y="132">16</text>
+    <text x="916" y="132">17</text>
+    <!-- Riga 4 -->
+    <text x="660" y="158">18</text>
+    <text x="703" y="158">19</text>
+    <text x="745" y="158">20</text>
+    <text x="788" y="158">21</text>
+    <text x="831" y="158">22</text>
+    <text x="873" y="158">23</text>
+    <text x="916" y="158">24</text>
+    <!-- Riga 5 -->
+    <text x="660" y="184">25</text>
+    <text x="703" y="184">26</text>
+    <text x="745" y="184">27</text>
+    <text x="788" y="184">28</text>
+    <text x="831" y="184">29</text>
+    <text x="873" y="184">30</text>
+    <text x="916" y="184">31</text>
+  </g>
+
+  <!-- ====== Lista eventi 320x230 @ (630,220) ====== -->
+  <g font-size="13">
+    <!-- evt 1 oggi (rosso) -->
+    <text x="635" y="252" fill="#d7263d">Standup team backend</text>
+    <text x="938" y="248" text-anchor="end" font-size="12" font-weight="600" fill="#d7263d">10:00</text>
+    <text x="938" y="262" text-anchor="end" font-size="12" fill="#d7263d">05/05</text>
+    <line x1="645" y1="270" x2="935" y2="270" stroke="#000000" stroke-width="0.5"/>
+    <!-- evt 2 oggi (rosso) -->
+    <text x="635" y="290" fill="#d7263d">Call con fornitore SOLUM</text>
+    <text x="938" y="286" text-anchor="end" font-size="12" font-weight="600" fill="#d7263d">15:30</text>
+    <text x="938" y="300" text-anchor="end" font-size="12" fill="#d7263d">05/05</text>
+    <line x1="645" y1="308" x2="935" y2="308" stroke="#000000" stroke-width="0.5"/>
+    <!-- evt 3 -->
+    <text x="635" y="328">Review progetto e-paper</text>
+    <text x="938" y="324" text-anchor="end" font-size="12" font-weight="600">09:30</text>
+    <text x="938" y="338" text-anchor="end" font-size="12">06/05</text>
+    <line x1="645" y1="346" x2="935" y2="346" stroke="#000000" stroke-width="0.5"/>
+    <!-- evt 4 -->
+    <text x="635" y="366">Pranzo cliente Roma</text>
+    <text x="938" y="362" text-anchor="end" font-size="12" font-weight="600">13:00</text>
+    <text x="938" y="376" text-anchor="end" font-size="12">07/05</text>
+    <line x1="645" y1="384" x2="935" y2="384" stroke="#000000" stroke-width="0.5"/>
+    <!-- evt 5 -->
+    <text x="635" y="404">Intervento campo Napoli</text>
+    <text x="938" y="400" text-anchor="end" font-size="12" font-weight="600">08:15</text>
+    <text x="938" y="414" text-anchor="end" font-size="12">09/05</text>
+  </g>
+
+  <!-- ====== Banner footer 960x212 @ (0,460) ====== -->
+
+  <!-- ====== Indoor fieldset 154x202 @ (5,465) ====== -->
+  <path d="M 36 484 L 25 484 A 14 14 0 0 0 15 494 L 15 657 A 14 14 0 0 0 25 667 L 154 667 A 14 14 0 0 0 168 653 L 168 498 A 14 14 0 0 0 154 484 L 81 484"
+        fill="none" stroke="#000000" stroke-width="1"/>
+  <text x="58" y="489" text-anchor="middle" font-size="15" font-weight="600">Indoor</text>
+
+  <!-- 4 righe Indoor: T, RH, IAQ, P (icone semplificate) -->
+  <g font-size="16">
+    <!-- Termometro -->
+    <rect x="32" y="510" width="3" height="11" fill="#000"/>
+    <circle cx="33.5" cy="524" r="3.5" fill="#000"/>
+    <text x="48" y="528" font-size="20" font-weight="600" fill="#d7263d">22.5°C</text>
+    <!-- Goccia umidita -->
+    <path d="M 33 545 L 38 555 A 5 5 0 1 1 28 555 Z" fill="#000"/>
+    <text x="48" y="563" font-size="20">45 %</text>
+    <!-- Foglia IAQ -->
+    <path d="M 33 580 Q 28 585 33 593 Q 38 585 33 580 Z" fill="#000"/>
+    <text x="48" y="595" font-size="14">Buona 74<tspan font-size="9" dy="-4">3</tspan></text>
+    <!-- Tachimetro pressione -->
+    <path d="M 27 632 A 7 7 0 0 1 41 632" fill="none" stroke="#000" stroke-width="1.2"/>
+    <line x1="34" y1="632" x2="38" y2="627" stroke="#000" stroke-width="1.2"/>
+    <text x="48" y="635" font-size="18">1013 hPa</text>
+  </g>
+
+  <!-- ====== Weather fieldset 306x202 @ (169,465) ====== -->
+  <path d="M 200 484 L 189 484 A 14 14 0 0 0 179 494 L 179 657 A 14 14 0 0 0 189 667 L 471 667 A 14 14 0 0 0 485 653 L 485 498 A 14 14 0 0 0 471 484 L 251 484"
+        fill="none" stroke="#000000" stroke-width="1"/>
+  <text x="225" y="489" text-anchor="middle" font-size="15" font-weight="600">Weather</text>
+
+  <!-- Blocco meteo corrente (sinistra) -->
+  <rect x="208" y="500" width="88" height="88" fill="none" stroke="#bbb" stroke-dasharray="3,3"/>
+  <text x="252" y="548" text-anchor="middle" font-size="11" letter-spacing="2" fill="#888">ICON</text>
+  <text x="252" y="603" text-anchor="middle" font-size="14">sereno</text>
+  <text x="252" y="630" text-anchor="middle" font-size="22" font-weight="700" fill="#d7263d">18°C</text>
+  <text x="252" y="654" text-anchor="middle" font-size="18">14:30</text>
+
+  <!-- Sub-col sun (destra): sunrise, sunset, tempbar, riservata -->
+  <g>
+    <!-- sunrise (raggi pieni) -->
+    <g transform="translate(355,510)">
+      <rect x="0" y="0" width="20" height="1" fill="#000"/>
+      <rect x="1" y="2" width="18" height="1" fill="#000"/>
+      <rect x="2" y="4" width="16" height="1" fill="#000"/>
+      <rect x="3" y="6" width="14" height="1" fill="#000"/>
+      <rect x="4" y="8" width="12" height="1" fill="#000"/>
+      <rect x="5" y="10" width="10" height="1" fill="#000"/>
+      <rect x="6" y="12" width="8" height="1" fill="#000"/>
+      <rect x="7" y="14" width="6" height="1" fill="#000"/>
+    </g>
+    <text x="385" y="528" font-size="18">06:14</text>
+
+    <!-- sunset (semicerchio + linea) -->
+    <g transform="translate(355,560)">
+      <path d="M 3 10 A 7 7 0 0 1 17 10 Z" fill="#000"/>
+      <rect x="0" y="11" width="20" height="1" fill="#000"/>
+    </g>
+    <text x="385" y="578" font-size="18">20:37</text>
+
+    <!-- Tempbar morn..eve con triangolo -->
+    <g transform="translate(355,605)">
+      <text x="2" y="14" font-size="12">8</text>
+      <circle cx="14" cy="4" r="2" stroke="#000" fill="none"/>
+      <rect x="22" y="9" width="55" height="4" fill="#e6c42c"/>
+      <polygon points="44,2 54,2 49,9" fill="#e6c42c"/>
+      <text x="84" y="14" font-size="12">12</text>
+      <circle cx="100" cy="4" r="2" stroke="#000" fill="none"/>
+    </g>
+  </g>
+
+  <!-- ====== Forecast fieldset 470x202 @ (485,465) ====== -->
+  <path d="M 516 484 L 505 484 A 14 14 0 0 0 495 494 L 495 657 A 14 14 0 0 0 505 667 L 951 667 A 14 14 0 0 0 965 653 L 965 498 A 14 14 0 0 0 951 484 L 569 484"
+        fill="none" stroke="#000000" stroke-width="1"/>
+  <text x="542" y="489" text-anchor="middle" font-size="15" font-weight="600">Forecast</text>
+
+  <!-- Slot 1 17:00 -->
+  <g>
+    <rect x="565" y="500" width="88" height="88" fill="none" stroke="#bbb" stroke-dasharray="3,3"/>
+    <text x="609" y="548" text-anchor="middle" font-size="11" letter-spacing="2" fill="#888">ICON</text>
+    <text x="609" y="603" text-anchor="middle" font-size="14">poco nuvoloso</text>
+    <text x="609" y="630" text-anchor="middle" font-size="22" font-weight="700" fill="#d7263d">17°C</text>
+    <text x="609" y="654" text-anchor="middle" font-size="18">17:00</text>
+  </g>
+  <!-- Slot 2 20:00 -->
+  <g>
+    <rect x="713" y="500" width="88" height="88" fill="none" stroke="#bbb" stroke-dasharray="3,3"/>
+    <text x="757" y="548" text-anchor="middle" font-size="11" letter-spacing="2" fill="#888">ICON</text>
+    <text x="757" y="603" text-anchor="middle" font-size="14">nubi sparse</text>
+    <text x="757" y="630" text-anchor="middle" font-size="22" font-weight="700" fill="#d7263d">15°C</text>
+    <text x="757" y="654" text-anchor="middle" font-size="18">20:00</text>
+  </g>
+  <!-- Slot 3 23:00 -->
+  <g>
+    <rect x="861" y="500" width="88" height="88" fill="none" stroke="#bbb" stroke-dasharray="3,3"/>
+    <text x="905" y="548" text-anchor="middle" font-size="11" letter-spacing="2" fill="#888">ICON</text>
+    <text x="905" y="603" text-anchor="middle" font-size="14">80% 0.5mm</text>
+    <text x="905" y="630" text-anchor="middle" font-size="22" font-weight="700" fill="#d7263d">13°C</text>
+    <text x="905" y="654" text-anchor="middle" font-size="18">23:00</text>
+  </g>
+</svg>

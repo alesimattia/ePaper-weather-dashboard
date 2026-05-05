@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_097c_SOLUM_672x960/GxEPD2_097c_SOLUM_672x960.h"
+#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
 
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
@@ -21,7 +21,7 @@
 // Istanza del display (definita nello sketch .ino). Va dichiarata a livello
 // globale perchè il simbolo lato .ino non vive in alcun namespace.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<GxEPD2_097c_SOLUM_672x960, GxEPD2_097c_SOLUM_672x960::HEIGHT / 8> display;
+extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display;
 
 // ---------------------------------------------------------------------------
 // Configurazione non-segreta del modulo. Non sta in Env.h perchè non
@@ -373,6 +373,14 @@ namespace Calendar
      * Gestisce sia flussi senza client_secret (Microsoft client pubblico)
      * sia flussi con client_secret (Google desktop app).
      *
+     * RIUSO ESTERNO: questa funzione e' invocata anche da Mail.h (modulo
+     * Gmail API) come Calendar::detail::oauthRefreshGeneric. E' percio'
+     * parte della "superficie semi-pubblica" del namespace detail: cambiare
+     * firma o semantica significa rompere Mail.h. Mail.h e Calendar::Google
+     * condividono GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN, quindi il
+     * refresh_token deve essere stato emesso con scope unificati
+     * calendar.readonly + gmail.readonly.
+     *
      * @param tokenUrl     endpoint token
      * @param clientId     client id
      * @param clientSecret client secret ("" per client pubblici)
@@ -544,10 +552,20 @@ namespace Calendar
 
     // =======================================================================
     // Google Calendar API v3: token + fetch eventi
+    //
+    // SHARED CON MAIL: cachedGoogleToken e googleTokenExpiresAtMs sono la
+    // SOLA cache di access_token Google del progetto. Mail.h
+    // (Mail::detail::refreshToken / Mail::detail::bearer) riusa questa
+    // cache invece di mantenerne una propria: 1 sola POST al token
+    // endpoint per ciclo, backoff coerente, accoppiamento accettato perche'
+    // condividono lo stesso refresh_token e gli stessi scope.
     // =======================================================================
 
     /**
      * Rinnova l'access token Google se scaduto (margine 60 s).
+     * Aggiorna SOLO cachedGoogleToken e googleTokenExpiresAtMs: nessuna
+     * struttura specifica Mail viene toccata, il modulo Mail legge le stesse
+     * variabili dopo che questa funzione torna true.
      */
     inline bool refreshGoogleToken()
     {
@@ -990,6 +1008,15 @@ namespace Calendar
    * Le credenziali arrivano da Env.h (GOOGLE_CLIENT_ID,
    * GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN). Scope richiesto:
    * https://www.googleapis.com/auth/calendar.readonly
+   *
+   * INTERAZIONE CON MAIL: Calendar::Google e Mail::* condividono lo stesso
+   * GOOGLE_REFRESH_TOKEN e lo stesso access_token cached
+   * (Calendar::detail::cachedGoogleToken). Le cadenze di fetch sono pero'
+   * INDIPENDENTI: CAL_GOOGLE_FETCH_MIN regola il fetch eventi calendario,
+   * MAIL_GOOGLE_FETCH_MIN regola il fetch metadati mail. I contatori
+   * failedAttempts sono separati per le GET di dominio (events vs
+   * messages), mentre il backoff sul refresh_token e' implicitamente
+   * condiviso perche' ricade su una sola cache.
    */
   namespace Google
   {

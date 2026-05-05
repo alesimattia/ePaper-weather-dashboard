@@ -1,10 +1,10 @@
 ---
 name: ESP32 cinema consumer (fetchCinemaImage)
-description: Logica del firmware ePaper-weather-dashboard.ino che scarica e mostra il background cinema dalla webapp
+description: Logica del firmware ePaper-weather-dashboard-097c.ino che scarica e mostra il background cinema dalla webapp
 type: project
 ---
 
-Lo sketch `c:\epd\ePaper-weather-dashboard.ino` contiene `fetchCinemaImage()` che scarica i 3 piani BWRY da `cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd`. Allocazione preferenziale in PSRAM (`psramFound() + heap_caps_malloc(MALLOC_CAP_SPIRAM)`), fallback heap interno con `malloc()`. I 3 buffer dinamici `g_cinema_black/red/yellow` (78*440=34320 byte ciascuno, 102960 byte totali) rimpiazzano il fallback PROGMEM `img_apple_bwry_desc` solo dopo download riuscito.
+Lo sketch `c:\epd\ePaper-weather-dashboard-097c.ino` contiene `fetchCinemaImage()` che scarica i 3 piani BWRY da `cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd`. Allocazione preferenziale in PSRAM (`psramFound() + heap_caps_malloc(MALLOC_CAP_SPIRAM)`), fallback heap interno con `malloc()`. I 3 buffer dinamici `g_cinema_black/red/yellow` (78*440=34320 byte ciascuno, 102960 byte totali) rimpiazzano il fallback PROGMEM `img_apple_bwry_desc` solo dopo download riuscito.
 
 Il puntatore `g_cinema_desc` viene swappato a `&g_cinema_dynamic_desc` solo all'ultimo step (post readBytes OK), garantendo che durante un fetch in corso `drawTestBackground()` continui a mostrare il fallback PROGMEM invece di buffer parziali.
 
