@@ -380,7 +380,7 @@ inline GxEPD2_122c_SOLUM_960x768::GxEPD2_122c_SOLUM_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 20000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(sck), _miso(miso), _mosi(mosi),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
@@ -395,7 +395,7 @@ inline GxEPD2_122c_SOLUM_960x768::GxEPD2_122c_SOLUM_960x768(
     int16_t cs_m, int16_t cs_s,
     int16_t dc, int16_t rst,
     int16_t busy_m, int16_t busy_s) :
-  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 20000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs_m, dc, rst, busy_m, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs_m), _cs_s(cs_s), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy_m), _busy_s(busy_s),
@@ -410,7 +410,7 @@ inline GxEPD2_122c_SOLUM_960x768::GxEPD2_122c_SOLUM_960x768(
 // Mezzo display non aggiornera' (probabilmente meta' destra) ma il bring-up
 // del master si puo' validare in isolamento.
 inline GxEPD2_122c_SOLUM_960x768::GxEPD2_122c_SOLUM_960x768(int16_t cs, int16_t dc, int16_t rst, int16_t busy) :
-  GxEPD2_EPD(cs, dc, rst, busy, LOW, 20000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
+  GxEPD2_EPD(cs, dc, rst, busy, LOW, 30000000, WIDTH, HEIGHT, panel, hasColor, hasPartialUpdate, hasFastPartialUpdate),
   _sck(SCK), _miso(MISO), _mosi(MOSI),
   _cs_m(cs), _cs_s(-1), _dc_pin(dc), _rst_pin(rst),
   _busy_m(busy), _busy_s(-1),
@@ -440,8 +440,14 @@ inline void GxEPD2_122c_SOLUM_960x768::writeScreenBuffer(uint8_t value)
 
 // Init dei buffer del controller: B/N (cmd 0x10) e rosso (cmd 0x13).
 // UC8179 polarity: cmd 0x10 bit=1=white bit=0=black; cmd 0x13 bit=1=red.
-// Per rendere la convenzione bitmap utente uniforme (bit=1=NOT color), il
-// canale red viene riempito con ~value (es. value=0xFF -> red plane = 0x00).
+// I parametri sono valori RAW da scrivere nel piano RAM (no inversione).
+// Esempi pratici per i 3 colori puri:
+//   (black=0xFF, color=0x00) -> bianco totale
+//   (black=0x00, color=0x00) -> nero totale
+//   (black=0xFF, color=0xFF) -> rosso totale
+// Per i bitmap usare invece writeImage(black, color, ...) che applica
+// l'inversione necessaria sul color plane (convenzione bit=1=NOT color
+// dello script python e di image2cpp).
 inline void GxEPD2_122c_SOLUM_960x768::writeScreenBuffer(uint8_t black_value, uint8_t color_value)
 {
   if (!_init_display_done) _InitDisplay();
@@ -623,9 +629,9 @@ inline void GxEPD2_122c_SOLUM_960x768::_resetDual()
   if (_rst_pin >= 0)
   {
     digitalWrite(_rst_pin, LOW);
-    delay(10);
+    delay(_reset_duration);
     digitalWrite(_rst_pin, HIGH);
-    delay(10);
+    delay(_reset_duration);
   }
   _hibernating = false;
 }
