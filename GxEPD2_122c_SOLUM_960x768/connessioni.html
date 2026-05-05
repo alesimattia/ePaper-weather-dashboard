@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Cablaggio SOLUM 12.2" — GxEPD2_122c_SOLUM_960x768</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1c2128;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --warn: #f0883e;
+    --ok: #3fb950;
+    --master: #58a6ff;
+    --slave: #d2a8ff;
+    --shared: #f0883e;
+    --code-bg: #161b22;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 17px; margin: 20px 0 8px; color: var(--accent); }
+  p, li { color: var(--text); }
+  code {
+    background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 13px; color: #ffa657;
+  }
+  pre {
+    background: var(--code-bg); padding: 12px 16px; border-radius: 6px;
+    border: 1px solid var(--border); overflow-x: auto;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 13px; line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { background: var(--panel); color: var(--accent); font-weight: 600; }
+  tr:hover td { background: rgba(88, 166, 255, 0.05); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px; margin: 16px 0;
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0;
+    font-size: 13px; color: var(--muted);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .swatch {
+    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+    vertical-align: middle;
+  }
+  .swatch.master { background: var(--master); }
+  .swatch.slave { background: var(--slave); }
+  .swatch.shared { background: var(--shared); }
+  .note {
+    background: rgba(240, 136, 62, 0.08);
+    border-left: 3px solid var(--warn);
+    padding: 10px 14px; margin: 12px 0; border-radius: 4px;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+  .ok-box {
+    background: rgba(63, 185, 80, 0.08);
+    border-left: 3px solid var(--ok);
+    padding: 10px 14px; margin: 12px 0; border-radius: 4px;
+    font-size: 14px;
+  }
+  .ok-box strong { color: var(--ok); }
+  .diagram {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px; margin: 12px 0;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .toc {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 24px;
+  }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; margin-left: 6px;
+    background: rgba(88, 166, 255, 0.15); color: var(--accent);
+  }
+  .badge.master { background: rgba(88, 166, 255, 0.18); color: var(--master); }
+  .badge.slave { background: rgba(210, 168, 255, 0.18); color: var(--slave); }
+  .badge.shared { background: rgba(240, 136, 62, 0.18); color: var(--shared); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  .small { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Cablaggio del pannello SOLUM Newton-Core 12.2"</h1>
+<p class="small">
+  Documentazione di supporto al driver
+  <code>GxEPD2_122c_SOLUM_960x768</code>. Spiega come collegare un pannello
+  SOLUM 12.2" (960×768 BWR, 2 cavi FFC da 21 pin) a due piattaforme tipiche:
+  Waveshare E-Paper ESP32 Driver Board e ESP32 Dev Board generica con due
+  FFC breakout 0.5 mm.
+</p>
+
+<div class="toc">
+  <strong>Indice</strong>
+  <ul>
+    <li><a href="#concetti">Concetti chiave (segnali condivisi vs separati)</a></li>
+    <li><a href="#waveshare">1. Waveshare E-Paper ESP32 Driver Board</a></li>
+    <li><a href="#devboard">2. ESP32 Dev Board generica + 2 FFC breakout 0.5 mm</a></li>
+    <li><a href="#bringup">3. Strategia di bring-up</a></li>
+    <li><a href="#caveat">4. Caveat hardware</a></li>
+  </ul>
+</div>
+
+<h2 id="concetti">Concetti chiave</h2>
+
+<p>
+  Il pannello ha <strong>2 cavi FFC da 21 pin</strong> che escono dal
+  pannello stesso. Ogni FFC porta a uno dei due controller IC (master /
+  slave) integrati nel pannello. Per pilotare il pannello da un singolo
+  ESP32 servono:
+</p>
+
+<ul>
+  <li>
+    <span class="badge shared">CONDIVISI</span>
+    Segnali <code>SCK</code>, <code>MOSI</code>, <code>DC</code>,
+    <code>RST</code>, <code>VCC</code>, <code>GND</code> — un solo pin
+    GPIO ESP32, che si dirama in parallelo verso entrambi i FFC.
+  </li>
+  <li>
+    <span class="badge master">MASTER</span>
+    Segnali <code>CS_M</code>, <code>BUSY_M</code> — pin GPIO ESP32
+    dedicati al primo controller (FFC #1).
+  </li>
+  <li>
+    <span class="badge slave">SLAVE</span>
+    Segnali <code>CS_S</code>, <code>BUSY_S</code> — pin GPIO ESP32
+    dedicati al secondo controller (FFC #2).
+  </li>
+</ul>
+
+<p>
+  Totale: <strong>9 pin GPIO ESP32</strong> (5 condivisi + 4 dedicati ai
+  due controller). <code>MISO</code> non è obbligatorio per il driver ma
+  alcuni layout lo richiedono per leggere temperatura / OTP.
+</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="swatch shared"></span> Condivisi (parallelo a entrambi i FFC)</div>
+  <div class="legend-item"><span class="swatch master"></span> Master (FFC #1)</div>
+  <div class="legend-item"><span class="swatch slave"></span> Slave (FFC #2)</div>
+</div>
+
+<hr>
+
+<h2 id="waveshare">1. Waveshare E-Paper ESP32 Driver Board</h2>
+
+<p>
+  Riferimento:
+  <a href="https://www.waveshare.com/e-paper-esp32-driver-board.htm">prodotto</a>,
+  <a href="https://www.waveshare.com/wiki/E-Paper_ESP32_Driver_Board">wiki</a>.
+  La board ha <strong>un solo connettore FFC interno</strong> con pinout SPI
+  hardware-cablata: SCK=GPIO13, MOSI=GPIO14, MISO=GPIO12, CS=GPIO15,
+  DC=GPIO27, RST=GPIO26, BUSY=GPIO25.
+</p>
+
+<p>
+  Il FFC interno della board pilota nativamente il <strong>master</strong>.
+  Per lo <strong>slave</strong> servono 2 GPIO liberi presi dai pin header
+  di espansione laterali della board, e un secondo connettore FFC esterno
+  cablato a mano.
+</p>
+
+<h3>Schema di cablaggio</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 480" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d2a8ff"/>
+    </marker>
+  </defs>
+
+  <!-- Waveshare board -->
+  <rect x="40" y="60" width="320" height="360" rx="10"
+        fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="200" y="86" fill="#c9d1d9" font-size="14" font-weight="bold"
+        text-anchor="middle">Waveshare E-Paper ESP32 Driver Board</text>
+
+  <!-- ESP32 chip -->
+  <rect x="80" y="110" width="240" height="100" rx="6"
+        fill="#21262d" stroke="#30363d"/>
+  <text x="200" y="160" fill="#58a6ff" font-size="13"
+        text-anchor="middle" font-weight="bold">ESP32 onboard</text>
+  <text x="200" y="180" fill="#8b949e" font-size="11"
+        text-anchor="middle">SPI HSPI fissa: 12/13/14/15</text>
+
+  <!-- FFC connector interno -->
+  <rect x="100" y="240" width="200" height="40" rx="4"
+        fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>
+  <text x="200" y="265" fill="#f0883e" font-size="12" font-weight="bold"
+        text-anchor="middle">FFC interno (24 pin)</text>
+
+  <!-- Header espansione -->
+  <rect x="100" y="320" width="200" height="80" rx="4"
+        fill="#0d1117" stroke="#30363d"/>
+  <text x="200" y="340" fill="#c9d1d9" font-size="11"
+        text-anchor="middle">Pin header espansione</text>
+  <text x="200" y="358" fill="#d2a8ff" font-size="11"
+        text-anchor="middle" font-family="monospace">GPIO 33 (libero) → CS_S</text>
+  <text x="200" y="374" fill="#d2a8ff" font-size="11"
+        text-anchor="middle" font-family="monospace">GPIO 35 (libero) → BUSY_S</text>
+  <text x="200" y="390" fill="#f0883e" font-size="11"
+        text-anchor="middle" font-family="monospace">+ GPIO 13/14/26/27 (parallelo)</text>
+
+  <!-- Pannello SOLUM -->
+  <rect x="640" y="60" width="300" height="360" rx="10"
+        fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="790" y="86" fill="#c9d1d9" font-size="14" font-weight="bold"
+        text-anchor="middle">Pannello SOLUM 12.2"</text>
+  <text x="790" y="104" fill="#8b949e" font-size="11"
+        text-anchor="middle">960 × 768 BWR</text>
+
+  <!-- Master half -->
+  <rect x="660" y="120" width="130" height="280" rx="4"
+        fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="725" y="145" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">MASTER</text>
+  <text x="725" y="165" fill="#8b949e" font-size="11"
+        text-anchor="middle">cols 0..479</text>
+  <rect x="675" y="200" width="100" height="30" rx="3"
+        fill="#0d1117" stroke="#58a6ff"/>
+  <text x="725" y="220" fill="#58a6ff" font-size="11"
+        text-anchor="middle" font-weight="bold">FFC #1</text>
+
+  <!-- Slave half -->
+  <rect x="800" y="120" width="130" height="280" rx="4"
+        fill="rgba(210,168,255,0.08)" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="865" y="145" fill="#d2a8ff" font-size="12" font-weight="bold"
+        text-anchor="middle">SLAVE</text>
+  <text x="865" y="165" fill="#8b949e" font-size="11"
+        text-anchor="middle">cols 480..959</text>
+  <rect x="815" y="200" width="100" height="30" rx="3"
+        fill="#0d1117" stroke="#d2a8ff"/>
+  <text x="865" y="220" fill="#d2a8ff" font-size="11"
+        text-anchor="middle" font-weight="bold">FFC #2</text>
+
+  <!-- Adattatore esterno: spostato in basso per non sovrapporsi alla freccia diretta master -->
+  <rect x="400" y="320" width="200" height="110" rx="4"
+        fill="rgba(240,136,62,0.05)" stroke="#f0883e" stroke-dasharray="4 3"/>
+  <text x="500" y="345" fill="#f0883e" font-size="11" font-weight="bold"
+        text-anchor="middle">FFC breakout esterno</text>
+  <text x="500" y="365" fill="#8b949e" font-size="10"
+        text-anchor="middle">(per FFC #2 — slave)</text>
+  <text x="500" y="385" fill="#8b949e" font-size="10"
+        text-anchor="middle">21-pin 0.5 mm</text>
+  <text x="500" y="403" fill="#8b949e" font-size="10"
+        text-anchor="middle">jumper wire 3.3V</text>
+  <text x="500" y="421" fill="#8b949e" font-size="10"
+        text-anchor="middle">si infila in breadboard</text>
+
+  <!-- Connessione FFC interno -> FFC #1 master (cavo diretto, in alto) -->
+  <line x1="300" y1="260" x2="675" y2="215" stroke="#58a6ff" stroke-width="2"
+        marker-end="url(#arrowBlue)"/>
+  <text x="490" y="225" fill="#58a6ff" font-size="11" font-style="italic"
+        text-anchor="middle">cavo FFC diretto (master)</text>
+
+  <!-- Connessioni header espansione -> breakout esterno -->
+  <line x1="300" y1="358" x2="400" y2="350" stroke="#d2a8ff" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <line x1="300" y1="374" x2="400" y2="370" stroke="#d2a8ff" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <line x1="300" y1="392" x2="400" y2="395" stroke="#f0883e" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#arrowOrange)"/>
+
+  <!-- breakout -> FFC #2 slave (sale verso destra) -->
+  <line x1="600" y1="370" x2="815" y2="220" stroke="#d2a8ff" stroke-width="2"
+        marker-end="url(#arrowPurple)"/>
+  <text x="705" y="305" fill="#d2a8ff" font-size="11" font-style="italic"
+        text-anchor="middle">FFC #2 ribbon</text>
+</svg>
+</div>
+
+<h3>Pinout dettagliato</h3>
+<table>
+  <thead>
+    <tr><th>Segnale</th><th>GPIO ESP32</th><th>Sorgente</th><th>Destinazione</th><th>Tipo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>SCK</td><td>13</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>MOSI (DIN)</td><td>14</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>DC</td><td>27</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>RST</td><td>26</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>3V3 / GND</td><td>—</td><td>FFC interno + jumper</td><td>FFC #1 + FFC #2</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td><strong>CS_M</strong></td><td>15</td><td>FFC interno della board</td><td>FFC #1</td><td><span class="badge master">MASTER</span></td></tr>
+    <tr><td><strong>BUSY_M</strong></td><td>25</td><td>FFC interno della board</td><td>FFC #1</td><td><span class="badge master">MASTER</span></td></tr>
+    <tr><td><strong>CS_S</strong></td><td>33</td><td>Pin header espansione</td><td>FFC #2 esterno</td><td><span class="badge slave">SLAVE</span></td></tr>
+    <tr><td><strong>BUSY_S</strong></td><td>35</td><td>Pin header espansione</td><td>FFC #2 esterno</td><td><span class="badge slave">SLAVE</span></td></tr>
+  </tbody>
+</table>
+
+<h3>Codice del costruttore</h3>
+<pre><code>#include "GxEPD2_122c_SOLUM_960x768.h"
+
+GxEPD2_3C&lt;GxEPD2_122c_SOLUM_960x768,
+          GxEPD2_122c_SOLUM_960x768::HEIGHT / 8&gt;
+    display(GxEPD2_122c_SOLUM_960x768(
+        /*sck   */ 13,
+        /*miso  */ 12,    // -1 se non si legge dal controller
+        /*mosi  */ 14,
+        /*cs_m  */ 15,    // FFC interno della board
+        /*cs_s  */ 33,    // FFC esterno cablato a mano
+        /*dc    */ 27,
+        /*rst   */ 26,
+        /*busy_m*/ 25,
+        /*busy_s*/ 35));</code></pre>
+
+<div class="note">
+  <strong>Caveat board Waveshare.</strong> Il connettore FFC interno della
+  Waveshare E-Paper ESP32 Driver Board è 24-pin standard Waveshare. I FFC
+  del Solum 12.2" sono 21-pin: la pinout potrebbe non combaciare. Verifica
+  con multimetro la corrispondenza pin-a-pin prima di alimentare —
+  tipicamente serve un adattatore 24→21 pin tra la board e il FFC del
+  Solum.
+</div>
+
+<hr>
+
+<h2 id="devboard">2. ESP32 Dev Board generica + 2 FFC breakout 0.5 mm</h2>
+
+<p>
+  Per chi parte da una <strong>ESP32 Dev Board nuda</strong> (es. ESP32-WROOM-32
+  DevKitC, NodeMCU-32S, ecc.) e <strong>2 FFC breakout 0.5 mm</strong> a 21
+  pin (reperibili su AliExpress / Amazon, ~5 € la coppia). Questo setup è
+  più flessibile della Waveshare board perché:
+</p>
+
+<ul>
+  <li>la pinout SPI è scegliibile liberamente (default VSPI 18/19/23 o HSPI 14/12/13);</li>
+  <li>i 2 FFC sono simmetrici, niente adattatore 24→21 pin;</li>
+  <li>tutti i 9 GPIO necessari sono accessibili sui pin header DIP;</li>
+  <li>più adatto a un PCB custom finale.</li>
+</ul>
+
+<h3>Schema di cablaggio</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 520" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowOrange2" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
+    </marker>
+    <marker id="arrowBlue2" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowPurple2" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d2a8ff"/>
+    </marker>
+  </defs>
+
+  <!-- ESP32 Dev Board -->
+  <rect x="40" y="80" width="280" height="380" rx="10"
+        fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="180" y="106" fill="#c9d1d9" font-size="14" font-weight="bold"
+        text-anchor="middle">ESP32 Dev Board (DevKitC)</text>
+
+  <!-- Pin layout simulato -->
+  <rect x="60" y="130" width="240" height="320" rx="6"
+        fill="#21262d" stroke="#30363d"/>
+
+  <text x="180" y="158" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">PIN HEADER ESP32</text>
+
+  <!-- Lista pin essenziali -->
+  <g font-family="monospace" font-size="11">
+    <text x="80"  y="190" fill="#f0883e">GPIO 18 (SCK)</text>
+    <text x="80"  y="210" fill="#f0883e">GPIO 23 (MOSI)</text>
+    <text x="80"  y="230" fill="#f0883e">GPIO 19 (MISO)</text>
+    <text x="80"  y="250" fill="#f0883e">GPIO 27 (DC)</text>
+    <text x="80"  y="270" fill="#f0883e">GPIO 26 (RST)</text>
+    <text x="80"  y="290" fill="#f0883e">3V3 / GND</text>
+
+    <text x="80"  y="320" fill="#58a6ff">GPIO 15 (CS_M)</text>
+    <text x="80"  y="340" fill="#58a6ff">GPIO 25 (BUSY_M)</text>
+
+    <text x="80"  y="370" fill="#d2a8ff">GPIO 33 (CS_S)</text>
+    <text x="80"  y="390" fill="#d2a8ff">GPIO 35 (BUSY_S)</text>
+  </g>
+
+  <text x="180" y="430" fill="#8b949e" font-size="10"
+        text-anchor="middle">9 GPIO totali</text>
+
+  <!-- Breakout #1 (master) -->
+  <rect x="380" y="100" width="180" height="160" rx="6"
+        fill="rgba(88,166,255,0.06)" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="470" y="124" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">FFC Breakout #1</text>
+  <text x="470" y="142" fill="#8b949e" font-size="11"
+        text-anchor="middle">21 pin 0.5 mm — MASTER</text>
+  <rect x="400" y="160" width="140" height="30" rx="3"
+        fill="#0d1117" stroke="#58a6ff"/>
+  <text x="470" y="180" fill="#58a6ff" font-size="11"
+        text-anchor="middle" font-weight="bold">connettore FFC</text>
+  <text x="470" y="220" fill="#c9d1d9" font-size="10"
+        text-anchor="middle">21 pin → 21 pad DIP 2.54 mm</text>
+  <text x="470" y="240" fill="#8b949e" font-size="10"
+        text-anchor="middle">si infila in breadboard</text>
+
+  <!-- Breakout #2 (slave) -->
+  <rect x="380" y="290" width="180" height="160" rx="6"
+        fill="rgba(210,168,255,0.06)" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="470" y="314" fill="#d2a8ff" font-size="12" font-weight="bold"
+        text-anchor="middle">FFC Breakout #2</text>
+  <text x="470" y="332" fill="#8b949e" font-size="11"
+        text-anchor="middle">21 pin 0.5 mm — SLAVE</text>
+  <rect x="400" y="350" width="140" height="30" rx="3"
+        fill="#0d1117" stroke="#d2a8ff"/>
+  <text x="470" y="370" fill="#d2a8ff" font-size="11"
+        text-anchor="middle" font-weight="bold">connettore FFC</text>
+  <text x="470" y="410" fill="#c9d1d9" font-size="10"
+        text-anchor="middle">21 pin → 21 pad DIP 2.54 mm</text>
+  <text x="470" y="430" fill="#8b949e" font-size="10"
+        text-anchor="middle">si infila in breadboard</text>
+
+  <!-- Pannello SOLUM -->
+  <rect x="630" y="80" width="310" height="380" rx="10"
+        fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="785" y="106" fill="#c9d1d9" font-size="14" font-weight="bold"
+        text-anchor="middle">Pannello SOLUM 12.2"</text>
+  <text x="785" y="124" fill="#8b949e" font-size="11"
+        text-anchor="middle">960 × 768 BWR</text>
+
+  <rect x="650" y="140" width="135" height="300" rx="4"
+        fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="717" y="165" fill="#58a6ff" font-size="12" font-weight="bold"
+        text-anchor="middle">MASTER</text>
+  <text x="717" y="183" fill="#8b949e" font-size="11"
+        text-anchor="middle">cols 0..479</text>
+  <rect x="667" y="220" width="100" height="30" rx="3"
+        fill="#0d1117" stroke="#58a6ff"/>
+  <text x="717" y="240" fill="#58a6ff" font-size="11"
+        text-anchor="middle" font-weight="bold">FFC #1</text>
+
+  <rect x="795" y="140" width="135" height="300" rx="4"
+        fill="rgba(210,168,255,0.08)" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="862" y="165" fill="#d2a8ff" font-size="12" font-weight="bold"
+        text-anchor="middle">SLAVE</text>
+  <text x="862" y="183" fill="#8b949e" font-size="11"
+        text-anchor="middle">cols 480..959</text>
+  <rect x="812" y="220" width="100" height="30" rx="3"
+        fill="#0d1117" stroke="#d2a8ff"/>
+  <text x="862" y="240" fill="#d2a8ff" font-size="11"
+        text-anchor="middle" font-weight="bold">FFC #2</text>
+
+  <!-- Connessioni jumper ESP32 -> breakout #1 (shared via condivisi + master only) -->
+  <line x1="300" y1="220" x2="380" y2="180" stroke="#f0883e" stroke-width="1.5"
+        marker-end="url(#arrowOrange2)"/>
+  <line x1="300" y1="320" x2="380" y2="200" stroke="#58a6ff" stroke-width="1.5"
+        marker-end="url(#arrowBlue2)"/>
+
+  <!-- Connessioni jumper ESP32 -> breakout #2 -->
+  <line x1="300" y1="240" x2="380" y2="370" stroke="#f0883e" stroke-width="1.5"
+        marker-end="url(#arrowOrange2)"/>
+  <line x1="300" y1="380" x2="380" y2="390" stroke="#d2a8ff" stroke-width="1.5"
+        marker-end="url(#arrowPurple2)"/>
+
+  <!-- breakout #1 -> FFC #1 -->
+  <line x1="540" y1="180" x2="667" y2="235" stroke="#58a6ff" stroke-width="2"
+        marker-end="url(#arrowBlue2)"/>
+  <text x="600" y="200" fill="#58a6ff" font-size="11" font-style="italic">FFC ribbon</text>
+
+  <!-- breakout #2 -> FFC #2 -->
+  <line x1="540" y1="370" x2="812" y2="235" stroke="#d2a8ff" stroke-width="2"
+        marker-end="url(#arrowPurple2)"/>
+  <text x="600" y="350" fill="#d2a8ff" font-size="11" font-style="italic">FFC ribbon</text>
+</svg>
+</div>
+
+<h3>Pinout dettagliato</h3>
+<table>
+  <thead>
+    <tr><th>Segnale</th><th>GPIO ESP32</th><th>Cablaggio</th><th>Tipo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>SCK</td><td>18 (VSPI default)</td><td>jumper a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>MOSI (DIN)</td><td>23</td><td>jumper a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>MISO</td><td>19 (opzionale)</td><td>jumper a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>DC</td><td>27</td><td>jumper a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>RST</td><td>26</td><td>jumper a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td>3V3 / GND</td><td>—</td><td>rail breadboard a entrambi i breakout</td><td><span class="badge shared">CONDIVISO</span></td></tr>
+    <tr><td><strong>CS_M</strong></td><td>15</td><td>jumper al breakout #1</td><td><span class="badge master">MASTER</span></td></tr>
+    <tr><td><strong>BUSY_M</strong></td><td>25</td><td>jumper al breakout #1</td><td><span class="badge master">MASTER</span></td></tr>
+    <tr><td><strong>CS_S</strong></td><td>33</td><td>jumper al breakout #2</td><td><span class="badge slave">SLAVE</span></td></tr>
+    <tr><td><strong>BUSY_S</strong></td><td>35</td><td>jumper al breakout #2</td><td><span class="badge slave">SLAVE</span></td></tr>
+  </tbody>
+</table>
+
+<h3>Codice del costruttore</h3>
+<pre><code>#include "GxEPD2_122c_SOLUM_960x768.h"
+
+// Variante con SPI default (VSPI: SCK=18, MISO=19, MOSI=23):
+GxEPD2_3C&lt;GxEPD2_122c_SOLUM_960x768,
+          GxEPD2_122c_SOLUM_960x768::HEIGHT / 8&gt;
+    display(GxEPD2_122c_SOLUM_960x768(
+        /*cs_m  */ 15, /*cs_s  */ 33,
+        /*dc    */ 27, /*rst   */ 26,
+        /*busy_m*/ 25, /*busy_s*/ 35));</code></pre>
+
+<div class="ok-box">
+  <strong>Setup consigliato per il bring-up.</strong> Questo cablaggio
+  (ESP32 Dev Board nuda + 2 FFC breakout) è il più semplice da
+  diagnosticare se qualcosa non funziona: tutti i segnali sono
+  fisicamente accessibili con sonda logica / oscilloscopio sui pin
+  della breadboard, e si possono swappare velocemente master ↔ slave
+  scollegando 2 jumper invece di rifare il PCB.
+</div>
+
+<hr>
+
+<h2 id="bringup">3. Strategia di bring-up</h2>
+
+<p>Procedi a step per isolare i problemi:</p>
+
+<h3>Step 1 — solo master cablato</h3>
+<p>
+  Collega solo il FFC #1 (master), lascia il #2 fisicamente staccato.
+  Usa il costruttore <em>single-CS</em>:
+</p>
+<pre><code>display(GxEPD2_122c_SOLUM_960x768(
+    /*cs=*/15, /*dc=*/27, /*rst=*/26, /*busy=*/25));</code></pre>
+
+<p>Risultato atteso: la metà sinistra del pannello (cols 0..479) si aggiorna,
+la metà destra resta scura/random. Confermi che:</p>
+<ul>
+  <li>l'init UC8179 funziona;</li>
+  <li>il pin BUSY si rilascia entro ~25 s;</li>
+  <li>i tempi di refresh sono ragionevoli.</li>
+</ul>
+
+<div class="note">
+  <strong>Se il pannello non risponde affatto</strong>, il primo sospetto è
+  l'assumption sul controller IC (UC8179). Vedi la sezione
+  <code>TODO[VERIFY]</code> nel <a href="README.md">README</a>: il piano B
+  è sostituire la sequenza <code>_InitDisplay</code> con quella SSD1677 dal
+  driver SOLUM 9.7" (file <code>GxEPD2_097c_SOLUM_672x960.h</code>).
+</div>
+
+<h3>Step 2 — entrambi i controller cablati</h3>
+<p>Collega anche il FFC #2 e usa il costruttore completo. Se la metà destra
+non si aggiorna correttamente, prova nell'ordine:</p>
+<ol>
+  <li><strong>Swap CS_M ↔ CS_S</strong>: potrebbe esserci ambiguità su quale
+      FFC è "master" sul pannello fisico. Inverti i 2 jumper.</li>
+  <li><strong>Cambia il valore reverse-scan</strong>: nel file
+      <code>GxEPD2_122c_SOLUM_960x768.h</code>, dentro <code>_InitDisplay()</code>,
+      lo slave usa <code>0x00 = 0x03</code> (reverse scan). Prova a
+      cambiarlo in <code>0x0f</code> (scan normale come il master).</li>
+  <li><strong>Split orizzontale invece di verticale</strong>: se i pixel si
+      aggiornano ma sono "scambiati di posizione" tra le due metà,
+      probabilmente lo split fisico è per riga (master=0..383,
+      slave=384..767) invece che per colonna. Vedi sezione
+      <code>TODO[VERIFY]</code> del README.</li>
+</ol>
+
+<hr>
+
+<h2 id="caveat">4. Caveat hardware</h2>
+
+<div class="note">
+  <strong>Tensione 3.3V tassativa.</strong> Il pannello SOLUM (come tutti
+  i display e-paper Good Display / SOLUM) NON è 5V tolerant. Sia VCC che
+  tutte le data line devono essere a 3.3V. Se l'ESP32 è alimentato a 5V
+  via USB, il regolatore 3V3 onboard è OK, ma <strong>non collegare</strong>
+  segnali diretti dal lato 5V.
+</div>
+
+<div class="note">
+  <strong>Lunghezza dei jumper wire.</strong> A 20 MHz SPI ogni cm di
+  filo introduce ~50 ps di skew, e jumper > 15 cm danno ringing visibile
+  all'oscilloscopio. Tieni i fili <strong>corti</strong> (idealmente
+  &lt; 10 cm). Se vedi byte SPI corrotti, abbassa a 4–8 MHz cambiando
+  <code>SPISettings(20000000, ...)</code> nel driver.
+</div>
+
+<div class="note">
+  <strong>Assorbimento durante il refresh.</strong> Il datasheet Newton-Core
+  indica un pacco da 6 batterie CR2450 per il pannello, segno di un
+  assorbimento non banale durante il refresh elettroforetico (~25 s).
+  Il regolatore 3V3 onboard di una ESP32 Dev Board (max ~600 mA tipico)
+  potrebbe non bastare se il pannello picca oltre. Misura la corrente
+  durante il refresh: se la 3V3 cala sotto 3.0V, valuta un'alimentazione
+  esterna 3.3V dedicata al pannello (lasciando GND comune con la board).
+</div>
+
+<div class="note">
+  <strong>Pin GPIO 35 input-only.</strong> Su ESP32 i pin GPIO 34, 35,
+  36, 39 sono <strong>solo input</strong> (no pull-up/down interno).
+  Vanno bene per <code>BUSY_S</code> ma <strong>non</strong> per
+  <code>CS_S</code>. Se hai bisogno di altri input-only puoi usarli al
+  posto di <code>BUSY_S</code> (es. GPIO 34 o GPIO 39); per
+  <code>CS_S</code> serve un GPIO output-capable (4, 5, 16, 17, 21, 22,
+  32, 33).
+</div>
+
+<div class="note">
+  <strong>Strapping pins ESP32.</strong> I GPIO 0, 2, 5, 12, 15 sono
+  pin di strapping che determinano la modalità di boot dell'ESP32.
+  GPIO 15 è usato per CS_M (deve essere HIGH al boot, e lo è perché il
+  driver lo inizializza così via <code>digitalWrite(_cs, HIGH)</code>
+  prima di <code>pinMode</code>). Evita di usare GPIO 0, 2, 12 per altri
+  segnali del display: rischi che il pannello tenga lo strapping a un
+  valore sbagliato impedendo il boot.
+</div>
+
+<hr>
+
+<p class="small" style="text-align: center; margin-top: 32px;">
+  Documento di supporto al driver
+  <code>GxEPD2_122c_SOLUM_960x768</code> ·
+  parte del progetto
+  <a href="https://github.com/alesimattia/ePaper-weather-dashboard">ePaper-weather-dashboard</a>
+</p>
+
+</div>
+</body>
+</html>
