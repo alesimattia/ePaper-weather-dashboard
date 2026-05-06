@@ -8,3 +8,4 @@
 - [Ordering flag prima del fetch](fetch_flag_ordering.md) — vincolo retry-storm durante OTA loop=10ms
 - [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 è dereferenza, descriptor unico per Flash/RAM/PSRAM
 - [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — pointer al README dedicato + vincoli (pittfall GxEPD_YELLOW, page-tracking, ottimizzazioni applicate)
+- [Driver custom GxEPD2_122c](gxepd2_122c_driver.md) — driver UC8179 dual-controller per SOLUM 12.2" su branch Solum_12_2; bring-up Step 1 OK, Step 2 in attesa del secondo breakout
