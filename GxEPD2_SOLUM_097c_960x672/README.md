@@ -378,8 +378,8 @@ adottati negli altri driver moderni della libreria.
 
 La lista degli overload `drawImage*` / `writeImage*` / `writeImagePart*`
 ereditati dalla base class è in
-[../DOCS/drawImage_overloads_it.md](../DOCS/drawImage_overloads_it.md) (o la
-versione inglese [../DOCS/drawImage_overloads.md](../DOCS/drawImage_overloads.md)).
+[drawImage_overloads_it.md](drawImage_overloads_it.md) (o la versione
+inglese [drawImage_overloads.md](drawImage_overloads.md)).
 Sono override di virtual del base class `GxEPD2_EPD` necessari al
 contratto della libreria — non sono pensati per uso diretto: lo sketch
 chiama `showImage()` per immagini singole, oppure il template

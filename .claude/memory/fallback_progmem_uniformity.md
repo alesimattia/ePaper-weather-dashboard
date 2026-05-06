@@ -4,7 +4,7 @@ description: Perchè GxEPDImage::showImage funziona uguale per dati Flash e dati
 type: project
 ---
 
-`g_cinema_desc` (`ePaper-weather-dashboard-097c.ino`) viene riassegnato senza problemi tra:
+`g_cinema_desc` (`ePaper-weather-dashboard.ino`) viene riassegnato senza problemi tra:
 - `&img_apple_bwry_desc` → buffer in `PROGMEM` (Flash readonly).
 - `&g_cinema_dynamic_desc` → buffer in `RAM` (heap interno) o `PSRAM` (SPI external RAM).
 

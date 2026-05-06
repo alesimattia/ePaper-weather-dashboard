@@ -6,7 +6,7 @@ type: project
 
 I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
 
-**Firmware (`ePaper-weather-dashboard-097c.ino`):**
+**Firmware (`ePaper-weather-dashboard.ino`):**
 - `wifiOn()` timeout = 15s (loop `while (status != WL_CONNECTED && millis()-t0 < 15000)`).
 - `http.setTimeout(45000)` per il fetch cinema (45s).
 - `OTA_WINDOW_MIN = 3` → finestra OTA da 180s al boot.
@@ -20,9 +20,9 @@ I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
 - Pinga `/health` 5 min prima del fetch ESP32 alle 07:00 local (CINEMA_DAILY_FETCH_HOUR, apertura finestra WiFi mattutina).
 
 **Worst case dedotto:**
-- Boot freddo render.com: 15s (WiFi) + 30s (cold start HTTP) + ~3s (download 100 KB su WiFi) ≈ 48s.
+- Boot freddo render.com: 15s (WiFi) + 30s (cold start HTTP) + ~3-4s (download 100 KB sul 097c, ~123 KB sul 122c, su WiFi) ≈ 48-49s.
 - Sta sotto i 45s di `http.setTimeout` solo grazie al keep-warm. SENZA keep-warm, scenario realistico = timeout HTTP a 45s e fallback PROGMEM.
-- OTA window 180s contiene anche il caso freddo (~50s fetch + altri fetch in parallelo: meteo + 2 calendari).
+- OTA window 180s contiene anche il caso freddo (~50s fetch + altri fetch in parallelo: meteo + 2 calendari + mail).
 
 **Budget durante OTA:**
 - `loop()` gira con `delay(10)` durante OTA window per `WebServer::handleClient()`. Un fetch cinema bloccante da 45s congela l'AP per 45s: utenti che provano `/update` durante quel periodo vedono timeout dal browser. Accettato perchè la finestra OTA è rara e l'utente se ne accorge.

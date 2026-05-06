@@ -1,10 +1,16 @@
-# ePaper-9.7
+# ePaper SOLUM Dashboard
 
 Firmware Arduino/ESP32 + tool Python per pilotare display e-paper a colori
 tramite la libreria [GxEPD2](https://github.com/ZinggJM/GxEPD2) di
-Jean-Marc Zingg. Il repository include un **driver custom esteso** per il
-pannello SOLUM ESL 9.7" (672×960, controller SSD1677, **4 colori nativi**:
-bianco, nero, rosso, giallo) che aggiunge:
+Jean-Marc Zingg. Il repository supporta due pannelli SOLUM (controller
+SSD1677, **4 colori nativi** B/N/R/Y) con la stessa logica applicativa,
+selezionabili a compile-time via `#define DISPLAY_VARIANT_*` (vedi
+[Selezione del display](#selezione-del-display)):
+
+- **SOLUM ESL 9.7"** (672×960 nativo → 960×672 landscape) — driver custom incluso.
+- **SOLUM 12.2"** (768×960 nativo → 960×768 landscape) — driver custom richiesto (branch `Solum_12_2`).
+
+Il driver custom (header-only) per il SOLUM 9.7" aggiunge:
 
 - una **API `showImage()` unificata** come unico entry-point one-shot di
   stampa immagine, con hibernate automatico opzionale. Due overload:
@@ -24,7 +30,7 @@ Lo sketch principale compone uno schermo completo con:
   [`webapp/`](webapp/) (collage locandine + orari del prossimo martedì);
   fetch una tantum al primo boot con WiFi su, immagine tenuta in RAM/PSRAM
   per tutti i refresh successivi. Se il fetch fallisce o il WiFi non c'è
-  si usa il fallback PROGMEM [`img_test/img_apple_bwry.h`](img_test/img_apple_bwry.h).
+  si usa il fallback PROGMEM [`img_wallpaper/img_apple_bwry.h`](img_wallpaper/img_apple_bwry.h).
   Vedi [Background cinema](#background-cinema);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
   bordo): **Indoor** (BME680, 1 colonna × 4 righe: T/RH/IAQ/pressione),
@@ -56,6 +62,7 @@ ogni modifica dei parametri.
 
 - [Hardware supportato](#hardware-supportato)
 - [Struttura del repository](#struttura-del-repository)
+- [Selezione del display](#selezione-del-display)
 - [Configurazione (Env.h)](#configurazione-envh)
 - [Driver custom GxEPD2_SOLUM_097c_960x672](#driver-custom-gxepd2_solum_097c_960x672) (→ [doc dedicata](GxEPD2_SOLUM_097c_960x672/README.md))
 - [Moduli applicativi](#moduli-applicativi)
@@ -72,13 +79,17 @@ ogni modifica dei parametri.
 
 ## Hardware supportato
 
-| Pannello | Risoluzione | Colori | Controller | Note |
+| Pannello | Risoluzione (landscape) | Colori | Controller | Note |
 |----------|------------|--------|------------|------|
-| **SOLUM ESL 9.7"** | 672 × 960 | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso. 4° colore via comando `0x28` confermato su HW |
-| Good Display **GDEY0420F51** | 400 × 300 | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400×300 |
+| **SOLUM ESL 9.7"** | 960 × 672 | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso (`GxEPD2_SOLUM_097c_960x672/`). 4° colore via comando `0x28` confermato su HW. Selezione: `#define DISPLAY_VARIANT_097C` |
+| **SOLUM 12.2"** | 960 × 768 | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom (`GxEPD2_SOLUM_122c_960x768/`) richiesto, vive nel branch `Solum_12_2`. Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
+| Good Display **GDEY0420F51** | 400 × 300 | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400×300 (no firmware completo) |
 
-Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
-(piedinatura HSPI nello sketch: `SCK=13, MISO=12, MOSI=14, CS=15, DC=27, RST=26, BUSY=25`).
+Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**.
+La piedinatura del bus HSPI (`SCK=13, MISO=12, MOSI=14, SS=15`) è
+board-specific e vive nel `.ino` (`hspi.begin(...)`). I pin del driver
+display (`CS=15, DC=27, RST=26, BUSY=25`) sono display-specific e vivono
+in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 
 ---
 
@@ -86,12 +97,15 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 
 ```
 .
-├── GxEPD2_SOLUM_097c_960x672/      # Cartella driver SOLUM 9.7"
-│   ├── GxEPD2_SOLUM_097c_960x672.h     # Driver custom header-only (classe + namespace GxEPDImage)
+├── GxEPD2_SOLUM_097c_960x672/      # Driver SOLUM 9.7" (header-only, 672x960 BWRY)
+│   ├── GxEPD2_SOLUM_097c_960x672.h     # Classe + namespace GxEPDImage
 │   ├── README.md                       # Documentazione dedicata del driver
 │   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
 │   └── drawImage_overloads_it.md       # Idem in italiano
-├── GxEPD2_1330c_GDEM133Z91.ino     # Sketch principale: orchestra Weather/Calendar/Ota
+├── ePaper-weather-dashboard.ino    # Sketch principale: orchestra Weather/Calendar/Ota/Mail
+├── Layout.h                        # Dispatcher: include Layout_097c.h o Layout_122c.h via #define DISPLAY_VARIANT_*
+├── Layout_097c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 9.7" (960x672)
+├── Layout_122c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 12.2" (960x768)
 ├── Env.h                           # Segreti (WiFi, OWM, OTA, OAuth) + posizione GPS
 ├── Weather.h                       # Fetch OWM + rendering banner meteo (4 blocchi)
 ├── Calendar.h                      # Mese + lista eventi Outlook+Google + TZ Europe/Rome
@@ -100,14 +114,110 @@ Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
 ├── Ota.h                           # Finestra OTA (OTA_WINDOW_MIN, default 3 min) via AP WiFi dedicato
 ├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
 ├── icons.h                         # Bitmap icone meteo indicizzate per icon code OWM
-├── preview.html                    # Anteprima statica HTML del layout 960x672
+├── preview_097c.html               # Anteprima statica HTML del layout SOLUM 9.7" (960x672)
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
-├── img_test/
+├── img_wallpaper/
 │   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
 ├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
 ├── LICENSE
 └── README.md
 ```
+
+---
+
+## Selezione del display
+
+Il firmware supporta due pannelli SOLUM (controller SSD1677, 4 colori
+nativi BWRY) con la **stessa logica applicativa**: cambia solo il driver
+e il layout grafico (coordinate, baseline, font, dimensioni del wallpaper
+cinema). La selezione avviene via `#define` in testa allo sketch,
+scommentando UNA sola delle due varianti:
+
+```cpp
+// In ePaper-weather-dashboard.ino:
+#define DISPLAY_VARIANT_097C
+//#define DISPLAY_VARIANT_122C
+```
+
+| Variante                | Pannello             | Risoluzione | File layout       |
+|-------------------------|----------------------|-------------|-------------------|
+| `DISPLAY_VARIANT_097C`  | SOLUM ESL 9.7"       | 960 × 672   | [Layout_097c.h](Layout_097c.h) |
+| `DISPLAY_VARIANT_122C`  | SOLUM 12.2"          | 960 × 768   | [Layout_122c.h](Layout_122c.h) |
+
+### Cosa contiene un Layout_*.h
+
+Ogni Layout definisce un namespace `Layout` con gli stessi simboli per
+entrambe le varianti, in modo che i moduli applicativi
+(`Weather.h`, `Calendar.h`, `Graphics.h`, `icons.h`, lo sketch `.ino`) li
+referenzino in modo uniforme:
+
+- **`Layout::Panel`** — typedef della classe driver (`GxEPD2_SOLUM_097c_960x672`
+  o `GxEPD2_SOLUM_122c_960x768`). Lo sketch istanzia il display come
+  `GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT/8>`.
+- **`Layout::PIN_CS / PIN_DC / PIN_RST / PIN_BUSY`** — pin del driver
+  display passati al costruttore `Panel(...)`. Il bus HSPI condiviso
+  (SCK/MISO/MOSI = 13/12/14) resta nello sketch.
+- **`Layout::ROTATION / SCREEN_W / SCREEN_H`** — orientamento e
+  geometria del frame visibile.
+- **`Layout::CINEMA_*`** — dimensioni dell'area wallpaper cinema, URL
+  del server (la query string riflette `width`/`height` corretti),
+  `STRIDE`, `PLANE_SZ`, `TOTAL_SZ` per il fetch HTTP.
+- **`Layout::SIDEBAR_*`, `BANNER_*`, `INDOOR_RR_*`, `WEATHER_RR_*`,
+  `FORECAST_RR_*`, `BLOCK_*`** — fieldset e blocchi del banner meteo.
+- **`Layout::ICON_Y / DESC_BASELINE / TEMP_BASELINE / TIME_BASELINE`** —
+  baseline del rendering testo dentro un blocco meteo (relative a
+  `BANNER_Y`, cosi' lo scaling 097c→122c si propaga in automatico).
+- **`Layout::INDOOR_ROW1..4_BASELINE`, `INDOOR_COL1_OFFSET`,
+  `INDOOR_ICON_GAP`** — sub-colonna dati indoor + sub-colonna sun.
+- **`Layout::CAL_*` / `EVT_*`** — riquadro mese e area eventi sidebar.
+- **`Layout::ICON_SIZE / INDOOR_ICON_SIZE`** — lato delle bitmap icone.
+- **`Layout::TRB_*`** — buffer della barra temp-range gialla.
+- **`Layout::FONT_LARGE_BOLD / FONT_LARGE / FONT_BODY / FONT_SMALL /
+  FONT_MICRO`** — `const GFXfont*` per ciascun ruolo semantico (titoli
+  fieldset, orario, descrizione, IAQ, pedice accuracy). Sostituire i
+  font in `Layout_122c.h` non richiede modifiche ai moduli.
+
+Il dispatcher [`Layout.h`](Layout.h) valuta le `#define` e include uno
+solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
+`#error` a compile-time.
+
+### Differenze layout 097c vs 122c
+
+Il pannello 12.2" ha la stessa larghezza (960 px) e 96 px in piu' in
+altezza (672→768). I 96 px aggiuntivi sono distribuiti per mantenere il
+banner ancorato al fondo schermo:
+
+| Costante           | 097c   | 122c   | Note                                        |
+|--------------------|-------:|-------:|---------------------------------------------|
+| `SCREEN_H`         | 672    | 768    | +96 px verticale                            |
+| `BANNER_Y`         | 460    | 556    | banner ancorato al fondo, +96               |
+| `BANNER_H`         | 212    | 212    | invariato (baseline ricalcolate dalla cascata) |
+| `CINEMA_H`         | 440    | 536    | +96 (assorbe extra verticale a sinistra)    |
+| `EVT_H`            | 230    | 326    | +96 (assorbe extra verticale in sidebar)    |
+| `CINEMA_PLANE_SZ`  | 34320  | 41808  | (W/8)·H per ogni piano BWRY                 |
+| `CINEMA_TOTAL_SZ`  | 102960 | 125424 | 3 piani -> ~100 KB (097c) / ~123 KB (122c)  |
+| `CINEMA_URL` heigth| 440    | 536    | il server riceve la dimensione corretta     |
+
+Tutto il banner (`X/W` dei fieldset, `BLOCK_FC*_X`, `SUN_COL_OFFSET`)
+resta invariato perche' la larghezza e' identica. Le baseline interne
+del banner (icona, description, temp, time, indoor row1..4) sono
+espresse come `BANNER_Y + offset` in entrambi i Layout, quindi seguono
+la traslazione di `BANNER_Y` in automatico. I font sono gli stessi
+nelle due varianti per ora: modificare `Layout_122c.h` per scegliere
+size diverse e' un cambio mirato che non tocca i moduli.
+
+### Aggiungere un terzo display
+
+1. Scrivere il driver custom (cartella + `.h` header-only sullo schema
+   di [`GxEPD2_SOLUM_097c_960x672/`](GxEPD2_SOLUM_097c_960x672/)).
+2. Creare `Layout_<nome>.h` con gli stessi simboli del namespace
+   `Layout` (Panel, pin, font, coord, cinema).
+3. Aggiungere il ramo `#elif defined(DISPLAY_VARIANT_<NOME>)` in
+   [Layout.h](Layout.h).
+4. Nello sketch `.ino` aggiungere `#define DISPLAY_VARIANT_<NOME>` in
+   alternativa ai due esistenti.
+
+I moduli applicativi non vanno toccati.
 
 ---
 
@@ -472,9 +582,12 @@ La pagina default di `HTTPUpdateServer` resta nel codice della libreria
 
 ## Sketch principale
 
-[`GxEPD2_1330c_GDEM133Z91.ino`](GxEPD2_1330c_GDEM133Z91.ino) inizializza
-il display in landscape 960×672 e **si limita a orchestrare** i tre
-moduli applicativi. Il `loop()` ha due rami:
+[`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino) inizializza
+il display in landscape (960×672 sul 9.7", 960×768 sul 12.2") e **si
+limita a orchestrare** i moduli applicativi. La selezione del pannello
+avviene scommentando uno solo dei due `#define DISPLAY_VARIANT_*` in
+testa allo sketch (vedi sezione [Selezione del display](#selezione-del-display)).
+Il `loop()` ha due rami:
 
 ```cpp
 void setup()
@@ -485,6 +598,7 @@ void setup()
   Weather::begin();
   Calendar::Outlook::begin();
   Calendar::Google::begin();
+  Mail::begin();                             // cache mail Gmail (vuota al boot)
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Ota::begin();
 }
@@ -498,6 +612,8 @@ void loop()
     {
       auto need = Weather::pendingFetch();
       if (need != Weather::FETCH_NONE) Weather::runFetch(need);
+      fetchCinemaImage();                    // gated: 1° boot + daily CINEMA_DAILY_FETCH_HOUR
+      if (Mail::pendingFetch()) Mail::runFetch();   // best-effort, niente UI per ora
       // Outlook + Google agganciati al FETCH_CURRENT_WEATHER del meteo
       if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Outlook::pendingFetch())
         Calendar::Outlook::runFetch();
@@ -516,13 +632,16 @@ void loop()
   auto need = Weather::pendingFetch();
   bool needOutlook = Calendar::Outlook::pendingFetch();
   bool needGoogle  = Calendar::Google::pendingFetch();
-  if (need != Weather::FETCH_NONE || needOutlook || needGoogle)
+  bool needMail    = Mail::pendingFetch();
+  if (need != Weather::FETCH_NONE || needOutlook || needGoogle || needMail)
   {
     if (isActiveHour())                      // WiFi acceso solo 07:00-23:59
     {
       if (wifiOn())
       {
         if (need != Weather::FETCH_NONE) Weather::runFetch(need);
+        fetchCinemaImage();
+        if (needMail) Mail::runFetch();
         if ((need & Weather::FETCH_CURRENT_WEATHER) || needOutlook)
           Calendar::Outlook::runFetch();
         if ((need & Weather::FETCH_CURRENT_WEATHER) || needGoogle)
@@ -544,7 +663,7 @@ void loop()
 }
 ```
 
-Layout finale sul pannello 960×672:
+Layout finale sul pannello SOLUM 9.7" (960×672, valori da `Layout_097c.h`):
 
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
@@ -556,14 +675,22 @@ Layout finale sul pannello 960×672:
 | Banner Weather    | `x=169..475, y=465..667`  | 306×202 fieldset, meteo corrente + sub-col sun a destra |
 | Banner Forecast   | `x=485..955, y=465..667`  | 470×202 fieldset, 3 slot previsioni da ~156 px          |
 
+Sul pannello SOLUM 12.2" (960×768, valori da `Layout_122c.h`) X e larghezze
+sono identici; le 3 zone verticali assorbono i 96 px aggiuntivi: Wallpaper
+fino a `y=536`, Sidebar fino a `y=556`, Lista eventi `y=220..546`, banner
+ancorato al fondo (`y=556..768`). Vedi tabella riepilogativa nella sezione
+[Differenze layout 097c vs 122c](#differenze-layout-097c-vs-122c).
+
 Anteprima statica del layout (rendering nativo GitHub via SVG):
 
 ![Anteprima layout 960×672](DOCS/preview.svg)
 
-> La versione HTML interattiva equivalente è in [`preview.html`](preview.html)
+> La versione HTML interattiva equivalente è in [`preview_097c.html`](preview_097c.html)
 > (offre stile più ricco, calendario popolato dinamicamente da JS sul mese
 > corrente e lista eventi di esempio; il contenuto strutturale è lo stesso
-> dell'SVG sopra). Aprire in un browser per la consultazione offline.
+> dell'SVG sopra). Aprire in un browser per la consultazione offline. Anteprima
+> dedicata per il pannello 12.2" non ancora disponibile (segnaposto futuro:
+> `preview_122c.html`).
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner
@@ -571,24 +698,33 @@ I `#define` in testa allo sketch sono:
   calendario);
 - `USE_HSPI_FOR_EPD` → segnala a GxEPD2 che il display gira sul bus HSPI
   (la Waveshare ESP32 Driver Board collega SCK/MISO/MOSI a 13/12/14);
+- `DISPLAY_VARIANT_097C` *oppure* `DISPLAY_VARIANT_122C` → seleziona la
+  variante di pannello (vedi [Selezione del display](#selezione-del-display)).
+  Esattamente uno deve essere definito; il dispatcher `Layout.h` emette
+  `#error` altrimenti;
 - **Cadenze operative** (valori in minuti interi, default fra parentesi):
   - `DISPLAY_REFRESH_MIN` (5) → periodo di light sleep / refresh display;
   - `WEATHER_FORECAST_FETCH_MIN` (10) → fetch meteo One Call 3.0 (corrente + previsioni in una singola chiamata);
   - `CAL_OUTLOOK_FETCH_MIN` (10) → fetch calendario Outlook;
   - `CAL_GOOGLE_FETCH_MIN` (10) → fetch calendario Google;
   - `MAIL_GOOGLE_FETCH_MIN` (10) → fetch ultime mail Gmail (cadenza separata e indipendente);
-  - `OTA_WINDOW_MIN` (3) → durata finestra OTA al boot (AP WiFi per upload firmware).
-  Il fetch dell'immagine cinema (vedi sezione [Background cinema](#background-cinema))
-  avviene invece su due trigger fissi: **al primo boot** e **ogni giorno
-  alle `CINEMA_DAILY_FETCH_HOUR` local** (default `7`, prima connessione
-  utile della mattina all'apertura della finestra WiFi).
-  Il sampling BME680 (BSEC ULP, 5 min) NON è configurabile: è un vincolo
-  del profilo BSEC2 fissato in `Indoor.h`.
-- `WIFI_ACTIVE_HOUR_START` / `WIFI_ACTIVE_HOUR_END` → fascia oraria in cui
-  il WiFi viene acceso per i fetch (default `7`–`23`, cioè 07:00–23:59).
-  Fuori da questa finestra la radio resta spenta e le API non vengono
-  chiamate. Se la connessione fallisce durante la finestra, il display
-  mostra i dati esistenti senza logica di retry aggiuntiva.
+  - `OTA_WINDOW_MIN` (3) → durata finestra OTA al boot (AP WiFi per upload firmware);
+  - `MAX_CALENDAR_ATTEMPTS` (2) → tentativi consecutivi falliti oltre i quali
+    Outlook/Google/Mail "consumano" lo slot e attendono il prossimo
+    `CAL_*_FETCH_MIN` / `MAIL_GOOGLE_FETCH_MIN`.
+- **Trigger orari**:
+  - `WIFI_ACTIVE_HOUR_START` (7) / `WIFI_ACTIVE_HOUR_END` (23) → fascia in
+    cui il WiFi viene acceso per i fetch (07:00–23:59 default). Fuori la
+    radio resta spenta;
+  - `CINEMA_DAILY_FETCH_HOUR` (7) → ora locale del refresh giornaliero del
+    wallpaper cinema (oltre al primo boot).
+- **Timeout**:
+  - `BOOT_WIFI_TIMEOUT_MS` (15000 ms) → se entro questo tempo la STA non
+    è `WL_CONNECTED` durante la finestra OTA, il primo refresh viene
+    sbloccato comunque con i soli dati locali (BME680 + placeholder `--`).
+
+Il sampling BME680 (BSEC ULP, 5 min) NON è configurabile: è un vincolo
+del profilo BSEC2 fissato in [`Indoor.h`](Indoor.h).
 
 ---
 
@@ -754,26 +890,31 @@ sample BME680 (ogni 5 min). Le cache di meteo e calendari restano
 
 ## Background cinema
 
-Il wallpaper a sinistra della sidebar calendario (620×440 px) mostra un
+Il wallpaper a sinistra della sidebar calendario (`Layout::CINEMA_W` ×
+`Layout::CINEMA_H` px: 620×440 sul 097c, 620×536 sul 122c) mostra un
 collage locandine + orari scaricato via HTTP dalla webapp
 [`webapp/`](webapp/) (vedi [webapp/README.md](webapp/README.md) per l'API).
 
 ### Flusso
 
-1. **Boot**: `g_cinema_desc` in [`GxEPD2_1330c_GDEM133Z91.ino`](GxEPD2_1330c_GDEM133Z91.ino)
+1. **Boot**: `g_cinema_desc` in [`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino)
    punta al fallback PROGMEM `img_apple_bwry_desc` — il display ha comunque
    un'immagine da mostrare se il WiFi non è ancora connesso o l'endpoint
    non risponde.
 2. **Prima connessione WiFi**: nel `loop()`, *dopo* il fetch meteo
    (OpenWeather) e *prima* dei fetch calendari (Outlook/Google),
-   `fetchCinemaImage()` fa un `HTTP GET` a:
+   `fetchCinemaImage()` fa un `HTTP GET` a `Layout::CINEMA_URL`, che vale:
    ```
-   https://<tuo-servizio>.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd
+   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd  (097c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=536&colors=bwry&dither=floyd  (122c)
    ```
-   L'URL è hardcoded nel `.ino` (per scelta progettuale: fuori da `Env.h`,
-   va sostituito il placeholder con l'URL reale dopo il deploy della webapp).
-3. **Allocazione adattiva**: 3 buffer da 34 320 byte ciascuno (uno per
-   piano BWRY). Totale ~100 KB. La funzione `allocPlaneBuffer()`:
+   L'URL e i parametri `width`/`height` sono hardcoded nel Layout della
+   variante: cambiare display significa solo scommentare l'altro
+   `DISPLAY_VARIANT_*` nel `.ino`. Il dominio resta `cinema-epd.onrender.com`
+   (vedi `Layout::CINEMA_URL`).
+3. **Allocazione adattiva**: 3 buffer da `Layout::CINEMA_PLANE_SZ` byte
+   ciascuno (34 320 sul 097c, 41 808 sul 122c). Totale `Layout::CINEMA_TOTAL_SZ`
+   = ~100 KB (097c) / ~123 KB (122c). La funzione `allocPlaneBuffer()`:
    - prova prima `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` se
      `psramFound()` ritorna `true`;
    - fallback a `malloc()` sull'heap interno se la PSRAM non c'è o
@@ -804,7 +945,7 @@ download, e se il fetch va a buon fine vengono swappati i nuovi buffer
 con la locandina del prossimo martedi'.
 
 Helper che governa il gate: `shouldFetchCinema()` in
-[ePaper-weather-dashboard-097c.ino](ePaper-weather-dashboard-097c.ino). Condizioni:
+[ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
 primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
 
 **Cold-start mitigation via GitHub Actions.** Render.com free tier dorme
@@ -819,12 +960,15 @@ gratis (~30 min/mese consumati).
 
 ### Dimensionamento e PSRAM
 
-I 3 piani BWRY @ 620×440 = **102 960 byte** (~100 KB) di RAM necessaria.
+| Variante | `CINEMA_PLANE_SZ` | `CINEMA_TOTAL_SZ` (3 piani BWRY) |
+|----------|------------------:|---------------------------------:|
+| 097c (620×440) | 34 320 byte | **102 960 byte** (~100 KB) |
+| 122c (620×536) | 41 808 byte | **125 424 byte** (~123 KB) |
 
 | Configurazione board | Esito allocazione                                 |
 |----------------------|---------------------------------------------------|
-| ESP32-WROVER (PSRAM 4–8 MB) | OK: tutti i buffer in PSRAM, heap interno libero per altro |
-| ESP32 classico (no PSRAM, ~320 KB DRAM di cui ~120 KB usati da WiFi/Arduino) | OK stretto: ~100 KB in heap interno, verifica `ESP.getFreeHeap()` dopo connessione WiFi |
+| ESP32-WROVER (PSRAM 4–8 MB) | OK per entrambe le varianti: tutti i buffer in PSRAM, heap interno libero per altro |
+| ESP32 classico (no PSRAM, ~320 KB DRAM di cui ~120 KB usati da WiFi/Arduino) | OK stretto sul 097c (~100 KB heap interno); sul 122c (~123 KB) **richiede PSRAM** se la marginalita' WiFi/Arduino e' gia' al limite. Verifica `ESP.getFreeHeap()` dopo connessione WiFi |
 | ESP32 low-memory / già caricato | Allocazione fallisce → fallback al PROGMEM, nessun crash |
 
 Al primo boot il Serial monitor stampa qualcosa come:
@@ -927,7 +1071,10 @@ Windows) oppure `python epd_image_converter.pyw`.
 1. Arduino IDE con profilo ESP32 Dev Module (o Waveshare ESP32 Driver
    Board) selezionato. Libreria [GxEPD2](https://github.com/ZinggJM/GxEPD2)
    installata via Library Manager.
-2. Aprire [`GxEPD2_1330c_GDEM133Z91.ino`](GxEPD2_1330c_GDEM133Z91.ino).
+2. Aprire [`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino) e
+   verificare che il `#define DISPLAY_VARIANT_*` in testa allo sketch
+   corrisponda al pannello collegato (vedi sezione
+   [Selezione del display](#selezione-del-display)).
 3. Se la flash non basta a contenere immagini grandi in PROGMEM (es.
    wallpaper 960×672 4-colori = ~240 KB per i 3 canali), selezionare
    uno schema partizione più grande nel menu *Tools → Partition Scheme*,

@@ -9,10 +9,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
-
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSans18pt7b.h>
+#include "Layout.h"
 
 #include "Env.h"
 #include "Graphics.h"
@@ -20,8 +17,9 @@
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Va dichiarata a livello
 // globale perchè il simbolo lato .ino non vive in alcun namespace.
+// Il tipo concreto del pannello e' scelto dal dispatcher Layout.h.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display;
+extern GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display;
 
 // ---------------------------------------------------------------------------
 // Configurazione non-segreta del modulo. Non sta in Env.h perchè non
@@ -70,7 +68,7 @@ extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 
  *  - namespace Calendar::Outlook : scheduler/fetch eventi Microsoft Graph;
  *  - namespace Calendar::Google  : scheduler/fetch eventi Google Calendar.
  *
- * Usato da: Weather.h (render) e GxEPD2_1330c_GDEM133Z91.ino (fetch + init).
+ * Usato da: Weather.h (render) e ePaper-weather-dashboard.ino (fetch + init).
  *
  * @since 20/04/26 Mattia Alesi
  * @modified 21/04/26 integrazione Outlook (Microsoft Graph), round rect
@@ -143,38 +141,12 @@ namespace Calendar
   namespace detail
   {
     // -----------------------------------------------------------------------
-    // Layout del riquadro mese (screen 960x672, sidebar x=640..960 w=320).
+    // Layout: tutte le costanti pixel (riquadro mese, area eventi) vivono
+    // in Layout.h e sono accedute come Layout::* nel rendering. EVT_ROW_H
+    // dipende dal numero di eventi visualizzati (Calendar-specific) quindi
+    // resta calcolato qui dal Layout::EVT_H.
     // -----------------------------------------------------------------------
-    // (area immagine 620x460). 
-    // CAL_W=320 rende gridW=308 divisibile esattamente per 7 
-    // (44  px/cella) -> centratura orizzontale celle risolta.
-    inline constexpr int16_t CAL_X   = 630;
-    inline constexpr int16_t CAL_Y   = 10;
-    inline constexpr int16_t CAL_W   = 320;
-    inline constexpr int16_t CAL_H   = 200;
-    inline constexpr int16_t CAL_R   = 14;   // raggio round-rect cornice mese
-    inline constexpr int16_t CELL_R  = 4;    // raggio round-rect cella oggi
-    inline constexpr int16_t CAL_PAD = 6;
-    // Titolo mese ora disegnato in stile fieldset sul bordo superiore (non piu' dentro) 
-    // quindi serve solo il margine per il cap-height del 18pt che sconfina nel
-    // riquadro dalla linea del bordo (~10 px sopra, ~10 sotto).
-    inline constexpr int16_t TITLE_H = 20;
-    inline constexpr int16_t HDR_H   = 26; // per accomodare header giorni in FreeSans12pt7b.
-    inline constexpr int16_t GRID_TOP_PAD = 3; //margine verticale fra la linea orizzontale sotto L M M G V S e la prima riga di celle giorno
-
-    // -----------------------------------------------------------------------
-    // Layout area eventi (sotto al mese, fino al top del banner meteo y=480).
-    // -----------------------------------------------------------------------
-    inline constexpr int16_t EVT_X       = CAL_X;
-    inline constexpr int16_t EVT_Y       = CAL_Y + CAL_H + 10;   // 220
-    inline constexpr int16_t EVT_W       = CAL_W;                // 300
-    // modificato 21/04/26: 250 -> 230 per stare in sidebar alta 460 (era 480).
-    // Con CAL a 10..210 + 10 px gap -> events 220..450 + 10 px gap -> banner 460.
-    inline constexpr int16_t EVT_H       = 230;
-    inline constexpr int16_t EVT_ROW_H   = EVT_H / Calendar::MAX_EVENTS_DISPLAYED;  // 46 (era 50)
-    inline constexpr int16_t EVT_SEP_PAD  = 15;   // inset orizzontale separatori
-    inline constexpr int16_t EVT_PAD      = 8;    // padding interno (destra)
-    inline constexpr int16_t EVT_PAD_LEFT = 3;
+    inline constexpr int16_t EVT_ROW_H = Layout::EVT_H / Calendar::MAX_EVENTS_DISPLAYED;
 
     // -----------------------------------------------------------------------
     // Testi statici.
@@ -707,31 +679,33 @@ namespace Calendar
        *  del mese è incastrato sul bordo superiore interrotto (niente
        *  piu' titolo interno + linea separatrice).
        *  @modified 22/04/26 */
-      display.fillRoundRect(CAL_X, CAL_Y, CAL_W, CAL_H, CAL_R, GxEPD_WHITE);
-      display.setFont(&FreeSans18pt7b);
-      Graphics::drawFieldsetRect(CAL_X, CAL_Y, CAL_W, CAL_H, CAL_R,
-                                 MESI_IT[todayMonth],
-                                 CAL_R + 4, GxEPD_WHITE);
+      display.fillRoundRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
+                            Layout::CAL_R, GxEPD_WHITE);
+      display.setFont(Layout::FONT_LARGE);
+      Graphics::drawFieldsetRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
+                                 Layout::CAL_R, MESI_IT[todayMonth],
+                                 Layout::CAL_R + 4, GxEPD_WHITE);
 
-      const int16_t gridX = CAL_X + CAL_PAD;
-      const int16_t gridY = CAL_Y + TITLE_H;
-      const int16_t gridW = CAL_W - 2 * CAL_PAD;
+      const int16_t gridX = Layout::CAL_X + Layout::CAL_PAD;
+      const int16_t gridY = Layout::CAL_Y + Layout::TITLE_H;
+      const int16_t gridW = Layout::CAL_W - 2 * Layout::CAL_PAD;
       const int16_t cellW = gridW / 7;
-      const int16_t cellH = (CAL_H - TITLE_H - HDR_H - GRID_TOP_PAD - CAL_PAD) / 6;
+      const int16_t cellH = (Layout::CAL_H - Layout::TITLE_H - Layout::HDR_H
+                             - Layout::GRID_TOP_PAD - Layout::CAL_PAD) / 6;
 
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
       for (int i = 0; i < 7; i++)
       {
         int16_t cx = gridX + i * cellW + cellW / 2;
-        drawCentered(DOW_IT[i], cx, gridY + HDR_H - 6, GxEPD_BLACK);
+        drawCentered(DOW_IT[i], cx, gridY + Layout::HDR_H - 6, GxEPD_BLACK);
       }
 
-      display.drawFastHLine(CAL_X + CAL_R, gridY + HDR_H,
-                            CAL_W - 2 * CAL_R, GxEPD_BLACK);
+      display.drawFastHLine(Layout::CAL_X + Layout::CAL_R, gridY + Layout::HDR_H,
+                            Layout::CAL_W - 2 * Layout::CAL_R, GxEPD_BLACK);
 
       // modificato 21/04/26: + GRID_TOP_PAD per staccare la prima riga di
       // celle dalla linea orizzontale dei giorni L M M G V S.
-      const int16_t gridTop = gridY + HDR_H + GRID_TOP_PAD;
+      const int16_t gridTop = gridY + Layout::HDR_H + Layout::GRID_TOP_PAD;
       char buf[4];
       for (int d = 1; d <= daysInMonth; d++)
       {
@@ -753,7 +727,7 @@ namespace Calendar
           // visibile uniforme attorno al numero (aspetto da "badge" centrato
           // nella cella, non fill edge-to-edge).
           // @modified 21/04/26 Mattia Alesi
-          display.fillRoundRect(cellX + 2, cellY, cellW - 4, cellH - 1, CELL_R, GxEPD_RED);
+          display.fillRoundRect(cellX + 2, cellY, cellW - 4, cellH - 1, Layout::CELL_R, GxEPD_RED);
           drawCentered(buf, cx, baseY, GxEPD_WHITE);
         }
         else
@@ -774,19 +748,19 @@ namespace Calendar
     inline void drawEventRow(int row, const CalEvent& e,
                              int todayY, int todayM, int todayD)
     {
-      int16_t rowTop = EVT_Y + row * EVT_ROW_H;
+      int16_t rowTop = Layout::EVT_Y + row * EVT_ROW_H;
 
       if (row > 0)
       {
-        display.drawFastHLine(EVT_X + EVT_SEP_PAD, rowTop,
-                              EVT_W - 2 * EVT_SEP_PAD, GxEPD_BLACK);
+        display.drawFastHLine(Layout::EVT_X + Layout::EVT_SEP_PAD, rowTop,
+                              Layout::EVT_W - 2 * Layout::EVT_SEP_PAD, GxEPD_BLACK);
       }
 
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
 
       if (!e.valid)
       {
-        display.setCursor(EVT_X + EVT_PAD_LEFT, rowTop + EVT_ROW_H / 2 + 6);
+        display.setCursor(Layout::EVT_X + Layout::EVT_PAD_LEFT, rowTop + EVT_ROW_H / 2 + 6);
         display.setTextColor(GxEPD_BLACK);
         display.print("--");
         return;
@@ -821,8 +795,8 @@ namespace Calendar
       display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &tw, &th);
       int16_t rightColW = (int16_t)(dw > tw ? dw : tw);
 
-      int16_t rightX    = EVT_X + EVT_W - EVT_PAD;
-      int16_t titleMaxW = (EVT_W - EVT_PAD_LEFT - EVT_PAD) - rightColW - 8;
+      int16_t rightX    = Layout::EVT_X + Layout::EVT_W - Layout::EVT_PAD;
+      int16_t titleMaxW = (Layout::EVT_W - Layout::EVT_PAD_LEFT - Layout::EVT_PAD) - rightColW - 8;
 
       char titleBuf[sizeof(e.title)];
       strncpy(titleBuf, e.title, sizeof(titleBuf) - 1);
@@ -830,7 +804,7 @@ namespace Calendar
       truncateToWidth(titleBuf, titleMaxW);
 
       int16_t titleBaseline = rowTop + EVT_ROW_H / 2 + 6;
-      display.setCursor(EVT_X + EVT_PAD_LEFT, titleBaseline);
+      display.setCursor(Layout::EVT_X + Layout::EVT_PAD_LEFT, titleBaseline);
       display.setTextColor(color);
       display.print(titleBuf);
 
@@ -849,7 +823,7 @@ namespace Calendar
      */
     inline void drawEventsList(const struct tm& today)
     {
-      display.fillRect(EVT_X, EVT_Y, EVT_W, EVT_H, GxEPD_WHITE);
+      display.fillRect(Layout::EVT_X, Layout::EVT_Y, Layout::EVT_W, Layout::EVT_H, GxEPD_WHITE);
 
       constexpr int CAP = Calendar::Outlook::MAX_EVENTS + Calendar::Google::MAX_EVENTS;
       const CalEvent* merged[CAP];

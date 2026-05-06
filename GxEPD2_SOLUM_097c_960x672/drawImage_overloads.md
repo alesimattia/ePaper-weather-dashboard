@@ -1,7 +1,7 @@
 # API of the `GxEPD2_SOLUM_097c_960x672` driver
 
 Complete reference for the public methods of the custom driver
-[GxEPD2_SOLUM_097c_960x672.h](../GxEPD2_SOLUM_097c_960x672.h) for the
+[GxEPD2_SOLUM_097c_960x672.h](GxEPD2_SOLUM_097c_960x672.h) for the
 SOLUM 9.7" panel (672×960, SSD1677 controller, 4 native colors).
 
 ## Custom API (application level)

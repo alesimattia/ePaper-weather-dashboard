@@ -2,11 +2,15 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>EPD 960x672 - Preview UI</title>
+<title>EPD SOLUM 9.7" 960x672 - Preview UI</title>
 <style>
-  /* Anteprima statica del layout del display e-paper 960x672 (3 colori: */
-  /* nero, bianco, rosso). Le dimensioni replicano le costanti usate in  */
-  /* Weather.h e Calendar.h.                                             */
+  /* Anteprima statica del layout per pannello SOLUM 9.7" (960x672, 4    */
+  /* colori BWRY ma qui resi solo nero/bianco/rosso). Le dimensioni      */
+  /* replicano le costanti definite in Layout_097c.h e usate da          */
+  /* Weather.h / Calendar.h via Layout::*.                               */
+  /* Per il pannello SOLUM 12.2" (960x768) creare un preview_122c.html   */
+  /* parallelo con BANNER_Y=556, CINEMA_H=536, EVT_H=326 (vedi           */
+  /* Layout_122c.h).                                                     */
   /* Modifica 22/04/26: banner a 3 riquadri fieldset (Indoor/Weather/    */
   /* Forecast) + titolo mese calendario su fieldset, raggi aumentati.    */
   :root {

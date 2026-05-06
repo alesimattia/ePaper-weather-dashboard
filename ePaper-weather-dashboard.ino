@@ -16,6 +16,20 @@
  */
 #define USE_HSPI_FOR_EPD
 
+/**
+ * Selezione del pannello display: scommenta UNA SOLA delle due varianti
+ * per scegliere driver, coordinate del layout e font.
+ *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960x672 BWRY)
+ *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960x768 BWRY)
+ *
+ * I due Layout_*.h definiscono lo stesso namespace `Layout` con gli stessi
+ * simboli (Panel, pin, font, coord), quindi la logica applicativa nei
+ * moduli (Weather/Calendar/Graphics/icons) non cambia. Il define va prima
+ * di #include "Layout.h" o di qualunque header che lo includa transitivamente.
+ */
+#define DISPLAY_VARIANT_097C
+//#define DISPLAY_VARIANT_122C
+
 // ---------------------------------------------------------------------------
 // Cadenze operative del dispositivo. Tutti i valori sono in minuti interi
 // (WIFI_ACTIVE_HOUR_* sono ore locali).
@@ -63,7 +77,7 @@
 #define CINEMA_DAILY_FETCH_HOUR 7 // 7:00
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h" //Custom driver
+#include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
 // Fallback wallpaper offline: immagine PROGMEM
 #include "img_wallpaper/img_apple_bwry.h" //img_apple_bwry_desc
@@ -82,21 +96,27 @@
 
 SPIClass hspi(HSPI);
 
-GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display(
-	GxEPD2_SOLUM_097c_960x672(15, 27, 26, 25));
+/**
+ * Istanza del display. Il tipo concreto del pannello (Layout::Panel) e i
+ * pin del driver (Layout::PIN_*) arrivano dal Layout selezionato. I pin
+ * HSPI del bus (SCK/MISO/MOSI/SS = 13/12/14/15) restano qui perche' sono
+ * board-specific (Waveshare ESP32 Driver Board), non display-specific.
+ */
+GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display(
+	Layout::Panel(Layout::PIN_CS, Layout::PIN_DC, Layout::PIN_RST, Layout::PIN_BUSY));
 
 // Inizializza il bus HSPI e il display in orientamento landscape fisso.
 // Chiamato una sola volta in setup().
 void initDisplay()
 {
-	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS
+	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS (HSPI bus, board-specific)
 	/**
 	 * 10 MHz è il massimo raccomandato per i pannelli SSD1677 sul cablaggio
 	 * della Waveshare ESP32 Driver Board senza adattamenti.
 	 */
 	display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 	display.init(115200, true, 2, false);
-	display.setRotation(0); // landscape 960x672 nativo
+	display.setRotation(Layout::ROTATION);
 	display.setFullWindow();
 }
 
@@ -118,26 +138,21 @@ void initDisplay()
 //   4. Se il fetch fallisce, g_cinema_desc resta sul fallback PROGMEM.
 // ===========================================================================
 
-static constexpr const char *CINEMA_URL =
-	"https://cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd";
-
 /**
- * Dimensioni dell'area wallpaper. NON sono un viewport che ritaglia:
+ * URL e dimensioni dell'area wallpaper sono in Layout::CINEMA_URL /
+ * CINEMA_W / CINEMA_H / CINEMA_STRIDE / CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ.
+ * Cambiare display (097c <-> 122c) regola automaticamente sia la query
+ * string al server cinema sia la dimensione dei buffer in PSRAM/heap.
+ *
+ * NOTA: Layout::CINEMA_W / H NON sono un viewport che ritaglia.
  * GxEPDImage::showImage() disegna pixel per pixel da (0,0) usando la
- * width/height del Descriptor, senza alcun clipping rispetto a queste
- * costanti. Significa che la sorgente (sia il dinamico fetchato dal
- * server cinema sia il fallback PROGMEM in img_wallpaper/img_apple_bwry.h)
- * deve essere generata gia' a 620x440 esatti.
- * Una sorgente piu' alta di 440 invade la fascia bianca 440..460 di
- * separazione e arriva fino al banner (BANNER_Y=460); una sorgente piu'
- * larga di 620 entra nella sidebar del calendario (SIDEBAR_X=620), che
- * la copre con fillRect bianco solo fino a y=460.
+ * width/height del Descriptor, senza clipping. La sorgente (dinamica
+ * dal server cinema o fallback PROGMEM img_apple_bwry_desc) deve essere
+ * generata esattamente a Layout::CINEMA_W x Layout::CINEMA_H. Una sorgente
+ * piu' alta invade la fascia bianca fino a Layout::BANNER_Y; una piu'
+ * larga entra nella sidebar (Layout::SIDEBAR_X), coperta con fillRect
+ * bianco solo fino a Layout::BANNER_Y.
  */
-static constexpr int16_t CINEMA_W = 620;
-static constexpr int16_t CINEMA_H = 440;
-static constexpr uint16_t CINEMA_STRIDE = (CINEMA_W + 7) / 8;					// 78
-static constexpr uint32_t CINEMA_PLANE_SZ = (uint32_t)CINEMA_STRIDE * CINEMA_H; // 34320
-static constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * 3;				// 102960
 
 // Buffer dinamici dei 3 piani scaricati (nullptr finchè il fetch non riesce).
 static uint8_t *g_cinema_black = nullptr;
@@ -148,8 +163,8 @@ static uint8_t *g_cinema_yellow = nullptr;
 // ha successo.
 static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
 	GxEPDImage::FORMAT_BWRY_1BPP,
-	CINEMA_W,
-	CINEMA_H,
+	Layout::CINEMA_W,
+	Layout::CINEMA_H,
 	nullptr,
 	nullptr,
 	nullptr,
@@ -188,29 +203,30 @@ static int g_cinema_last_fetch_day = -1;
 static uint32_t g_boot_start_ms = 0;
 
 /**
- * Alloca un buffer da CINEMA_PLANE_SZ byte, preferendo PSRAM se disponibile.
- * Ritorna nullptr su OOM. Logga la provenienza del buffer per diagnostica.
+ * Alloca un buffer da Layout::CINEMA_PLANE_SZ byte, preferendo PSRAM se
+ * disponibile. Ritorna nullptr su OOM. Logga la provenienza del buffer per
+ * diagnostica.
  */
 static uint8_t *allocPlaneBuffer(const char *label)
 {
 	uint8_t *p = nullptr;
 	if (psramFound())
 	{
-		p = (uint8_t *)heap_caps_malloc(CINEMA_PLANE_SZ, MALLOC_CAP_SPIRAM);
+		p = (uint8_t *)heap_caps_malloc(Layout::CINEMA_PLANE_SZ, MALLOC_CAP_SPIRAM);
 		if (p)
 		{
-			Serial.printf("[cinema] %s: alloc %u byte in PSRAM\n", label, (unsigned)CINEMA_PLANE_SZ);
+			Serial.printf("[cinema] %s: alloc %u byte in PSRAM\n", label, (unsigned)Layout::CINEMA_PLANE_SZ);
 			return p;
 		}
 		Serial.printf("[cinema] %s: PSRAM alloc fallita, provo heap interno\n", label);
 	}
-	p = (uint8_t *)malloc(CINEMA_PLANE_SZ);
+	p = (uint8_t *)malloc(Layout::CINEMA_PLANE_SZ);
 	if (p)
 		Serial.printf("[cinema] %s: alloc %u byte in heap interno (free: %u)\n",
-					  label, (unsigned)CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
+					  label, (unsigned)Layout::CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
 	else
 		Serial.printf("[cinema] %s: allocazione fallita (%u byte richiesti, %u disponibili)\n",
-					  label, (unsigned)CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
+					  label, (unsigned)Layout::CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
 	return p;
 }
 
@@ -281,9 +297,9 @@ static bool shouldFetchCinema()
  *      riuscito in un giro precedente) e riporta g_cinema_desc al fallback
  *      PROGMEM: se il fetch fallisce o il refresh avviene durante un
  *      render, il display mostra il fallback invece di un'immagine corrotta.
- *   5. Alloca 3 buffer da CINEMA_PLANE_SZ byte (PSRAM preferita, heap
- *      interno come fallback).
- *   6. HTTP GET -> verifica status 200 e Content-Length == CINEMA_TOTAL_SZ.
+ *   5. Alloca 3 buffer da Layout::CINEMA_PLANE_SZ byte (PSRAM preferita,
+ *      heap interno come fallback).
+ *   6. HTTP GET -> verifica status 200 e Content-Length == Layout::CINEMA_TOTAL_SZ.
  *   7. Legge in stream i 3 piani in sequenza (black, red, yellow) via
  *      readBytes, direttamente nei buffer.
  *   8. Ripuntamento di g_cinema_desc al descrittore dinamico.
@@ -316,7 +332,7 @@ static void fetchCinemaImage()
 	freeCinemaBuffers();
 	g_cinema_desc = &img_apple_bwry_desc;
 
-	Serial.printf("[cinema] fetching %s\n", CINEMA_URL);
+	Serial.printf("[cinema] fetching %s\n", Layout::CINEMA_URL);
 	Serial.printf("[cinema] PSRAM %s, free heap: %u byte\n",
 				  psramFound() ? "presente" : "assente (uso heap interno)",
 				  (unsigned)ESP.getFreeHeap());
@@ -336,7 +352,7 @@ static void fetchCinemaImage()
 	// GitHub Actions di pre-warm non sia stato eseguito (vedi
 	// webapp/.github/workflows/keep-warm.yml). Cold start tipico 10-30s.
 	http.setTimeout(45000);
-	if (!http.begin(CINEMA_URL))
+	if (!http.begin(Layout::CINEMA_URL))
 	{
 		Serial.println(F("[cinema] HTTP begin fallita"));
 		freeCinemaBuffers();
@@ -351,10 +367,10 @@ static void fetchCinemaImage()
 		return;
 	}
 	int size = http.getSize();
-	if (size != (int)CINEMA_TOTAL_SZ)
+	if (size != (int)Layout::CINEMA_TOTAL_SZ)
 	{
 		Serial.printf("[cinema] Content-Length %d atteso %u, fallback PROGMEM\n",
-					  size, (unsigned)CINEMA_TOTAL_SZ);
+					  size, (unsigned)Layout::CINEMA_TOTAL_SZ);
 		http.end();
 		freeCinemaBuffers();
 		return;
@@ -374,17 +390,17 @@ static void fetchCinemaImage()
 		// Wall-clock guard 45s per piano: se readBytes ritorna in modo
 		// frazionario (n>0 ma < richiesto) e la rete è lenta, evita di
 		// accumulare timeout >45s totali sul singolo piano.
-		while (read < CINEMA_PLANE_SZ && (millis() - t0) < 45000UL)
+		while (read < Layout::CINEMA_PLANE_SZ && (millis() - t0) < 45000UL)
 		{
-			int n = stream->readBytes(planes[p] + read, CINEMA_PLANE_SZ - read);
+			int n = stream->readBytes(planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
 			if (n <= 0)
 				break; // timeout interno o connessione chiusa
 			read += n;
 		}
-		if (read != CINEMA_PLANE_SZ)
+		if (read != Layout::CINEMA_PLANE_SZ)
 		{
 			Serial.printf("[cinema] piano %s letto parzialmente (%u/%u)\n",
-						  names[p], (unsigned)read, (unsigned)CINEMA_PLANE_SZ);
+						  names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
 			http.end();
 			freeCinemaBuffers();
 			return;

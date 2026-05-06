@@ -9,13 +9,7 @@
 #include <stdint.h>
 
 #include <GxEPD2_3C.h>
-#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
-
-#include <Fonts/FreeSans9pt7b.h>      // condizione IAQ + valore, terza riga indoor
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSans18pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
-#include <Fonts/Picopixel.h>         // font micro ~6 px, per pedice accuracy IAQ
+#include "Layout.h"
 
 #include "Env.h"
 #include "icons.h"
@@ -24,9 +18,11 @@
 #include "Indoor.h"
 
 // ---------------------------------------------------------------------------
-// Istanza del display (definita nello sketch .ino).
+// Istanza del display (definita nello sketch .ino). Il tipo concreto del
+// pannello (Layout::Panel) e' scelto dal dispatcher Layout.h in base al
+// #define DISPLAY_VARIANT_* nello sketch.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<GxEPD2_SOLUM_097c_960x672, GxEPD2_SOLUM_097c_960x672::HEIGHT / 8> display;
+extern GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display;
 
 // ---------------------------------------------------------------------------
 // Helper definito nello sketch .ino: disegna l'immagine di background
@@ -84,101 +80,12 @@ namespace Weather
         (uint32_t)WEATHER_FORECAST_FETCH_MIN * 60UL * 1000UL;  // default 10 min
 
     // -----------------------------------------------------------------------
-    // Layout banner.
-    // -----------------------------------------------------------------------
-
-    /**
-     * Colonna bianca a destra: ospita il calendario del mese (in alto) e la
-     * lista eventi Outlook (sotto). Si estende dall'alto fino al top del
-     * banner meteo.
-     * Modifica 21/04/26: area immagine rimanente ridotta a 620x460. 
-     */
-    /** Sidebar bianca a destra.
-     *  Modifica 22/04/26: wallpaper slideshow dimensione finale 620x440;
-     *  sidebar quindi 340 px (960-620), alta 460 (fino al top del banner).
-     *  La fascia orizzontale 440..460 x 0..620 resta bianca (fillScreen). */
-    inline constexpr int16_t SIDEBAR_W      = 340;
-    inline constexpr int16_t SIDEBAR_X      = 960 - SIDEBAR_W;  // = 620
-
-    inline constexpr int16_t BANNER_Y       = 460;   // era 480 - top del banner (screen 960x672)
-    inline constexpr int16_t BANNER_H       = 212;   // era 192 - margine extra per orario 18pt
-    inline constexpr int16_t BANNER_W       = 960;
-
-    /**
-     * Layout del banner a 3 riquadri fieldset.
-     * Modifica 22/04/26 (v8): Indoor ridotto a 154, Weather espanso a
-     * 306 per lasciare piu' spazio alla sub-col sun (alba/tramonto).
-     *   Indoor | Weather            | Forecast (3 slot)
-     *    154  |  306 (meteo+sun)    |  470
-     *   x=5   |  x=169              |  x=485
-     * Inset 5 px laterali, gap 10 px. Totale: 5+154+10+306+10+470+5 = 960.
-     */
-    inline constexpr int16_t INDOOR_RR_X     = 5;
-    inline constexpr int16_t INDOOR_RR_W     = 154;
-    inline constexpr int16_t WEATHER_RR_X    = 169;
-    inline constexpr int16_t WEATHER_RR_W    = 306;
-    inline constexpr int16_t FORECAST_RR_X   = 485;
-    inline constexpr int16_t FORECAST_RR_W   = 470;
-
-    /**
-     * Slot del meteo corrente: sezione sinistra del riquadro Weather.
-     * Il resto (offset SUN_COL_OFFSET in poi) ospita la sub-colonna sun.
-     * Modifica 22/04/26 (v8): blocco current spostato di 12 px a sinistra
-     * rispetto al bordo del Weather RR (v7 era -6, qui -6 aggiuntivi) e
-     * SUN_COL_OFFSET ridotto a 188 (era 194) per allargare la sub-col
-     * sun verso sinistra -> piu' spazio per alba/tramonto.
-     */
-    inline constexpr int16_t BLOCK_CURRENT_X = WEATHER_RR_X - 12;
-    inline constexpr int16_t BLOCK_CURRENT_W = 200;
-
-    /**
-     * Offset (relativo a WEATHER_RR_X) del bordo sinistro delle icone
-     * della sub-colonna sun dentro il riquadro Weather.
-     */
-    inline constexpr int16_t SUN_COL_OFFSET  = 188;
-
-    /** Slot forecast: 3 slot da ~156 px dentro il riquadro Forecast (470 px). */
-    inline constexpr int16_t BLOCK_FC_W      = 156;
-    inline constexpr int16_t BLOCK_FC0_X     = FORECAST_RR_X;                    // 485
-    inline constexpr int16_t BLOCK_FC1_X     = BLOCK_FC0_X + BLOCK_FC_W;         // 641
-    inline constexpr int16_t BLOCK_FC2_X     = BLOCK_FC1_X + BLOCK_FC_W;         // 797
-
-    /**
-     * Baseline dei testi dentro un blocco meteo (current / forecast).
-     * Modifica 22/04/26 (v7): TEMP -2 (155->153) e TIME -2 (190->188)
-     * per alzare leggermente la riga temperatura e di conseguenza
-     * l'orario sia nel current che nei forecast.
-     */
-    inline constexpr int16_t ICON_Y         = BANNER_Y + 6;    // top icona (88x88)
-    inline constexpr int16_t DESC_BASELINE  = BANNER_Y + 118;  // baseline description
-    inline constexpr int16_t TEMP_BASELINE  = BANNER_Y + 153;  // baseline temperatura
-    inline constexpr int16_t TIME_BASELINE  = BANNER_Y + 188;  // baseline orario
-
-    /**
-     * Baseline delle 4 righe dati condivise da Indoor (colonna unica)
-     * e dalla sub-colonna sun nel riquadro Weather.
-     * Modifica 22/04/26 (v6): spaziatura uniforme fra le 4 righe E
-     * fra il bordo superiore/inferiore del rr. Con rr interno = 202 px
-     * e altezza visiva testo ~27 px (FreeSans18pt ascent 22 + descent 5),
-     * 5 spazi uguali danno G = (202-4*27)/5 = 19 px; spacing baseline =
-     * 27+19 = 46. Baselines 46..184 con interlinee di 46 px.
-     */
-    inline constexpr int16_t INDOOR_ROW1_BASELINE = BANNER_Y + 46;
-    inline constexpr int16_t INDOOR_ROW2_BASELINE = BANNER_Y + 92;
-    inline constexpr int16_t INDOOR_ROW3_BASELINE = BANNER_Y + 138;
-    inline constexpr int16_t INDOOR_ROW4_BASELINE = BANNER_Y + 184;
-
-    /** Gap (px) fra icona e testo nelle righe della sub-colonna indoor. */
-    inline constexpr int16_t INDOOR_ICON_GAP = 6;
-
-    /**
-     * Offset (relativo a INDOOR_RR_X) del bordo sinistro delle icone della
-     * colonna unica dentro il riquadro Indoor (T, umidita', IAQ, pressione).
-     */
-    inline constexpr int16_t INDOOR_COL1_OFFSET = 10;    // colonna inizia a x=15
-
-    /** Numero di immagini nella rotazione di background. */
-
+    // Layout: tutte le costanti pixel (sidebar, banner, fieldset, baseline,
+    // sub-col indoor/sun, slot forecast) vivono in Layout.h e sono accedute
+    // come Layout::* nel rendering. La cascata banner -> baseline (ROW1..4,
+    // ICON_Y, DESC/TEMP/TIME) e' calcolata dentro il Layout in funzione
+    // di BANNER_Y, cosi' lo scaling al pannello 122c (BANNER_Y +96) si
+    // propaga senza altre modifiche.
     // -----------------------------------------------------------------------
     // Cache dati meteo.
     // -----------------------------------------------------------------------
@@ -461,7 +368,7 @@ namespace Weather
 
     /**
      * Delega al .ino il disegno dell'immagine di background corrente.
-     * Vedi drawTestBackground() in GxEPD2_1330c_GDEM133Z91.ino: il .ino
+     * Vedi drawTestBackground() in ePaper-weather-dashboard.ino: il .ino
      * decide se mostrare l'immagine scaricata dal server cinema (se il
      * fetch ha avuto successo) o il fallback PROGMEM (se offline).
      */
@@ -603,39 +510,40 @@ namespace Weather
 
       // Icona centrata.
       const uint8_t* icon = iconFromCode(s.iconCode);
-      display.drawBitmap(centerX - ICON_SIZE / 2, ICON_Y + yOffset, icon, ICON_SIZE, ICON_SIZE, GxEPD_BLACK);
+      display.drawBitmap(centerX - Layout::ICON_SIZE / 2, Layout::ICON_Y + yOffset, icon,
+                         Layout::ICON_SIZE, Layout::ICON_SIZE, GxEPD_BLACK);
 
       /** Description (nero, font tondo sans-serif). Se c'è pioggia
        *  prevista (pop>0 o rain1h>0) la description testuale viene
        *  sostituita/arricchita con valori quantitativi — vedi
        *  composeDescLine(). */
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
       char descBuf[48];
       if (s.valid) composeDescLine(slotIdx, s, descBuf, sizeof(descBuf));
       else         strcpy(descBuf, "--");
-      drawCentered(descBuf, centerX, DESC_BASELINE + yOffset, GxEPD_BLACK);
+      drawCentered(descBuf, centerX, Layout::DESC_BASELINE + yOffset, GxEPD_BLACK);
 
       /** Temperatura percepita (rosso, font tondo sans-serif grande bold).
        *  Modifica 22/04/26: composizione esplicita "<num>°C" con pallino
        *  disegnato come cerchietto (i font 7b non hanno il glifo °). */
-      display.setFont(&FreeSansBold18pt7b);
+      display.setFont(Layout::FONT_LARGE_BOLD);
       if (s.valid)
       {
         char numStr[8];
         snprintf(numStr, sizeof(numStr), "%.0f", s.feelsLikeC);
         // Bold18pt: raggio ° 3 px, cap-height ~22 px.
-        drawTempWithDegree(numStr, centerX, TEMP_BASELINE + yOffset, GxEPD_RED, 3, 22, true);
+        drawTempWithDegree(numStr, centerX, Layout::TEMP_BASELINE + yOffset, GxEPD_RED, 3, 22, true);
       }
       else
       {
-        drawCentered("--", centerX, TEMP_BASELINE + yOffset, GxEPD_RED);
+        drawCentered("--", centerX, Layout::TEMP_BASELINE + yOffset, GxEPD_RED);
       }
 
       // Orario (nero, font medio grande).
       char hhmm[6];
       formatHHMM(s.epoch, hhmm);
-      display.setFont(&FreeSans18pt7b);
-      drawCentered(hhmm, centerX, TIME_BASELINE + yOffset, GxEPD_BLACK);
+      display.setFont(Layout::FONT_LARGE);
+      drawCentered(hhmm, centerX, Layout::TIME_BASELINE + yOffset, GxEPD_BLACK);
     }
 
     /**
@@ -658,14 +566,14 @@ namespace Weather
       // Icona allineata visivamente al testo: bordo inferiore ~6 px sotto la
       // baseline cosi' che il centro dell'icona coincida grosso modo col
       // centro delle x-height di FreeSans18pt7b (x-height ~14 px).
-      const int16_t iconY = baselineY - INDOOR_ICON_SIZE + 6;
-      display.drawBitmap(startX, iconY, icon, INDOOR_ICON_SIZE, INDOOR_ICON_SIZE, GxEPD_BLACK);
+      const int16_t iconY = baselineY - Layout::INDOOR_ICON_SIZE + 6;
+      display.drawBitmap(startX, iconY, icon, Layout::INDOOR_ICON_SIZE, Layout::INDOOR_ICON_SIZE, GxEPD_BLACK);
 
       // Testo a destra dell'icona; x1 compensa il bearing sinistro del font.
       int16_t  x1, y1;
       uint16_t tw, th;
       display.getTextBounds(txt, 0, 0, &x1, &y1, &tw, &th);
-      display.setCursor(startX + INDOOR_ICON_SIZE + INDOOR_ICON_GAP - x1, baselineY);
+      display.setCursor(startX + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP - x1, baselineY);
       display.setTextColor(color);
       display.print(txt);
     }
@@ -675,7 +583,7 @@ namespace Weather
     //
     // Il canale giallo del pannello SOLUM 672x960 è "out-of-band" rispetto
     // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
-    // usiamo le API del driver custom GxEPD2_SOLUM_097c_960x672:
+    // usiamo le API del driver custom (Layout::Panel):
     //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
     //   - preserveYellow(true)                        -> sopravvive al paged
     // Cifre dei numeri invece restano nere e sono disegnate normalmente con
@@ -683,12 +591,8 @@ namespace Weather
     // @since 22/04/26
     // =======================================================================
 
-    /** Dimensioni del buffer bitmap giallo della barra. Multiplo di 8 per
-     *  byte-align (TRB_W/8 byte per riga, senza padding). */
-    inline constexpr int16_t TRB_W              = 112;
-    inline constexpr int16_t TRB_H              = 14;
-    inline constexpr int16_t TRB_BYTES_PER_ROW  = TRB_W / 8;
-    inline constexpr size_t  TRB_BUF_BYTES      = (size_t)TRB_BYTES_PER_ROW * TRB_H;
+    /** Dimensioni del buffer bitmap giallo della barra: vedi Layout::TRB_*. */
+    inline constexpr size_t  TRB_BUF_BYTES = (size_t)Layout::TRB_BYTES_PER_ROW * Layout::TRB_H;
 
     /** Buffer 1bpp MSB-first per il canale 0x28 (bit=1 -> pixel giallo). */
     inline uint8_t trbYellowBuf[TRB_BUF_BYTES];
@@ -696,8 +600,8 @@ namespace Weather
     /** Set pixel nel buffer giallo (no-op se fuori bounds). */
     inline void trbSetPx(int16_t x, int16_t y)
     {
-      if (x < 0 || x >= TRB_W || y < 0 || y >= TRB_H) return;
-      trbYellowBuf[y * TRB_BYTES_PER_ROW + (x >> 3)] |= (uint8_t)(0x80 >> (x & 7));
+      if (x < 0 || x >= Layout::TRB_W || y < 0 || y >= Layout::TRB_H) return;
+      trbYellowBuf[y * Layout::TRB_BYTES_PER_ROW + (x >> 3)] |= (uint8_t)(0x80 >> (x & 7));
     }
 
     /** Rettangolo pieno nel buffer giallo. */
@@ -754,13 +658,13 @@ namespace Weather
     {
       char hhmm[6];
       formatHHMM(sunsetEpoch, hhmm);   // es. "20:37"; "--:--" se epoch=0
-      display.setFont(&FreeSans18pt7b);
+      display.setFont(Layout::FONT_LARGE);
       int16_t  x1, y1;
       uint16_t tw, th;
       display.getTextBounds(hhmm, 0, 0, &x1, &y1, &tw, &th);
       // Testo sunset inizia a colX + ICON + GAP, centro = start + tw/2,
       // meno un piccolo shift estetico verso sinistra.
-      return colX + INDOOR_ICON_SIZE + INDOOR_ICON_GAP
+      return colX + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP
              + (int16_t)tw / 2 - 4;
     }
 
@@ -797,10 +701,10 @@ namespace Weather
 
       memset(trbYellowBuf, 0, TRB_BUF_BYTES);
 
-      // Misura larghezza delle label in FreeSans12pt7b (stessa logica di
+      // Misura larghezza delle label in FONT_BODY (stessa logica di
       // drawTempRangeBarLabels cosi' i due rimangono allineati).
       // Modifica 22/04/26: font 9pt -> 12pt per le label della barra.
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
       char labL[8], labR[8];
       snprintf(labL, sizeof(labL), "%.0f", morn);
       snprintf(labR, sizeof(labR), "%.0f", eve);
@@ -817,7 +721,7 @@ namespace Weather
       const int16_t labSlotR = (int16_t)wR + DEG_GAP + 2*degR + 1;
 
       const int16_t barLeft  = PAD + labSlotL + GAP;
-      const int16_t barRight = TRB_W - PAD - labSlotR - GAP;
+      const int16_t barRight = Layout::TRB_W - PAD - labSlotR - GAP;
       const int16_t barWidth = barRight - barLeft;
 
       // Posizione assoluta: centra il punto medio della barra su centerX.
@@ -845,7 +749,7 @@ namespace Weather
 
       // Scrive sul canale yellow e lo protegge durante paged.
       display.epd2.writeImageYellow(trbYellowBuf, cellX, cellY,
-                                    TRB_W, TRB_H, /*pgm*/ false);
+                                    Layout::TRB_W, Layout::TRB_H, /*pgm*/ false);
       display.epd2.preserveYellow(true);
       return true;
     }
@@ -872,7 +776,7 @@ namespace Weather
       if (isnan(morn) || isnan(eve)) return;
 
       // Modifica 22/04/26: font 9pt -> 12pt per le label della barra.
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
       char labL[8], labR[8];
       snprintf(labL, sizeof(labL), "%.0f", morn);
       snprintf(labR, sizeof(labR), "%.0f", eve);
@@ -891,7 +795,7 @@ namespace Weather
       // Ricalcolo cellX (origine buffer giallo) con stessa logica di
       // drawTempRangeBarYellow: i due devono restare allineati.
       const int16_t barLeft    = PAD + labSlotL + GAP;
-      const int16_t barRight   = TRB_W - PAD - labSlotR - GAP;
+      const int16_t barRight   = Layout::TRB_W - PAD - labSlotR - GAP;
       const int16_t bufCenterX = (barLeft + barRight) / 2;
       const int16_t cellX      = centerX - bufCenterX;
 
@@ -907,7 +811,7 @@ namespace Weather
       display.drawCircle(degXL, degY, degR, GxEPD_BLACK);
 
       // Cifra dx + cerchietto ° nero.
-      const int16_t rightLabX = cellX + TRB_W - PAD - labSlotR;
+      const int16_t rightLabX = cellX + Layout::TRB_W - PAD - labSlotR;
       display.setCursor(rightLabX - x1, baselineY);
       display.print(labR);
       const int16_t degXR = rightLabX + (int16_t)wR + DEG_GAP + degR;
@@ -936,29 +840,29 @@ namespace Weather
     inline void renderIndoorBox(int16_t rrX, int16_t /*rrW*/)
     {
       const Indoor::Sample& s = Indoor::sample();
-      const int16_t col1X = rrX + INDOOR_COL1_OFFSET;
+      const int16_t col1X = rrX + Layout::INDOOR_COL1_OFFSET;
 
-      display.setFont(&FreeSans18pt7b);
+      display.setFont(Layout::FONT_LARGE);
       char buf[16];
 
       /** Riga 1 - temperatura (rossa) con "°" disegnato come cerchietto. */
       {
-        const int16_t iconY = INDOOR_ROW1_BASELINE - INDOOR_ICON_SIZE + 6;
+        const int16_t iconY = Layout::INDOOR_ROW1_BASELINE - Layout::INDOOR_ICON_SIZE + 6;
         display.drawBitmap(col1X, iconY, INDOOR_ICON_TEMPERATURE,
-                           INDOOR_ICON_SIZE, INDOOR_ICON_SIZE, GxEPD_BLACK);
+                           Layout::INDOOR_ICON_SIZE, Layout::INDOOR_ICON_SIZE, GxEPD_BLACK);
 
-        const int16_t textStartX = col1X + INDOOR_ICON_SIZE + INDOOR_ICON_GAP;
+        const int16_t textStartX = col1X + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP;
         if (s.valid)
         {
           snprintf(buf, sizeof(buf), "%.1f", s.temperature);
-          drawTempWithDegree(buf, textStartX, INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 20, false);
+          drawTempWithDegree(buf, textStartX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 20, false);
         }
         else
         {
           int16_t  x1, y1;
           uint16_t tw, th;
           display.getTextBounds("--", 0, 0, &x1, &y1, &tw, &th);
-          display.setCursor(textStartX - x1, INDOOR_ROW1_BASELINE);
+          display.setCursor(textStartX - x1, Layout::INDOOR_ROW1_BASELINE);
           display.setTextColor(GxEPD_RED);
           display.print("--");
         }
@@ -967,44 +871,44 @@ namespace Weather
       /** Riga 2 - umidita' (nera). */
       if (s.valid) snprintf(buf, sizeof(buf), "%.0f %%", s.humidity);
       else         strcpy(buf, "--");
-      drawIndoorRow(INDOOR_ICON_HUMIDITY, buf, col1X, INDOOR_ROW2_BASELINE, GxEPD_BLACK);
+      drawIndoorRow(INDOOR_ICON_HUMIDITY, buf, col1X, Layout::INDOOR_ROW2_BASELINE, GxEPD_BLACK);
 
-      /** Riga 3 - qualita' aria: label + IAQ in FreeSans9pt7b + pedice
-       *  accuracy in Picopixel. */
+      /** Riga 3 - qualita' aria: label + IAQ in FONT_SMALL + pedice
+       *  accuracy in FONT_MICRO. */
       if (s.valid)
       {
         char mainStr[24];
         snprintf(mainStr, sizeof(mainStr), "%s %.0f",
                  Indoor::iaqLabel(s.iaq), s.iaq);
 
-        display.setFont(&FreeSans9pt7b);
-        drawIndoorRow(INDOOR_ICON_AIR_QUALITY, mainStr, col1X, INDOOR_ROW3_BASELINE, GxEPD_BLACK);
+        display.setFont(Layout::FONT_SMALL);
+        drawIndoorRow(INDOOR_ICON_AIR_QUALITY, mainStr, col1X, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
 
         int16_t  x1, y1;
         uint16_t mw, mh;
         display.getTextBounds(mainStr, 0, 0, &x1, &y1, &mw, &mh);
-        const int16_t subX = col1X + INDOOR_ICON_SIZE + INDOOR_ICON_GAP + (int16_t)mw + 2;
+        const int16_t subX = col1X + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP + (int16_t)mw + 2;
 
         char accStr[4];
         snprintf(accStr, sizeof(accStr), "%u", (unsigned)s.iaqAccuracy);
-        display.setFont(&Picopixel);
-        display.setCursor(subX, INDOOR_ROW3_BASELINE + 2);
+        display.setFont(Layout::FONT_MICRO);
+        display.setCursor(subX, Layout::INDOOR_ROW3_BASELINE + 2);
         display.setTextColor(GxEPD_BLACK);
         display.print(accStr);
 
-        display.setFont(&FreeSans18pt7b);
+        display.setFont(Layout::FONT_LARGE);
       }
       else
       {
-        display.setFont(&FreeSans9pt7b);
-        drawIndoorRow(INDOOR_ICON_AIR_QUALITY, "--", col1X, INDOOR_ROW3_BASELINE, GxEPD_BLACK);
-        display.setFont(&FreeSans18pt7b);
+        display.setFont(Layout::FONT_SMALL);
+        drawIndoorRow(INDOOR_ICON_AIR_QUALITY, "--", col1X, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
+        display.setFont(Layout::FONT_LARGE);
       }
 
       /** Riga 4 - pressione atmosferica (nera, "XXXX hPa"). */
       if (s.valid) snprintf(buf, sizeof(buf), "%.0f hPa", s.pressure);
       else         strcpy(buf, "--");
-      drawIndoorRow(INDOOR_ICON_PRESSURE, buf, col1X, INDOOR_ROW4_BASELINE, GxEPD_BLACK);
+      drawIndoorRow(INDOOR_ICON_PRESSURE, buf, col1X, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
     }
 
     /**
@@ -1021,22 +925,22 @@ namespace Weather
      */
     inline void renderSunColumn(int16_t weatherRrX)
     {
-      const int16_t colX = weatherRrX + SUN_COL_OFFSET;
-      display.setFont(&FreeSans18pt7b);
+      const int16_t colX = weatherRrX + Layout::SUN_COL_OFFSET;
+      display.setFont(Layout::FONT_LARGE);
 
       char hhmm[6];
       formatHHMM(sunriseEpoch, hhmm);
-      drawIndoorRow(INDOOR_ICON_SUNRISE, hhmm, colX, INDOOR_ROW1_BASELINE, GxEPD_BLACK);
+      drawIndoorRow(INDOOR_ICON_SUNRISE, hhmm, colX, Layout::INDOOR_ROW1_BASELINE, GxEPD_BLACK);
 
       formatHHMM(sunsetEpoch, hhmm);
-      drawIndoorRow(INDOOR_ICON_SUNSET, hhmm, colX, INDOOR_ROW2_BASELINE, GxEPD_BLACK);
+      drawIndoorRow(INDOOR_ICON_SUNSET, hhmm, colX, Layout::INDOOR_ROW2_BASELINE, GxEPD_BLACK);
 
       /** Row 3: cifre + cerchietti ° (nero) della barra temp-range.
        *  Le decorazioni gialle (barra + triangolo) sono gia' sul canale
        *  0x28 grazie a drawTempRangeBarYellow chiamata prima di
        *  firstPage(). Il centro orizzontale è allineato al centro della
        *  riga sunset sopra. */
-      drawTempRangeBarLabels(sunsetRowCenterX(colX), INDOOR_ROW3_BASELINE);
+      drawTempRangeBarLabels(sunsetRowCenterX(colX), Layout::INDOOR_ROW3_BASELINE);
 
       /** Row 4 riservata (additional_range): non disegnata. */
     }
@@ -1054,37 +958,34 @@ namespace Weather
     inline void drawBanner()
     {
       // Sfondo banner bianco: cancella eventuale contenuto del background sotto.
-      display.fillRect(0, BANNER_Y, BANNER_W, BANNER_H, GxEPD_WHITE);
+      display.fillRect(0, Layout::BANNER_Y, Layout::BANNER_W, Layout::BANNER_H, GxEPD_WHITE);
 
-      constexpr int16_t RR_INSET_Y = 5;
-      constexpr int16_t RR_RADIUS  = 18;   // era 12, aumentato per bordi piu' morbidi
-      constexpr int16_t TITLE_LEFT_OFFSET = 14;
-      const int16_t rrTop    = BANNER_Y + RR_INSET_Y;
-      const int16_t rrHeight = BANNER_H - 2 * RR_INSET_Y;
+      const int16_t rrTop    = Layout::BANNER_Y + Layout::BANNER_RR_INSET_Y;
+      const int16_t rrHeight = Layout::BANNER_H - 2 * Layout::BANNER_RR_INSET_Y;
 
-      // Titoli fieldset in FreeSans12pt7b (font impostato prima della
+      // Titoli fieldset in FONT_BODY (font impostato prima della
       // chiamata: drawFieldsetRect non setta font).
-      display.setFont(&FreeSans12pt7b);
+      display.setFont(Layout::FONT_BODY);
 
-      Graphics::drawFieldsetRect(INDOOR_RR_X,   rrTop, INDOOR_RR_W,   rrHeight,
-                                 RR_RADIUS, "Indoor",
-                                 TITLE_LEFT_OFFSET, GxEPD_WHITE);
-      Graphics::drawFieldsetRect(WEATHER_RR_X,  rrTop, WEATHER_RR_W,  rrHeight,
-                                 RR_RADIUS, "Weather",
-                                 TITLE_LEFT_OFFSET, GxEPD_WHITE);
-      Graphics::drawFieldsetRect(FORECAST_RR_X, rrTop, FORECAST_RR_W, rrHeight,
-                                 RR_RADIUS, "Forecast",
-                                 TITLE_LEFT_OFFSET, GxEPD_WHITE);
+      Graphics::drawFieldsetRect(Layout::INDOOR_RR_X,   rrTop, Layout::INDOOR_RR_W,   rrHeight,
+                                 Layout::BANNER_RR_RADIUS, "Indoor",
+                                 Layout::BANNER_TITLE_LEFT_OFFSET, GxEPD_WHITE);
+      Graphics::drawFieldsetRect(Layout::WEATHER_RR_X,  rrTop, Layout::WEATHER_RR_W,  rrHeight,
+                                 Layout::BANNER_RR_RADIUS, "Weather",
+                                 Layout::BANNER_TITLE_LEFT_OFFSET, GxEPD_WHITE);
+      Graphics::drawFieldsetRect(Layout::FORECAST_RR_X, rrTop, Layout::FORECAST_RR_W, rrHeight,
+                                 Layout::BANNER_RR_RADIUS, "Forecast",
+                                 Layout::BANNER_TITLE_LEFT_OFFSET, GxEPD_WHITE);
 
       // Contenuti dei riquadri. Tutti i renderBlock usano yOffset
       // default 0 (baseline originali ICON_Y/DESC/TEMP/TIME invariate
       // sia per current che per forecast).
-      renderIndoorBox(INDOOR_RR_X, INDOOR_RR_W);
-      renderBlock(0, BLOCK_CURRENT_X, BLOCK_CURRENT_W);
-      renderSunColumn(WEATHER_RR_X);
-      renderBlock(1, BLOCK_FC0_X, BLOCK_FC_W);
-      renderBlock(2, BLOCK_FC1_X, BLOCK_FC_W);
-      renderBlock(3, BLOCK_FC2_X, BLOCK_FC_W);
+      renderIndoorBox(Layout::INDOOR_RR_X, Layout::INDOOR_RR_W);
+      renderBlock(0, Layout::BLOCK_CURRENT_X, Layout::BLOCK_CURRENT_W);
+      renderSunColumn(Layout::WEATHER_RR_X);
+      renderBlock(1, Layout::BLOCK_FC0_X, Layout::BLOCK_FC_W);
+      renderBlock(2, Layout::BLOCK_FC1_X, Layout::BLOCK_FC_W);
+      renderBlock(3, Layout::BLOCK_FC2_X, Layout::BLOCK_FC_W);
     }
 
     /**
@@ -1112,9 +1013,9 @@ namespace Weather
        * @since 22/04/26
        */
       {
-        const int16_t colX       = WEATHER_RR_X + SUN_COL_OFFSET;
+        const int16_t colX       = Layout::WEATHER_RR_X + Layout::SUN_COL_OFFSET;
         const int16_t centerX    = sunsetRowCenterX(colX);   // allineato alla riga sunset sopra
-        const int16_t trbCellY   = INDOOR_ROW3_BASELINE - 12;  // buffer alto 14, barra a y=5..8
+        const int16_t trbCellY   = Layout::INDOOR_ROW3_BASELINE + Layout::TRB_CELL_Y_OFFSET;
         drawTempRangeBarYellow(centerX, trbCellY);
       }
 
@@ -1127,7 +1028,7 @@ namespace Weather
          * Colonna placeholder bianca a destra (25%): copre l'immagine e
          * riserva lo spazio per elementi che verranno aggiunti piu' avanti.
          */
-        display.fillRect(SIDEBAR_X, 0, SIDEBAR_W, BANNER_Y, GxEPD_WHITE);
+        display.fillRect(Layout::SIDEBAR_X, 0, Layout::SIDEBAR_W, Layout::BANNER_Y, GxEPD_WHITE);
         /**
          * Calendar::draw riempie di bianco il proprio riquadro: riduce di fatto
          * l'area visibile dell'immagine di background. Il riquadro calendario

@@ -11,7 +11,7 @@
  * sketch .ino); scaduta la finestra l'AP
  * viene spenta "per sempre" (fino al prossimo reboot) e la radio viene
  * lasciata in WIFI_OFF, cosi' il ciclo normale STA on-demand + light
- * sleep di GxEPD2_1330c_GDEM133Z91.ino puo' riprendere senza modifiche.
+ * sleep di ePaper-weather-dashboard.ino puo' riprendere senza modifiche.
  *
  * Il modulo usa WIFI_AP_STA in modo che, mentre l'AP è attiva, la STA
  * si colleghi in parallelo al router di casa: cosi' Weather::runFetch()
@@ -26,7 +26,7 @@
  * separata. Le funzioni sono `inline` e le variabili di stato
  * `inline static` (richiede C++17, abilitato di default da arduino-esp32).
  *
- * Usato da: GxEPD2_1330c_GDEM133Z91.ino
+ * Usato da: ePaper-weather-dashboard.ino
  *
  * @since 20/04/26 Mattia Alesi
  */

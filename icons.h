@@ -4,10 +4,13 @@
 #include <stdint.h>
 #include <pgmspace.h>
 
+#include "Layout.h"
+
 /**
  * Icone meteo per il banner OpenWeatherMap.
- * Ogni icona è un bitmap 1bpp 88x88 in PROGMEM (88*88/8 = 968 byte).
- * Il codice icona OpenWeatherMap è del tipo "01d", "02n", ecc.
+ * Ogni icona è un bitmap 1bpp Layout::ICON_SIZE x Layout::ICON_SIZE in PROGMEM
+ * (lato selezionato dal Layout, default 88 per il 097c). Il codice icona
+ * OpenWeatherMap è del tipo "01d", "02n", ecc.
  * (vedi https://openweathermap.org/weather-conditions).
  *
  * Le icone vere saranno sostituite dall'utente; qui c'è solo un placeholder
@@ -18,14 +21,8 @@
  * @since 20/04/26 Mattia Alesi
  */
 
-/** Dimensione fissa delle icone in pixel (lato).
- *  Modifica 22/04/26: 96 -> 88 per lasciare piu' margine verticale
- *  dentro i fieldset del banner (orario sforava il bordo inferiore).
- *  Mantenuto multiplo di 8 per non toccare la formula del buffer. */
-#define ICON_SIZE 88
-
-/** Placeholder 88x88 tutto bianco: 968 byte. Sostituire con icone reali. */
-static const uint8_t ICON_PLACEHOLDER[ICON_SIZE * ICON_SIZE / 8] PROGMEM = {
+/** Placeholder ICON_SIZE x ICON_SIZE tutto bianco. Sostituire con icone reali. */
+static const uint8_t ICON_PLACEHOLDER[Layout::ICON_SIZE * Layout::ICON_SIZE / 8] PROGMEM = {
   /* Inizializzazione implicita a zero (pixel spenti = bianco su e-paper). */
   0x00
 };
@@ -50,22 +47,19 @@ inline const uint8_t* iconFromCode(const char* code)
 // ===========================================================================
 // Icone piccole per la sub-colonna dati ambientali BME680 (Weather.h
 // -> renderIndoorSubColumn). Bitmap 1bpp 20x20 in PROGMEM, MSB-first,
-// compatibili con display.drawBitmap().
-// Quelle qui sotto sono **placeholder** (quadrato vuoto 20x20): servono
-// a riservare lo spazio nel layout. Sostituire i byte con l'output di
-// epd_image_converter.pyw quando le icone reali (termometro, goccia,
-// indicatore qualita' aria) saranno pronte.
+// compatibili con display.drawBitmap(). Lato selezionato dal Layout
+// tramite Layout::INDOOR_ICON_SIZE (default 20 per il 097c).
+// Le bitmap qui sotto sono dimensionate "in chiaro" come 20x20 (3 byte
+// per riga * 20 righe = 60 byte) perche' i loro contenuti dipendono dal
+// layout grafico fisico delle icone, non dalla dimensione astratta.
 // @since 21/04/26 Mattia Alesi
 // ===========================================================================
-
-/** Lato (px) delle icone indoor. */
-#define INDOOR_ICON_SIZE 20
 
 /**
  * Icona temperatura (termometro 20x20, nero solido).
  * Stem verticale + bulbo tondo in basso.
  */
-static const uint8_t INDOOR_ICON_TEMPERATURE[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x01, 0xE0, 0x00,   // riga  0: .......XXXX......... (stem)
   0x01, 0xE0, 0x00,   // riga  1
   0x01, 0xE0, 0x00,   // riga  2
@@ -92,7 +86,7 @@ static const uint8_t INDOOR_ICON_TEMPERATURE[INDOOR_ICON_SIZE * 3] PROGMEM = {
  * Icona umidita' (goccia d'acqua 20x20, piena nera).
  * Forma a teardrop: punta in alto, rotonda in basso.
  */
-static const uint8_t INDOOR_ICON_HUMIDITY[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_HUMIDITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x60, 0x00,   // riga  0: .........XX.........
   0x00, 0x60, 0x00,   // riga  1
   0x00, 0xF0, 0x00,   // riga  2: ........XXXX........
@@ -122,7 +116,7 @@ static const uint8_t INDOOR_ICON_HUMIDITY[INDOOR_ICON_SIZE * 3] PROGMEM = {
  * centro basso verso il settore destro del quadrante.
  * @since 22/04/26
  */
-static const uint8_t INDOOR_ICON_PRESSURE[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_PRESSURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
   0x00, 0x00, 0x00,   // riga  1
   0x03, 0xF0, 0x00,   // riga  2: ......XXXXXX........ (arco superiore)
@@ -152,7 +146,7 @@ static const uint8_t INDOOR_ICON_PRESSURE[INDOOR_ICON_SIZE * 3] PROGMEM = {
  * crescenti. Spaziatura verticale di 1 riga vuota fra linee.
  * @since 22/04/26
  */
-static const uint8_t INDOOR_ICON_SUNRISE[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_SUNRISE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0xFF, 0xFF, 0xF0,   // riga  0: XXXXXXXXXXXXXXXXXXXX (w=20)
   0x00, 0x00, 0x00,   // riga  1
   0x7F, 0xFF, 0xE0,   // riga  2: .XXXXXXXXXXXXXXXXXX. (w=18)
@@ -182,7 +176,7 @@ static const uint8_t INDOOR_ICON_SUNRISE[INDOOR_ICON_SIZE * 3] PROGMEM = {
  * larghezza massima che si appoggia contro la base del sole.
  * @since 22/04/26
  */
-static const uint8_t INDOOR_ICON_SUNSET[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_SUNSET[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
   0x00, 0x00, 0x00,   // riga  1
   0x00, 0xF0, 0x00,   // riga  2: ........XXXX........ (apex sole, w=4)
@@ -210,7 +204,7 @@ static const uint8_t INDOOR_ICON_SUNSET[INDOOR_ICON_SIZE * 3] PROGMEM = {
  * Corpo simmetrico a goccia rovesciata (tip in alto) + gambo verticale
  * in basso che termina con una piccola piega.
  */
-static const uint8_t INDOOR_ICON_AIR_QUALITY[INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x40, 0x00,   // riga  0: .........X.......... (tip)
   0x00, 0xE0, 0x00,   // riga  1: ........XXX.........
   0x01, 0xF0, 0x00,   // riga  2: .......XXXXX........
