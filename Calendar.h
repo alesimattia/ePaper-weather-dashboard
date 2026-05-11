@@ -1,5 +1,5 @@
 #ifndef CALENDAR_H
-#define CALENDAR_H
+  #define CALENDAR_H
 
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
@@ -84,21 +84,40 @@ namespace Calendar
 {
   /**
    * Numero massimo di eventi effettivamente renderizzati nella lista.
-   * Le fonti (Outlook, Google) alimentano ciascuna una propria cache;
-   * la lista mostrata è il merge ordinato per data di inizio.
+   *
+   * Calcolato a compile-time da Layout::EVT_H con cascata 7 -> 6 -> 5:
+   * sceglie il massimo N in {7, 6, 5} tale che la riga risultante
+   * EVT_H/N sia almeno MIN_EVT_ROW_H (45 px). La soglia 45 e' dimensionata
+   * perche':
+   *  - garantisce simmetria visiva interna alla riga: con drawEventRow
+   *    le baseline sono time @ rowTop+19, title @ rowTop+EVT_ROW_H/2+6,
+   *    date @ rowTop+EVT_ROW_H-7. A 46 px le distanze title-time e
+   *    title-date sono entrambe 10 px (riga bilanciata e leggibile);
+   *    sotto 40 px le tre baseline si comprimono e i testi si toccano.
+   *  - mantiene 7 entry sul 122c (EVT_H=326, 326/7=46 px/riga >= 45).
+   *  - forza 5 entry sul 097c (EVT_H=230: 230/7=32 e 230/6=38 entrambi
+   *    sotto soglia, 230/5=46 supera) cosi' le righe restano confortevoli
+   *    anche sul pannello piu' corto verticalmente.
+   *
+   * Le sorgenti (Outlook, Google) alimentano ciascuna una propria cache
+   * da MAX_EVENTS=5; la lista mostrata e' il merge ordinato dei piu'
+   * vicini all'orario corrente, ritagliato a MAX_EVENTS_DISPLAYED.
    */
-  static constexpr uint8_t MAX_EVENTS_DISPLAYED = 5;
+  static constexpr int16_t MIN_EVT_ROW_H = 45;
+  static constexpr uint8_t MAX_EVENTS_DISPLAYED =
+      (Layout::EVT_H / 7 >= MIN_EVT_ROW_H) ? 7 :
+      (Layout::EVT_H / 6 >= MIN_EVT_ROW_H) ? 6 : 5;
 
   /**
    * Soglia di tentativi consecutivi falliti per i fetch calendario
    * (Outlook/Google) oltre la quale si interrompe il retry immediato e si
-   * aspetta INTERVAL_FETCH_MS come un ciclo normale. Evita hammering degli
-   * endpoint OAuth in caso di credenziali errate o server irraggiungibile,
+   * aspetta INTERVAL_FETCH_MS come un ciclo normale. 
+   * Evita hammering degli endpoint OAuth in caso di credenziali errate o server irraggiungibile,
    * sopratutto durante la finestra OTA (loop ogni ~10ms). 
    * Dichiarato in .ino; Fallback here. 
    */
   #ifndef MAX_CALENDAR_ATTEMPTS
-  #define MAX_CALENDAR_ATTEMPTS 2
+    #define MAX_CALENDAR_ATTEMPTS 2
   #endif
 
   namespace Outlook
@@ -112,7 +131,7 @@ namespace Calendar
      * rende l'header autonomamente compilabile.
      */
     #ifndef CAL_OUTLOOK_FETCH_MIN
-    #define CAL_OUTLOOK_FETCH_MIN 20
+      #define CAL_OUTLOOK_FETCH_MIN 20
     #endif
     static constexpr uint32_t INTERVAL_FETCH_MS =
         (uint32_t)CAL_OUTLOOK_FETCH_MIN * 60UL * 1000UL;  // default 20 min
@@ -128,7 +147,7 @@ namespace Calendar
      * Dichiarato in .ino; Fallback here. 
      */
     #ifndef CAL_GOOGLE_FETCH_MIN
-    #define CAL_GOOGLE_FETCH_MIN 20
+      #define CAL_GOOGLE_FETCH_MIN 20
     #endif
     static constexpr uint32_t INTERVAL_FETCH_MS =
         (uint32_t)CAL_GOOGLE_FETCH_MIN * 60UL * 1000UL;   // default 20 min
@@ -385,15 +404,11 @@ namespace Calendar
       body.reserve(512);
       body  = "client_id=";       body += clientId;
       if (clientSecret && *clientSecret)
-      {
         body += "&client_secret="; body += clientSecret;
-      }
       body += "&grant_type=refresh_token";
       body += "&refresh_token=";  body += refreshToken;
       if (scopeEncoded && *scopeEncoded)
-      {
         body += "&scope=";         body += scopeEncoded;
-      }
 
       int code = http.POST(body);
       if (code != 200)
@@ -408,10 +423,16 @@ namespace Calendar
       JsonDocument doc;
       DeserializationError err = deserializeJson(doc, http.getStream());
       http.end();
-      if (err) { Serial.printf("[OAuth] token json parse: %s\n", err.c_str()); return false; }
+      if (err){ 
+        Serial.printf("[OAuth] token json parse: %s\n", err.c_str()); 
+        return false; 
+      }
 
       const char* tok = doc["access_token"] | "";
-      if (!tok[0]) { Serial.println(F("[OAuth] access_token mancante")); return false; }
+      if (!tok[0]){ 
+        Serial.println(F("[OAuth] access_token mancante")); 
+        return false; 
+      }
       outToken     = tok;
       outExpiresIn = doc["expires_in"] | 3600UL;
       return true;
@@ -431,15 +452,15 @@ namespace Calendar
       if (cachedOutlookToken.length() > 0 && (int32_t)(outlookTokenExpiresAtMs - now) > 0)
         return true;
 
-      String url = String("https://login.microsoftonline.com/") + CAL_MSGRAPH_TENANT_ID
-                 + "/oauth2/v2.0/token";
+      String url = String("https://login.microsoftonline.com/") + CAL_MSGRAPH_TENANT_ID + "/oauth2/v2.0/token";
       uint32_t expiresIn = 0;
       bool ok = oauthRefreshGeneric(
         url.c_str(), MSGRAPH_CLIENT_ID, "",
         MSGRAPH_REFRESH_TOKEN,
         "https%3A%2F%2Fgraph.microsoft.com%2FCalendars.Read%20offline_access",
         cachedOutlookToken, expiresIn);
-      if (!ok) return false;
+      if (!ok) 
+        return false;
 
       outlookTokenExpiresAtMs = millis() + (expiresIn > 60 ? expiresIn - 60 : expiresIn) * 1000UL;
       Serial.printf("[Outlook] token OK, expires in %lus\n", (unsigned long)expiresIn);
@@ -480,7 +501,10 @@ namespace Calendar
       {
         Serial.printf("[Outlook] events fetch failed: http=%d\n", code);
         http.end();
-        if (code == 401) { cachedOutlookToken = ""; outlookTokenExpiresAtMs = 0; }
+        if (code == 401) { 
+          cachedOutlookToken = ""; 
+          outlookTokenExpiresAtMs = 0; 
+        }
         return false;
       }
 
@@ -516,7 +540,8 @@ namespace Calendar
         e.valid    = true;
         n++;
       }
-      for (int i = n; i < (int)Calendar::Outlook::MAX_EVENTS; i++) outlookEvents[i].valid = false;
+      for (int i = n; i < (int)Calendar::Outlook::MAX_EVENTS; i++) 
+        outlookEvents[i].valid = false;
 
       Serial.printf("[Outlook] fetched %d events (end>='%s')\n", n, nowIso);
       return n > 0;
@@ -555,7 +580,8 @@ namespace Calendar
         GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
         GOOGLE_REFRESH_TOKEN, "",
         cachedGoogleToken, expiresIn);
-      if (!ok) return false;
+      if (!ok) 
+        return false;
 
       googleTokenExpiresAtMs = millis() + (expiresIn > 60 ? expiresIn - 60 : expiresIn) * 1000UL;
       Serial.printf("[Google] token OK, expires in %lus\n", (unsigned long)expiresIn);
@@ -572,7 +598,8 @@ namespace Calendar
     {
       time_t now = nowUtcEpoch();
       char nowIso[24] = "1970-01-01T00:00:00Z";
-      if (now > 0) formatIsoUtc(now, nowIso, sizeof(nowIso));
+      if (now > 0) 
+        formatIsoUtc(now, nowIso, sizeof(nowIso));
 
       WiFiClientSecure client;
       client.setInsecure();
@@ -690,8 +717,24 @@ namespace Calendar
       const int16_t gridY = Layout::CAL_Y + Layout::TITLE_H;
       const int16_t gridW = Layout::CAL_W - 2 * Layout::CAL_PAD;
       const int16_t cellW = gridW / 7;
-      const int16_t cellH = (Layout::CAL_H - Layout::TITLE_H - Layout::HDR_H
-                             - Layout::GRID_TOP_PAD - Layout::CAL_PAD) / 6;
+      /**
+       * Altezza disponibile per la griglia delle settimane. Le settimane
+       * mostrate da un calendario lunedi'-first sono al massimo 6 (mese
+       * di 31 giorni che inizia di sabato o domenica): allocare piu' di 6
+       * righe lascia strutturalmente una riga sempre vuota sotto l'ultima
+       * settimana utilizzata. Con 6 righe (cellH ~24 px su CAL_H=200) il
+       * massimo "vuoto" residuo e' solo 1 riga (mesi di 5 settimane).
+       * Fallback a 5 righe se l'altezza disponibile non basta a garantire
+       * MIN_CELL_H per mantenere leggibile il numero in FONT_BODY (cap
+       * ~14 px). Nota: con 5 righe i mesi a 6 settimane verrebbero
+       * troncati; il fallback resta una clausola di salvaguardia per
+       * eventuali CAL_H futuri molto ridotti, non un caso operativo.
+       */
+      const int16_t gridAvailH = Layout::CAL_H - Layout::TITLE_H - Layout::HDR_H
+                               - Layout::GRID_TOP_PAD - Layout::CAL_PAD;
+      const int16_t MIN_CELL_H = 22;
+      const int16_t numRows = (gridAvailH / 6 >= MIN_CELL_H) ? 6 : 5;
+      const int16_t cellH   = gridAvailH / numRows;
 
       display.setFont(Layout::FONT_BODY);
       for (int i = 0; i < 7; i++)
@@ -715,19 +758,34 @@ namespace Calendar
         int16_t cellX = gridX + col * cellW;
         int16_t cellY = gridTop + row * cellH;
         int16_t cx    = cellX + cellW / 2;
-        // modificato 21/04/26: -5 -> -4 per centrare verticalmente il
-        // numero del giorno dentro la cella (cellH=21, cap 12pt ~14).
-        int16_t baseY = cellY + cellH - 4;
 
         snprintf(buf, sizeof(buf), "%d", d);
 
+        /**
+         * Baseline del numero calcolata dalla cap-height effettiva del
+         * font corrente (getTextBounds restituisce h ~= cap-height per i
+         * digit ASCII, che non hanno discendenti). Cosi' il numero risulta
+         * verticalmente centrato nella cella indipendentemente dal numero
+         * di righe del calendario (cellH=20 con 7 righe, 24 con 6) e
+         * indipendentemente dal font usato per FONT_BODY. Il badge rosso
+         * sotto puo' quindi essere reso simmetrico attorno al numero senza
+         * scarti verticali percettibili.
+         */
+        int16_t  tx1, ty1;
+        uint16_t tw, th;
+        display.getTextBounds(buf, 0, 0, &tx1, &ty1, &tw, &th);
+        const int16_t baseY = cellY + (cellH + (int16_t)th) / 2;
+
         if (d == todayDay)
         {
-          // Badge rosso inset 2 px lateralmente e 1 px sopra/sotto: margine
-          // visibile uniforme attorno al numero (aspetto da "badge" centrato
-          // nella cella, non fill edge-to-edge).
-          // @modified 21/04/26 Mattia Alesi
-          display.fillRoundRect(cellX + 2, cellY, cellW - 4, cellH - 1, Layout::CELL_R, GxEPD_RED);
+          /**
+           * Badge rosso simmetrico attorno al numero: 2 px di inset
+           * orizzontale e 1 px di inset verticale (top e bottom), CELL_R
+           * per gli angoli arrotondati. La versione precedente fissava
+           * il top a `cellY` (inset 0 in alto, 1 in basso) lasciando il
+           * numero leggermente in basso nel badge.
+           */
+          display.fillRoundRect(cellX + 2, cellY + 1, cellW - 4, cellH - 2, Layout::CELL_R, GxEPD_RED);
           drawCentered(buf, cx, baseY, GxEPD_WHITE);
         }
         else

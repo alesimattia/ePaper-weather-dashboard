@@ -81,8 +81,23 @@ namespace Indoor
      * Callback invocato da BSEC quando è pronto un nuovo set di output.
      * Aggiorna la cache `current` e setta il flag `hasNewSample` che
      * Indoor::refresh() leggera' al ritorno da bsec.run().
-     * Firma imposta dalla libreria Bsec2.
-     * @since 21/04/26 Mattia Alesi
+     *
+     * La firma a 3 parametri è imposta dalla libreria Bsec2 (typedef
+     * bsecCallback). Due dei tre parametri non vengono usati nel corpo:
+     *
+     *  - rawData (bme68xData): campione "raw" letto dal BME68x prima della
+     *    fusion BSEC (T/RH/P grezzi + resistenza VOC). Non lo leggiamo
+     *    perchè il firmware mostra solo i valori heat-compensated calcolati
+     *    da BSEC (signal degli OUTPUT_SENSOR_HEAT_COMPENSATED_*), già piu'
+     *    accurati e gia' calibrati.
+     *
+     *  - bsec (Bsec2): copia/handle dell'istanza che ha generato l'evento.
+     *    Non serve perchè la stessa istanza è disponibile come singleton
+     *    `detail::bsec` definito a livello di namespace e gia' accessibile
+     *    dalla callback (non gestiamo piu' di un BME680 sullo stesso ESP32).
+     *
+     * Lasciati senza nome "rawData" e  "bsec" per silenziare
+     * il warning -Wunused-parameter senza alterare la firma attesa da Bsec2.
      */
     inline void onBsecData(const bme68xData /*rawData*/,
                            const bsecOutputs outputs,

@@ -38,6 +38,12 @@ bullet di dettaglio delle ottimizzazioni applicate.
   dentro un loop `firstPage/nextPage`. Tutto il resto (single-channel API,
   `preserveYellow`) è compositing avanzato.
 
+- **Variante 122c**: il pannello SOLUM 12.2" (960x768) ha il proprio driver
+  `GxEPD2_SOLUM_122c_960x768` (vive nel branch `Solum_12_2`, non sul filesystem
+  di main), con la stessa architettura SSD1677 e probabilmente le stesse
+  ottimizzazioni. Lo sketch seleziona il driver via `Layout::Panel`
+  (typedef in `Layout_097c.h` / `Layout_122c.h`) — vedi `layout_separation.md`.
+
 **Ottimizzazioni applicate (state-of-the-art al 2026-04-30):**
 - Dirty flags `_color_dirty` / `_yellow_dirty` (~160 ms risparmiati su catene B/N)
 - `hibernate()` idempotente + reset flag al SWRESET

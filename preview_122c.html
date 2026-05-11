@@ -2,14 +2,16 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>EPD SOLUM 9.7" 960x672 - Preview UI</title>
+<title>EPD SOLUM 12.2" 960x768 - Preview UI</title>
 <style>
-  /* Anteprima statica del layout per pannello SOLUM 9.7" (960x672, 4    */
+  /* Anteprima statica del layout per pannello SOLUM 12.2" (960x768, 4   */
   /* colori BWRY ma qui resi solo nero/bianco/rosso/giallo). Le coord     */
-  /* replicano fedelmente le costanti di Layout_097c.h e il codice di     */
+  /* replicano fedelmente le costanti di Layout_122c.h e il codice di     */
   /* rendering di Weather.h / Calendar.h / Graphics.h.                    */
-  /* Per il pannello SOLUM 12.2" (960x768) vedi preview_122c.html         */
-  /* parallelo (CINEMA_H 440->536, EVT_H 230->326, BANNER_Y 460->556).    */
+  /* Differenze rispetto a 097c (oltre alle dimensioni):                  */
+  /*  - EVT_ROW_H = 326/5 = 65 px (vs 46): righe eventi piu' alte,        */
+  /*    time/date piu' distanziati verticalmente.                         */
+  /*  - solo 5 eventi visualizzati (MAX_EVENTS_DISPLAYED).                */
   :root {
     --black: #111;
     --red:   #d7263d;
@@ -24,10 +26,10 @@
   }
   h1 { font-size: 14px; font-weight: 500; margin: 0 0 12px; color: #aaa; }
 
-  /* Schermo 960x672. */
+  /* Schermo 960x768. Niente overflow: e' la cornice fisica del pannello. */
   .screen {
     position: relative;
-    width: 960px; height: 672px;
+    width: 960px; height: 768px;
     background: var(--white);
     color: var(--black);
     box-shadow: 0 0 0 1px #000, 0 10px 30px rgba(0,0,0,.45);
@@ -35,10 +37,10 @@
     overflow: hidden;
   }
 
-  /* Wallpaper cinema 620x440 in alto a sinistra. La fascia 440..460 x
-     0..620 (20 px) resta bianca fra wallpaper e banner (BANNER_Y=460). */
+  /* Wallpaper cinema 620x536 in alto a sinistra. La fascia 536..556 x
+     0..620 (20 px) resta bianca fra wallpaper e banner (BANNER_Y=556). */
   .bg-image {
-    position: absolute; left: 0; top: 0; width: 620px; height: 440px;
+    position: absolute; left: 0; top: 0; width: 620px; height: 536px;
     background:
       repeating-linear-gradient(45deg,
         var(--img-bg) 0 18px, var(--img-stripe) 18px 36px);
@@ -49,7 +51,7 @@
 
   /* Sidebar bianca a destra del wallpaper, alta fino al banner. */
   .sidebar {
-    position: absolute; left: 620px; top: 0; width: 340px; height: 460px;
+    position: absolute; left: 620px; top: 0; width: 340px; height: 556px;
     background: var(--white);
   }
 
@@ -144,19 +146,15 @@
   }
   .cal-cell.today > span { position: relative; z-index: 1; }
 
-  /* ===== Area eventi 320x230 @ (630, 220) =====
-     MAX_EVENTS_DISPLAYED calcolato in Calendar.h con cascata 7->6->5 e
-     soglia 45 px. Sul 097c (EVT_H=230): 230/7=32 e 230/6=38 sono sotto
-     soglia, 230/5=46 supera -> 5 righe da 46 px. Soglia 45 dimensionata
-     per garantire le 3 baseline interne alla riga (time @ +19, title @
-     rowTop+EVT_ROW_H/2+6 = +29, date @ rowTop+EVT_ROW_H-7 = +39) ben
-     distanziate (10 px fra una baseline e l'altra, simmetrico attorno
-     al titolo): meglio leggibili rispetto al packing 6 righe da 38 px.
+  /* ===== Area eventi 320x326 @ (630, 220) =====
+     MAX_EVENTS_DISPLAYED calcolato da Layout::EVT_H: 7 se EVT_H/7 >= 35,
+     altrimenti 6. Sul 122c (EVT_H=326, 326/7=46 >= 35) -> 7 righe.
+     EVT_ROW_H = 326 / 7 ≈ 46 px (uguale al 097c che pero' ha solo 6 righe).
      Separatore HLine fra le righe (non al top della prima).
      EVT_PAD_LEFT = 3, EVT_PAD = 8, EVT_SEP_PAD = 15 (separatore inset 15 px). */
   .events {
     position: absolute;
-    left: 630px; top: 220px; width: 320px; height: 230px;
+    left: 630px; top: 220px; width: 320px; height: 326px;
     background: var(--white);
     box-sizing: border-box;
   }
@@ -187,7 +185,7 @@
     right: 70px;                /* spazio per right-col */
   }
   /* Right-col: time baseline rowTop+19, date baseline rowTop+EVT_ROW_H-7 = rowTop+39.
-     EVT_PAD = 8 dal bordo destro. FONT_BODY come il titolo. */
+     EVT_PAD = 8 dal bordo destro. */
   .evt-time {
     position: absolute;
     right: 8px;
@@ -205,10 +203,10 @@
     color: inherit;
   }
 
-  /* ===== Banner footer 960x212 @ (0, 460) ===== */
+  /* ===== Banner footer 960x212 @ (0, 556) ===== */
   .banner {
     position: absolute;
-    left: 0; top: 460px; width: 960px; height: 212px;
+    left: 0; top: 556px; width: 960px; height: 212px;
     background: var(--white);
   }
 
@@ -236,11 +234,11 @@
   .group-forecast { left: 485px; top: 5px; width: 470px; height: 202px; }
 
   /* ===== Indoor: 1 colonna x 4 righe @ baseline INDOOR_ROW{1..4}_BASELINE =====
-     ROW1_BASELINE = BANNER_Y + 46 = 506  -> dentro group-indoor (top=460+5=465): 41
-     ROW2_BASELINE = BANNER_Y + 92 = 552  -> 87
-     ROW3_BASELINE = BANNER_Y + 138 = 598 -> 133
-     ROW4_BASELINE = BANNER_Y + 184 = 644 -> 179
-     col1X = INDOOR_RR_X + INDOOR_COL1_OFFSET = 5 + 10 = 15 -> dentro fieldset (x=5): 10
+     ROW1_BASELINE = BANNER_Y + 46 = 602  -> dentro group-indoor (top=556+5=561): 41
+     ROW2_BASELINE = BANNER_Y + 92 = 648  -> 87
+     ROW3_BASELINE = BANNER_Y + 138 = 694 -> 133
+     ROW4_BASELINE = BANNER_Y + 184 = 740 -> 179
+     col1X = INDOOR_RR_X + INDOOR_COL1_OFFSET = 5 + 10 = 15  -> dentro fieldset (x=5): 10
      INDOOR_ICON_SIZE = 20, INDOOR_ICON_GAP = 6
      Testi T/RH/P in FONT_LARGE (FreeSans18pt7b), IAQ in FONT_SMALL+FONT_MICRO. */
   .indoor-row {
@@ -260,7 +258,7 @@
 
   /* Riga IAQ: FONT_SMALL (9pt ≈ 13 px CSS) + accuracy in FONT_MICRO
      (Picopixel ≈ 6 px ma renderizzato grossolano: usiamo 8 px alzato di 2 px
-     come il codice fa con setCursor(x, baseline + 2) — BASELINE diversa). */
+     come il codice fa con setCursor(x, baseline + 2) ed e' BASELINE diversa). */
   .indoor-row.iaq .val { font-size: 13px; }
   .indoor-row.iaq .acc {
     font-size: 7px; vertical-align: baseline;
@@ -269,9 +267,9 @@
   }
 
   /* Posizioni esatte delle 4 righe (baseline-driven). */
-  .indoor-row.r1 { top: 24px; }        /* ~ baseline 41 nel fieldset */
+  .indoor-row.r1 { top: 24px; }        /* ~ baseline 41 nel fieldset (top+18 ascender) */
   .indoor-row.r2 { top: 70px; }
-  .indoor-row.r3 { top: 122px; }       /* IAQ ha font piu' piccolo */
+  .indoor-row.r3 { top: 122px; }        /* IAQ ha font piu' piccolo */
   .indoor-row.r4 { top: 162px; }
 
   /* ===== Weather: meteo corrente (sx) + sub-col sun (dx) =====
@@ -291,25 +289,28 @@
   }
 
   /* Blocchi meteo (current + forecast): icona 88x88 centrata, desc/temp/time
-     centrati orizzontalmente.
-     ICON_Y = BANNER_Y + 6 -> dentro fieldset (top=465): 1 px relativo
-     DESC_BASELINE = BANNER_Y + 118 -> 113 nel fieldset
-     TEMP_BASELINE = BANNER_Y + 153 -> 148
-     TIME_BASELINE = BANNER_Y + 188 -> 183 */
+     centrati orizzontalmente. Sul 122c le baseline sono shiftate di +8 px
+     rispetto al 097c per ridistribuire lo spazio liberato dall'orario in
+     FONT_BODY (al posto di FONT_LARGE), mantenendo ~7 px di margine sopra
+     il bordo inferiore del fieldset.
+     ICON_Y = BANNER_Y + 14 = 570 -> dentro fieldset (top=561): 9 px relativo
+     DESC_BASELINE = BANNER_Y + 126 -> 121 nel fieldset (top=5 relativo)
+     TEMP_BASELINE = BANNER_Y + 161 -> 156
+     TIME_BASELINE = BANNER_Y + 196 -> 191 */
   .block {
     position: relative;
     width: 100%; height: 100%;
   }
   .block .icon {
     position: absolute;
-    top: 1px; left: 50%; transform: translateX(-50%);
+    top: 9px; left: 50%; transform: translateX(-50%);
     width: 88px; height: 88px;
     display: flex; align-items: center; justify-content: center;
     font-size: 11px; letter-spacing: .15em; color: #888;
     border: 1px dashed #bbb; box-sizing: border-box;
   }
   .block .desc {
-    position: absolute; top: 95px; left: 0; right: 0;
+    position: absolute; top: 103px; left: 0; right: 0;
     text-align: center;
     font-size: 17px;                          /* FONT_BODY 12pt */
     line-height: 1;
@@ -318,16 +319,17 @@
     padding: 0 4px;
   }
   .block .temp {
-    position: absolute; top: 120px; left: 0; right: 0;
+    position: absolute; top: 128px; left: 0; right: 0;
     text-align: center;
     font-size: 26px; font-weight: 700;        /* FONT_LARGE_BOLD 18pt */
     line-height: 1;
     color: var(--red);
   }
+  /* FONT_TIME = FONT_BODY sul 122c (uniforme agli eventi calendario). */
   .block .time {
-    position: absolute; top: 162px; left: 0; right: 0;
+    position: absolute; top: 180px; left: 0; right: 0;
     text-align: center;
-    font-size: 26px;                          /* FONT_LARGE 18pt */
+    font-size: 17px;                          /* FONT_BODY 12pt */
     line-height: 1;
     color: var(--black);
   }
@@ -350,14 +352,12 @@
     vertical-align: 12px;
   }
 
-  /* Sub-col sun: 4 righe centrate orizzontalmente sull'asse
-     Layout::SUN_COL_CENTER_X (= centro sub-col).
-       Row 1: sunrise (icona + HH:MM, FONT_BODY)
-       Row 2: sunset  (idem, avvicinata a Row 1 -> blocco "alba/tramonto")
-       Row 3: @widget slider-temp-range (barra/triangolo giallo + labels nere)
-       Row 4: @widget storico-temperature (mini-chart B+R)
-     Le righe 3 e 4 sono traslate verso l'alto (-30 px rispetto al layout
-     originale) per ridurre il vuoto fra il blocco alba/tramonto e la slider. */
+  /* Sub-col sun: 4 righe allineate verticalmente alle 4 righe Indoor.
+     Riga 3: barra temp-range gialla con labels nere + triangolo giallo
+     (drawTempRangeBarYellow + drawTempRangeBarLabels). */
+  /* Sub-col sun: 4 righe centrate orizzontalmente sull'asse SUN_COL_CENTER_X.
+     Row 3 (@widget slider-temp-range) e Row 4 (@widget storico-temperature)
+     traslate verso l'alto (-30 px) per ridurre il vuoto sotto alba/tramonto. */
   .sun-row {
     position: absolute;
     left: 0; right: 0;
@@ -369,18 +369,15 @@
     position: relative; top: 4px;
   }
   .sun-row .icn svg { display: block; }
-  /* FONT_BODY (12pt): stesso font dei titoli fieldset Indoor/Weather/Forecast,
-     applicato anche alle scritte HH:MM di alba e tramonto per uniformita'. */
+  /* FONT_BODY (12pt): coerente con i titoli fieldset e con le scritte
+     HH:MM di alba e tramonto. */
   .sun-row .val { font-size: 17px; line-height: 1; }
   .sun-row.r1 { top: 24px; }
-  /* Sunset avvicinata a sunrise: SUN_ROW2_BASELINE = BANNER_Y + 70 (era +92),
-     interlinea 24 px vs 46 di Indoor -> gruppo visivo "alba/tramonto". */
+  /* Sunset avvicinata a sunrise: SUN_ROW2_BASELINE = BANNER_Y + 70. */
   .sun-row.r2 { top: 48px; }
-  /* @widget slider-temp-range. Top = SUN_ROW3_BASELINE - 12 - 5 = 91
-     (= BANNER_Y+108 + TRB_CELL_Y_OFFSET -12, rel a group-weather top:5). */
+  /* @widget slider-temp-range. Top = SUN_ROW3_BASELINE - 12 - 5 = 91. */
   .sun-row.r3 { top: 91px; }
-  /* @widget storico-temperature. Top = TC_TOP_OFFSET - 5 = 111
-     (rel a group-weather top:5). Il chart occupa TC_W=112 x TC_H=56 px. */
+  /* @widget storico-temperature. Top = TC_TOP_OFFSET - 5 = 111. */
   .sun-row.r4 { top: 111px; }
 
   /* ===== Forecast: 3 slot da 156 px @ (485, 641, 797) abs ===== */
@@ -398,12 +395,12 @@
 </head>
 <body>
 
-<h1>EPD 960×672 · anteprima layout 9.7" (statica)</h1>
+<h1>EPD 960×768 · anteprima layout 12.2" (statica)</h1>
 
 <div class="screen">
 
   <!-- Wallpaper cinema -->
-  <div class="bg-image"><span>WALLPAPER 620 × 440</span></div>
+  <div class="bg-image"><span>WALLPAPER 620 × 536</span></div>
 
   <!-- Sidebar -->
   <div class="sidebar"></div>
@@ -418,10 +415,10 @@
     <div class="cal-grid" id="cal-grid"></div>
   </div>
 
-  <!-- Lista eventi 320x230 @ (630,220), 5 righe da 46 px -->
+  <!-- Lista eventi 320x326 @ (630,220), 5 righe da 65 px -->
   <div class="events" id="events"></div>
 
-  <!-- Banner footer 960x212 @ (0,460) -->
+  <!-- Banner footer 960x212 @ (0,556) -->
   <div class="banner">
 
     <!-- Indoor RR -->
@@ -592,11 +589,11 @@
 </div>
 
 <div class="legend-list">
-  <span><b>Schermo</b>: 960×672 (BWRY, rotation 0)</span>
-  <span><b>Wallpaper</b>: 620×440 @ (0,0)</span>
+  <span><b>Schermo</b>: 960×768 (BWRY, rotation 0)</span>
+  <span><b>Wallpaper</b>: 620×536 @ (0,0) +96 px vs 097c</span>
   <span><b>Calendario</b>: 320×200 @ (630,10), titolo FONT_LARGE sul bordo, cella oggi badge rosso</span>
-  <span><b>Eventi</b>: 320×230 @ (630,220), 5 righe da ~46 px (cascata 7→6→5 con soglia 45 px: solo 230/5=46 supera), merge Outlook+Google</span>
-  <span><b>Banner</b>: 960×212 @ (0,460) · 3 fieldset (radius 18): Indoor 154×202 · Weather 306×202 · Forecast 470×202</span>
+  <span><b>Eventi</b>: 320×326 @ (630,220), 7 righe da ~46 px (EVT_H/MAX_EVENTS=326/7, soglia 35 px superata), merge Outlook+Google</span>
+  <span><b>Banner</b>: 960×212 @ (0,556) · 3 fieldset (radius 18): Indoor 154×202 · Weather 306×202 · Forecast 470×202</span>
   <span><b>Sun row 3</b>: barra temp-range gialla (canale 0x28) + cifre nere</span>
   <span><b>Sun row 4</b>: mini-chart temperatura (nero passato 3h + rosso forecast 9h, pallino nero su "ora")</span>
   <span><b>Oggi (eventi)</b>: testo rosso</span>
@@ -633,14 +630,14 @@
     }
   })();
 
-  /* Popola la lista eventi (max 5 sul 097c, calcolato a compile-time in
-     Calendar.h con cascata 7->6->5 e soglia 45 px: solo 230/5=46 supera).
-     Replica drawEventRow(): titolo a sx (FONT_BODY), time/date a destra
-     (rispettivamente baseline rowTop+19 e rowTop+EVT_ROW_H-7).
+  /* Popola la lista eventi (max 7 sul 122c, calcolato a compile-time in
+     Calendar.h: EVT_H/7 >= MIN_EVT_ROW_H). Replica drawEventRow():
+     titolo a sx (FONT_BODY), time/date a destra (rispettivamente
+     baseline rowTop+19 e rowTop+EVT_ROW_H-7).
      Eventi della giornata in rosso; data dd/mm per l'anno corrente,
      dd/mm/yy altrimenti; "tutto gg" per all-day. */
   (function () {
-    const MAX_EVENTS_DISPLAYED = 5;
+    const MAX_EVENTS_DISPLAYED = 7;
 
     const fmtDate = (dt, currentYear) => {
       const dd = String(dt.getDate()).padStart(2, "0");
@@ -668,8 +665,9 @@
       { source: "outlook", title: "Review progetto e-paper",  start: new Date(y, m, d + 1, 9,  30) },
       { source: "google",  title: "Convegno annuale",         start: new Date(y, m, d + 2, 0,  0), allDay: true },
       { source: "outlook", title: "Intervento campo Napoli",  start: new Date(y, m, d + 4, 8,  15) },
-      // Eventuali eventi >5 vengono scartati dal merge (drawEventsList).
-      { source: "google",  title: "Demo cliente Milano",      start: new Date(y, m, d + 5, 11, 0)  },
+      { source: "google",  title: "Demo cliente Milano",      start: new Date(y, m, d + 5, 11, 0) },
+      { source: "outlook", title: "Retrospective sprint",     start: new Date(y, m, d + 6, 16, 30) },
+      // Eventuali eventi extra vengono scartati dal merge (drawEventsList).
     ];
     SAMPLE.sort((a, b) => a.start - b.start);
     const displayed = SAMPLE.slice(0, MAX_EVENTS_DISPLAYED);

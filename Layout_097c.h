@@ -56,7 +56,7 @@ namespace Layout
   // -------------------------------------------------------------------------
   /** Numeri grandi di rilievo: temperatura percepita nel banner. */
   inline constexpr const GFXfont* FONT_LARGE_BOLD = &FreeSansBold18pt7b;
-  /** Testo grande non-bold: orario, indoor T/RH/P, sunrise/sunset, nome mese. */
+  /** Testo grande non-bold: indoor T/RH/P, sunrise/sunset, nome mese. */
   inline constexpr const GFXfont* FONT_LARGE      = &FreeSans18pt7b;
   /** Testo standard: titoli fieldset, descrizione meteo, eventi calendario,
    *  header giorni, numeri delle celle del calendario. */
@@ -65,6 +65,10 @@ namespace Layout
   inline constexpr const GFXfont* FONT_SMALL      = &FreeSans9pt7b;
   /** Font micro ~6 px: pedice accuracy IAQ. */
   inline constexpr const GFXfont* FONT_MICRO      = &Picopixel;
+  /** Font dell'orario nei blocchi meteo (current + forecast). Sul 097c
+   *  e' uguale a FONT_LARGE; sul 122c viene rimappato a FONT_BODY per
+   *  uniformare l'aspetto a quello degli eventi calendario nella sidebar. */
+  inline constexpr const GFXfont* FONT_TIME       = FONT_LARGE;
 
   // -------------------------------------------------------------------------
   // Sidebar (calendario + lista eventi a destra del wallpaper).
@@ -123,12 +127,32 @@ namespace Layout
   inline constexpr int16_t TEMP_BASELINE = BANNER_Y + 153;
   inline constexpr int16_t TIME_BASELINE = BANNER_Y + 188;
 
-  /** Baseline delle 4 righe condivise da Indoor (colonna unica) e dalla
-   *  sub-col sun nel riquadro Weather. Spaziatura uniforme (interlinea 46). */
+  /** Baseline delle 4 righe del riquadro Indoor (colonna unica). Spaziatura
+   *  uniforme (interlinea 46). Row 3 e Row 4 condivise con la sub-col sun
+   *  (slider temp-range e mini-chart temperatura). */
   inline constexpr int16_t INDOOR_ROW1_BASELINE = BANNER_Y + 46;
   inline constexpr int16_t INDOOR_ROW2_BASELINE = BANNER_Y + 92;
   inline constexpr int16_t INDOOR_ROW3_BASELINE = BANNER_Y + 138;
   inline constexpr int16_t INDOOR_ROW4_BASELINE = BANNER_Y + 184;
+
+  /** Baseline dedicate per le righe 1 (sunrise) e 2 (sunset) della sub-col
+   *  sun nel riquadro Weather. La riga sunset e' avvicinata alla riga
+   *  sunrise (interlinea 24 vs 46 di Indoor) cosi' i due orari risultano
+   *  visivamente raggruppati come singolo blocco "alba/tramonto". */
+  inline constexpr int16_t SUN_ROW1_BASELINE = BANNER_Y + 46;
+  inline constexpr int16_t SUN_ROW2_BASELINE = BANNER_Y + 70;
+
+  /** Baseline dedicata per la riga 3 della sub-col sun (slider temp-range
+   *  morn/eve). Traslata verso l'alto di 30 px rispetto a INDOOR_ROW3_BASELINE
+   *  (+138 -> +108) per ridurre il vuoto fra il blocco "alba/tramonto" e
+   *  la slider; il mini-chart sotto segue di conseguenza (TC_TOP_OFFSET). */
+  inline constexpr int16_t SUN_ROW3_BASELINE = BANNER_Y + 108;
+
+  /** Centro orizzontale (display) della sub-col sun. Usato per centrare in
+   *  un colpo solo: testi sunrise/sunset, slider temp-range, mini-chart.
+   *  sun-col larga 118 px (WEATHER_RR_W - SUN_COL_OFFSET = 306 - 188). */
+  inline constexpr int16_t SUN_COL_CENTER_X =
+      WEATHER_RR_X + SUN_COL_OFFSET + (WEATHER_RR_W - SUN_COL_OFFSET) / 2;
 
   inline constexpr int16_t INDOOR_ICON_GAP    = 6;
   inline constexpr int16_t INDOOR_COL1_OFFSET = 10;
@@ -178,13 +202,36 @@ namespace Layout
   inline constexpr int16_t BANNER_TITLE_LEFT_OFFSET = 14;
 
   // -------------------------------------------------------------------------
-  // Barra temp-range (canale yellow out-of-band sotto la sub-col sun).
+  // @widget slider-temp-range
+  // Barra giallo orizzontale con indicatore triangolo che mostra dove cade
+  // la temperatura percepita corrente fra morn ed eve (sub-col sun del
+  // riquadro Weather, Row 3). Canale yellow out-of-band (codice cmd 0x28).
   // TRB_W deve essere multiplo di 8 per byte-align senza padding.
   // -------------------------------------------------------------------------
   inline constexpr int16_t TRB_W             = 112;
   inline constexpr int16_t TRB_H             = 14;
   inline constexpr int16_t TRB_BYTES_PER_ROW = TRB_W / 8;
-  inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;   // cellY = INDOOR_ROW3_BASELINE + offset
+  inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;   // cellY = SUN_ROW3_BASELINE + offset
+
+  // -------------------------------------------------------------------------
+  // @widget storico-temperature
+  // Mini-chart andamento temperatura percepita esterna sotto la slider
+  // temp-range (Row 4 della sub-col sun). Linea nera per il passato (3h
+  // indietro dal ring-buffer in RAM), linea rossa per il forecast (slot[1..3]
+  // a +3h/+6h/+9h), pallino nero su "ora" (slot[0]).
+  // Larghezza pari alla slider sopra (TC_W = TRB_W), centrato sullo stesso
+  // asse verticale (SUN_COL_CENTER_X). Geometria:
+  //   BANNER_Y + TC_TOP_OFFSET + TC_H = BANNER_Y + 172
+  //   bordo inferiore interno         = BANNER_Y + BANNER_H - INSET_Y = BANNER_Y + 207
+  // -> margine 35 px sotto. I valori coincidono col 122c.
+  // -------------------------------------------------------------------------
+  inline constexpr int16_t TC_W            = TRB_W;    // 112: stessa larghezza della slider
+  inline constexpr int16_t TC_H            = 56;
+  inline constexpr int16_t TC_TOP_OFFSET   = 116;      // = (SUN_ROW3_BASELINE - BANNER_Y) + 8
+  inline constexpr int16_t TC_LABEL_W      = 14;       // colonna sx riservata a label min/max
+  inline constexpr int16_t TC_AXIS_PAD_BOT = 8;        // spazio sotto asse X per HH:MM
+  inline constexpr int16_t TC_TICK_H       = 2;
+  inline constexpr int16_t TC_DOT_R        = 3;
 }
 
 #endif

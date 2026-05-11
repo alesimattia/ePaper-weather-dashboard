@@ -2,3 +2,4 @@
 - Non aggiungere Mattia Alesi
 - Per i commenti che occupano una sola riga usa il tag // tranne che per i commenti incima alle funzioni
 - racchiudi tra i tag /** e */ i commenti che occupano più di una riga
+- se il blocco true di un if contiene una sola istruzione, allora non usare parentesi graffe e scrivi l'istruzione subito sotto ma indentata

@@ -114,6 +114,22 @@ namespace Weather
     inline float  dailyFeelsLikeMorn = NAN;   // daily[0].feels_like.morn (°C)
     inline float  dailyFeelsLikeEve  = NAN;   // daily[0].feels_like.eve  (°C)
 
+    /**
+     * @widget storico-temperature
+     *
+     * Storico temperatura percepita esterna per il mini-chart sotto la
+     * slider temp-range. Ring buffer in RAM (~3h20m a 10 min/fetch).
+     * Non persiste fra reboot: il light sleep mantiene la RAM, ma un
+     * reboot completo riparte da buffer vuoto e il chart si riempie
+     * gradualmente nei fetch successivi.
+     */
+    struct TempSample { time_t epoch; float t; };
+    inline constexpr uint8_t TC_HIST_CAP = 20;
+    inline TempSample tcHistBuf[TC_HIST_CAP];
+    inline uint8_t    tcHistCount     = 0;     // numero campioni validi (≤ TC_HIST_CAP)
+    inline uint8_t    tcHistHead      = 0;     // indice next-write nel ring
+    inline time_t     tcHistLastEpoch = 0;     // anti-doppione fra fetch ravvicinati
+
     inline uint32_t lastForecastMs = 0;       // timestamp ultima chiamata One Call riuscita
     inline bool     firstRun       = true;    // forza un primo fetch appena possibile
     inline bool     needsRefresh   = false;
@@ -494,23 +510,15 @@ namespace Weather
      * @param slotIdx  indice dello slot in `slots[]`: 0 = corrente, 1..3 = previsioni.
      * @param blockX   x (px) del margine sinistro del blocco.
      * @param blockW   larghezza (px) del blocco.
-     * @param yOffset  shift verticale (px) applicato a tutte le baseline
-     *                 del blocco. 0 per i forecast; per il current viene
-     *                 passato un valore positivo per bilanciare lo spazio
-     *                 verticale sopra/sotto dentro il riquadro Weather
-     *                 (default 0 = comportamento invariato per forecast).
-     * @modified 22/04/26 aggiunto yOffset per poter bilanciare il
-     *                    blocco current senza muovere i forecast.
      */
-    inline void renderBlock(uint8_t slotIdx, int16_t blockX, int16_t blockW,
-                            int16_t yOffset = 0)
+    inline void renderBlock(uint8_t slotIdx, int16_t blockX, int16_t blockW)
     {
       const int16_t centerX = blockX + blockW / 2;
       const WeatherSlot& s  = slots[slotIdx];
 
       // Icona centrata.
       const uint8_t* icon = iconFromCode(s.iconCode);
-      display.drawBitmap(centerX - Layout::ICON_SIZE / 2, Layout::ICON_Y + yOffset, icon,
+      display.drawBitmap(centerX - Layout::ICON_SIZE / 2, Layout::ICON_Y, icon,
                          Layout::ICON_SIZE, Layout::ICON_SIZE, GxEPD_BLACK);
 
       /** Description (nero, font tondo sans-serif). Se c'è pioggia
@@ -521,29 +529,31 @@ namespace Weather
       char descBuf[48];
       if (s.valid) composeDescLine(slotIdx, s, descBuf, sizeof(descBuf));
       else         strcpy(descBuf, "--");
-      drawCentered(descBuf, centerX, Layout::DESC_BASELINE + yOffset, GxEPD_BLACK);
+      drawCentered(descBuf, centerX, Layout::DESC_BASELINE, GxEPD_BLACK);
 
       /** Temperatura percepita (rosso, font tondo sans-serif grande bold).
-       *  Modifica 22/04/26: composizione esplicita "<num>°C" con pallino
-       *  disegnato come cerchietto (i font 7b non hanno il glifo °). */
+       *  Composizione esplicita "<num>°C" con pallino disegnato come
+       *  cerchietto (i font 7b non hanno il glifo °). */
       display.setFont(Layout::FONT_LARGE_BOLD);
       if (s.valid)
       {
         char numStr[8];
         snprintf(numStr, sizeof(numStr), "%.0f", s.feelsLikeC);
-        // Bold18pt: raggio ° 3 px, cap-height ~22 px.
-        drawTempWithDegree(numStr, centerX, Layout::TEMP_BASELINE + yOffset, GxEPD_RED, 3, 22, true);
+        // Bold18pt: raggio ° 3 px, cap-height effettiva ~18 px (era 22:
+        // sovrastimata, faceva galleggiare il cerchietto sopra l'apice di "C").
+        drawTempWithDegree(numStr, centerX, Layout::TEMP_BASELINE, GxEPD_RED, 3, 18, true);
       }
       else
       {
-        drawCentered("--", centerX, Layout::TEMP_BASELINE + yOffset, GxEPD_RED);
+        drawCentered("--", centerX, Layout::TEMP_BASELINE, GxEPD_RED);
       }
 
-      // Orario (nero, font medio grande).
+      // Orario: font selezionato dal Layout (FONT_LARGE sul 097c, FONT_BODY
+      // sul 122c per uniformare al font degli eventi calendario).
       char hhmm[6];
       formatHHMM(s.epoch, hhmm);
-      display.setFont(Layout::FONT_LARGE);
-      drawCentered(hhmm, centerX, Layout::TIME_BASELINE + yOffset, GxEPD_BLACK);
+      display.setFont(Layout::FONT_TIME);
+      drawCentered(hhmm, centerX, Layout::TIME_BASELINE, GxEPD_BLACK);
     }
 
     /**
@@ -578,16 +588,50 @@ namespace Weather
       display.print(txt);
     }
 
+    /**
+     * Variante centrata di drawIndoorRow: il blocco "icona + gap + testo"
+     * viene centrato orizzontalmente su `centerX`. Usata dalle righe
+     * sunrise/sunset della sub-col sun (le righe Indoor restano invece
+     * incolonnate a sinistra).
+     *
+     * @param icon      bitmap 1bpp 20x20 PROGMEM.
+     * @param txt       stringa testo a destra dell'icona.
+     * @param centerX   centro orizzontale (display) del blocco icona+testo.
+     * @param baselineY baseline del testo (icona allineata come in drawIndoorRow).
+     * @param color     colore del testo (icona sempre GxEPD_BLACK).
+     */
+    inline void drawSunRow(const uint8_t* icon, const char* txt,
+                           int16_t centerX, int16_t baselineY, uint16_t color)
+    {
+      int16_t  x1, y1;
+      uint16_t tw, th;
+      display.getTextBounds(txt, 0, 0, &x1, &y1, &tw, &th);
+      const int16_t totalW = Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP + (int16_t)tw;
+      const int16_t startX = centerX - totalW / 2;
+
+      const int16_t iconY = baselineY - Layout::INDOOR_ICON_SIZE + 6;
+      display.drawBitmap(startX, iconY, icon, Layout::INDOOR_ICON_SIZE, Layout::INDOOR_ICON_SIZE, GxEPD_BLACK);
+
+      display.setCursor(startX + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP - x1, baselineY);
+      display.setTextColor(color);
+      display.print(txt);
+    }
+
     // =======================================================================
-    // Barra temp-range (morn..eve) con indicatore current feels_like.
+    // @widget slider-temp-range
+    //
+    // Barra giallo orizzontale con indicatore triangolo che mostra dove
+    // cade la temperatura percepita corrente fra morn ed eve (Row 3 della
+    // sub-col sun). Disegnata in 2 fasi:
+    //   1. drawTempRangeBarYellow(): barra + triangolo sul canale yellow
+    //      (cmd 0x28, out-of-band rispetto al paged loop B+R).
+    //   2. drawTempRangeBarLabels(): cifre nere e cerchietti ° nel paged.
     //
     // Il canale giallo del pannello SOLUM 672x960 è "out-of-band" rispetto
     // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
     // usiamo le API del driver custom (Layout::Panel):
     //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
     //   - preserveYellow(true)                        -> sopravvive al paged
-    // Cifre dei numeri invece restano nere e sono disegnate normalmente con
-    // drawXYZ dentro il loop paged.
     // @since 22/04/26
     // =======================================================================
 
@@ -640,32 +684,6 @@ namespace Weather
           trbSetPx(cx + dx, y_top + dy);
       }
       trbSetPx(cx, y_top + height);
-    }
-
-    /**
-     * Centro orizzontale (display) delle sole cifre "HH:MM" della riga
-     * sunset (esclude l'icona). Usato per centrare la barra temp-range
-     * della Row 3 rispetto al testo dell'orario del tramonto sopra.
-     *
-     * Modifica 22/04/26 (v2): misura l'orario reale (sunsetEpoch) invece
-     * del template "00:00" per gestire correttamente bearing variabili
-     * delle cifre; aggiunto un piccolo offset -4 per bilanciare il peso
-     * visivo asimmetrico delle label morn/eve della barra (che sono piu'
-     * corte del testo "HH:MM" soprastante).
-     * @since 22/04/26
-     */
-    inline int16_t sunsetRowCenterX(int16_t colX)
-    {
-      char hhmm[6];
-      formatHHMM(sunsetEpoch, hhmm);   // es. "20:37"; "--:--" se epoch=0
-      display.setFont(Layout::FONT_LARGE);
-      int16_t  x1, y1;
-      uint16_t tw, th;
-      display.getTextBounds(hhmm, 0, 0, &x1, &y1, &tw, &th);
-      // Testo sunset inizia a colX + ICON + GAP, centro = start + tw/2,
-      // meno un piccolo shift estetico verso sinistra.
-      return colX + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP
-             + (int16_t)tw / 2 - 4;
     }
 
     /**
@@ -818,6 +836,219 @@ namespace Weather
       display.drawCircle(degXR, degY, degR, GxEPD_BLACK);
     }
 
+    // =======================================================================
+    // @widget storico-temperature
+    //
+    // Mini-chart andamento temperatura percepita esterna sotto la slider
+    // temp-range (Row 4 della sub-col sun).
+    //
+    // Range temporale: da (now - 3h) a slots[3].epoch (~now + 9h).
+    // Tratto passato in nero, tratto previsione in rosso, pallino "ora" nero.
+    // Disegnato interamente con canale B+R dentro il paged loop: nessuna
+    // interferenza con il canale giallo della slider sovrastante.
+    // =======================================================================
+
+    /**
+     * Registra un campione storico della temperatura percepita esterna nel
+     * ring buffer. Va chiamata su ogni fetch riuscito (slots[0] valido).
+     *
+     * Logica anti-doppione: scarta inserimenti a meno di 9 minuti dall'ultimo
+     * (tolleranza per retry ravvicinati a fronte del WEATHER_FORECAST_FETCH_MIN
+     * default di 10 minuti).
+     *
+     * @param tC     temperatura percepita (°C); NaN -> no-op.
+     * @param epoch  epoch UTC del campione; 0 -> no-op.
+     */
+    inline void recordHistory(float tC, time_t epoch)
+    {
+      if (isnan(tC) || epoch == 0) return;
+      if (tcHistLastEpoch != 0 && (epoch - tcHistLastEpoch) < 540) return;
+      tcHistBuf[tcHistHead] = TempSample{ epoch, tC };
+      tcHistHead = (uint8_t)((tcHistHead + 1) % TC_HIST_CAP);
+      if (tcHistCount < TC_HIST_CAP) ++tcHistCount;
+      tcHistLastEpoch = epoch;
+    }
+
+    /**
+     * Disegna il mini-chart temperatura sotto la slider temp-range.
+     * Larghezza Layout::TC_W centrata su `centerX`, altezza Layout::TC_H
+     * a partire da `topY`. Tutte le decorazioni (curva, asse X, tick,
+     * label HH:MM, label min/max, pallino) vengono disegnate sul canale
+     * nero+rosso del display dentro il paged loop.
+     *
+     * @param centerX centro orizzontale (display) del chart.
+     * @param topY    y assoluto del bordo superiore dell'area chart.
+     */
+    inline void drawTempChart(int16_t centerX, int16_t topY)
+    {
+      if (!slots[0].valid || isnan(slots[0].feelsLikeC)) return;
+
+      /** Estremi temporali dell'asse X. e1 dal forecast piu' lontano valido,
+       *  fallback a now+9h se nessuno e' disponibile. */
+      const time_t now = slots[0].epoch;
+      const time_t e0  = now - 3 * 3600;
+      time_t e1 = now + 9 * 3600;
+      if      (slots[3].valid) e1 = slots[3].epoch;
+      else if (slots[2].valid) e1 = slots[2].epoch;
+      else if (slots[1].valid) e1 = slots[1].epoch;
+      if (e1 <= now) e1 = now + 3600;   // safety: asse degenerato
+
+      /** Costruzione dataset ordinato per epoch (storia in range + slots[0..3]). */
+      constexpr size_t MAX_PTS = TC_HIST_CAP + 4;
+      TempSample pts[MAX_PTS];
+      size_t n = 0;
+
+      const uint8_t tail = (uint8_t)((tcHistHead + TC_HIST_CAP - tcHistCount) % TC_HIST_CAP);
+      for (uint8_t i = 0; i < tcHistCount; ++i)
+      {
+        const TempSample& s = tcHistBuf[(tail + i) % TC_HIST_CAP];
+        if (s.epoch >= e0 && s.epoch < now && !isnan(s.t))
+          pts[n++] = s;
+      }
+      for (uint8_t k = 0; k < 4; ++k)
+      {
+        if (!slots[k].valid || isnan(slots[k].feelsLikeC)) continue;
+        pts[n++] = TempSample{ slots[k].epoch, slots[k].feelsLikeC };
+      }
+      if (n == 0) return;
+
+      /** Geometria del chart. */
+      const int16_t chartL  = centerX - Layout::TC_W / 2 + Layout::TC_LABEL_W;
+      const int16_t chartR  = centerX + Layout::TC_W / 2;
+      const int16_t axisY   = topY + Layout::TC_H - Layout::TC_AXIS_PAD_BOT;
+      const int16_t plotTop = topY + 6;
+      const int16_t plotBot = axisY - 1;
+
+      /** Range Y con clamp minimo di 1°C per evitare divisioni piatte. */
+      float tmin = pts[0].t, tmax = pts[0].t;
+      for (size_t i = 1; i < n; ++i)
+      {
+        if (pts[i].t < tmin) tmin = pts[i].t;
+        if (pts[i].t > tmax) tmax = pts[i].t;
+      }
+      if (tmax - tmin < 1.0f)
+      {
+        const float mid = (tmax + tmin) * 0.5f;
+        tmin = mid - 0.5f;
+        tmax = mid + 0.5f;
+      }
+
+      /** Mappature epoch->x e t->y. Clamp ai bordi per non sforare. */
+      auto mapX = [&](time_t e) -> int16_t
+      {
+        long span = (long)(e1 - e0); if (span <= 0) span = 1;
+        long rel  = (long)(e - e0);
+        long px   = ((long)(chartR - chartL) * rel) / span;
+        int16_t x = chartL + (int16_t)px;
+        if (x < chartL) x = chartL;
+        if (x > chartR) x = chartR;
+        return x;
+      };
+      auto mapY = [&](float t) -> int16_t
+      {
+        float ratio = (t - tmin) / (tmax - tmin);
+        if (ratio < 0.0f) ratio = 0.0f;
+        if (ratio > 1.0f) ratio = 1.0f;
+        // Y display cresce verso il basso: t alta -> y basso.
+        int16_t y = plotBot - (int16_t)(ratio * (float)(plotBot - plotTop) + 0.5f);
+        if (y < plotTop) y = plotTop;
+        if (y > plotBot) y = plotBot;
+        return y;
+      };
+      // Catmull-Rom uniforme: curva smooth passa per i 4 punti di controllo.
+      auto catmull = [](float p0, float p1, float p2, float p3, float u) -> float
+      {
+        const float u2 = u * u;
+        const float u3 = u2 * u;
+        return 0.5f * ((2.0f * p1)
+                      + (-p0 + p2) * u
+                      + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * u2
+                      + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * u3);
+      };
+
+      /** Disegno curva: per ogni segmento [pts[i], pts[i+1]] interpolazione
+       *  Catmull-Rom con vicini pts[i-1] e pts[i+2] (clamp ai bordi).
+       *  Colore: nero se il tempo del campione e' < now, rosso altrimenti.
+       *  Il cambio avviene esattamente nel pixel corrispondente a "now". */
+      if (n >= 2)
+      {
+        for (size_t i = 0; i < n - 1; ++i)
+        {
+          const TempSample& p1 = pts[i];
+          const TempSample& p2 = pts[i + 1];
+          const TempSample& p0 = (i == 0)         ? p1 : pts[i - 1];
+          const TempSample& p3 = (i + 2 >= n)     ? p2 : pts[i + 2];
+
+          const int16_t x1 = mapX(p1.epoch);
+          const int16_t x2 = mapX(p2.epoch);
+          int16_t steps = x2 - x1;
+          if (steps < 1) steps = 1;
+
+          int16_t prevX = x1;
+          int16_t prevY = mapY(p1.t);
+          for (int16_t s = 1; s <= steps; ++s)
+          {
+            const float   u  = (float)s / (float)steps;
+            const time_t  eu = p1.epoch + (time_t)((double)(p2.epoch - p1.epoch) * (double)u);
+            const float   tu = catmull(p0.t, p1.t, p2.t, p3.t, u);
+            const int16_t cx = x1 + (int16_t)(((long)(x2 - x1) * (long)s) / (long)steps);
+            const int16_t cy = mapY(tu);
+            const uint16_t color = (eu < now) ? GxEPD_BLACK : GxEPD_RED;
+            display.drawLine(prevX, prevY, cx, cy, color);
+            prevX = cx;
+            prevY = cy;
+          }
+        }
+      }
+
+      /** Asse X: linea orizzontale alla base dell'area plot. */
+      display.drawFastHLine(chartL, axisY, chartR - chartL, GxEPD_BLACK);
+
+      /** 3 tick: inizio range (e0), mediana temporale (eMid), fine range (e1).
+       *  Il "now" (slots[0]) non e' un tick: e' indicato dal pallino sulla curva. */
+      const time_t  eMid = e0 + (e1 - e0) / 2;
+      const int16_t xMid = mapX(eMid);
+      display.drawFastVLine(chartL,     axisY + 1, Layout::TC_TICK_H, GxEPD_BLACK);
+      display.drawFastVLine(xMid,       axisY + 1, Layout::TC_TICK_H, GxEPD_BLACK);
+      display.drawFastVLine(chartR - 1, axisY + 1, Layout::TC_TICK_H, GxEPD_BLACK);
+
+      /** Label HH:MM (FONT_MICRO) sotto i tick, con clamp ai bordi del chart. */
+      display.setFont(Layout::FONT_MICRO);
+      display.setTextColor(GxEPD_BLACK);
+      const int16_t labY = axisY + Layout::TC_AXIS_PAD_BOT - 1;
+      auto drawHHMM = [&](time_t e, int16_t tickX, bool clampLeft, bool clampRight)
+      {
+        char buf[6];
+        formatHHMM(e, buf);
+        int16_t  bx1, by1;
+        uint16_t tw, th;
+        display.getTextBounds(buf, 0, 0, &bx1, &by1, &tw, &th);
+        int16_t tx = tickX - (int16_t)tw / 2 - bx1;
+        if (clampLeft  && tx + bx1 < chartL)
+          tx = chartL - bx1;
+        if (clampRight && tx + bx1 + (int16_t)tw > chartR)
+          tx = chartR - (int16_t)tw - bx1;
+        display.setCursor(tx, labY);
+        display.print(buf);
+      };
+      drawHHMM(e0,   chartL,     true,  false);
+      drawHHMM(eMid, xMid,       false, false);
+      drawHHMM(e1,   chartR - 1, false, true);
+
+      /** Label min/max (FONT_MICRO) a sinistra del chart in colonna. */
+      char numBuf[6];
+      const int16_t labLeftX = centerX - Layout::TC_W / 2;
+      snprintf(numBuf, sizeof(numBuf), "%.0f", tmax);
+      display.setCursor(labLeftX, plotTop + 4);
+      display.print(numBuf);
+      snprintf(numBuf, sizeof(numBuf), "%.0f", tmin);
+      display.setCursor(labLeftX, axisY - 1);
+      display.print(numBuf);
+
+      /** Pallino sulla temperatura corrente (sopra la curva). */
+      display.fillCircle(xNow, mapY(slots[0].feelsLikeC), Layout::TC_DOT_R, GxEPD_BLACK);
+    }
+
     /**
      * Disegna il contenuto del riquadro Indoor: 1 colonna x 4 righe
      * con i dati del sensore BME680.
@@ -830,14 +1061,13 @@ namespace Weather
      * bordo superiore del riquadro (via Graphics::drawFieldsetRect).
      *
      * @param rrX  x (px) del bordo sinistro del riquadro Indoor.
-     * @param rrW  larghezza (px) del riquadro Indoor (non usata).
      *
      * @since 22/04/26
      * @modified 22/04/26 (v3) ridotto a 1 colonna; colonna DX con
      *                    sunrise/sunset/placeholder spostata nel
      *                    riquadro Weather (vedi renderSunColumn).
      */
-    inline void renderIndoorBox(int16_t rrX, int16_t /*rrW*/)
+    inline void renderIndoorBox(int16_t rrX)
     {
       const Indoor::Sample& s = Indoor::sample();
       const int16_t col1X = rrX + Layout::INDOOR_COL1_OFFSET;
@@ -855,7 +1085,9 @@ namespace Weather
         if (s.valid)
         {
           snprintf(buf, sizeof(buf), "%.1f", s.temperature);
-          drawTempWithDegree(buf, textStartX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 20, false);
+          // FreeSans18pt7b: raggio ° 2 px, cap-height effettiva ~16 px (era 20:
+          // sovrastimata, faceva galleggiare il cerchietto sopra l'apice di "C").
+          drawTempWithDegree(buf, textStartX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 16, false);
         }
         else
         {
@@ -913,36 +1145,40 @@ namespace Weather
 
     /**
      * Disegna la sub-colonna sun nel riquadro Weather, a destra del
-     * blocco meteo corrente. 4 righe allineate verticalmente alle 4
-     * righe del riquadro Indoor:
-     *   1. sunrise     (nera, "HH:MM")
-     *   2. sunset      (nera, "HH:MM")
-     *   3. temp_range      (riservata, non disegnata)
-     *   4. additional_range (riservata, non disegnata)
+     * blocco meteo corrente. 4 righe centrate orizzontalmente sull'asse
+     * Layout::SUN_COL_CENTER_X:
+     *   1. sunrise    (nera, "HH:MM")
+     *   2. sunset     (nera, "HH:MM")            avvicinata a Row 1
+     *   3. temp_range (@widget slider-temp-range)
+     *   4. mini-chart (@widget storico-temperature)
      *
-     * @param weatherRrX  x (px) del bordo sinistro del riquadro Weather.
-     * @since 22/04/26
+     * @param weatherRrX  x (px) del bordo sinistro del riquadro Weather
+     *                    (usato solo per compatibilita' di firma; la
+     *                    centratura usa Layout::SUN_COL_CENTER_X).
      */
-    inline void renderSunColumn(int16_t weatherRrX)
+    inline void renderSunColumn(int16_t /*weatherRrX*/)
     {
-      const int16_t colX = weatherRrX + Layout::SUN_COL_OFFSET;
-      display.setFont(Layout::FONT_LARGE);
+      // FONT_BODY (12pt): stesso font dei titoli fieldset Indoor/Weather/Forecast,
+      // per uniformita' visiva delle scritte HH:MM di alba e tramonto.
+      display.setFont(Layout::FONT_BODY);
 
       char hhmm[6];
       formatHHMM(sunriseEpoch, hhmm);
-      drawIndoorRow(INDOOR_ICON_SUNRISE, hhmm, colX, Layout::INDOOR_ROW1_BASELINE, GxEPD_BLACK);
+      drawSunRow(INDOOR_ICON_SUNRISE, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUN_ROW1_BASELINE, GxEPD_BLACK);
 
       formatHHMM(sunsetEpoch, hhmm);
-      drawIndoorRow(INDOOR_ICON_SUNSET, hhmm, colX, Layout::INDOOR_ROW2_BASELINE, GxEPD_BLACK);
+      drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUN_ROW2_BASELINE, GxEPD_BLACK);
 
-      /** Row 3: cifre + cerchietti ° (nero) della barra temp-range.
-       *  Le decorazioni gialle (barra + triangolo) sono gia' sul canale
-       *  0x28 grazie a drawTempRangeBarYellow chiamata prima di
-       *  firstPage(). Il centro orizzontale è allineato al centro della
-       *  riga sunset sopra. */
-      drawTempRangeBarLabels(sunsetRowCenterX(colX), Layout::INDOOR_ROW3_BASELINE);
+      /** Row 3 — @widget slider-temp-range. Cifre + cerchietti ° (nero)
+       *  della barra temp-range. Le decorazioni gialle (barra + triangolo)
+       *  sono gia' sul canale 0x28 grazie a drawTempRangeBarYellow chiamata
+       *  prima di firstPage(). */
+      drawTempRangeBarLabels(Layout::SUN_COL_CENTER_X, Layout::SUN_ROW3_BASELINE);
 
-      /** Row 4 riservata (additional_range): non disegnata. */
+      /** Row 4 — @widget storico-temperature. Mini-chart andamento
+       *  temperatura percepita esterna, centrato sullo stesso asse della
+       *  slider sovrastante. */
+      drawTempChart(Layout::SUN_COL_CENTER_X, Layout::BANNER_Y + Layout::TC_TOP_OFFSET);
     }
 
     /**
@@ -977,10 +1213,9 @@ namespace Weather
                                  Layout::BANNER_RR_RADIUS, "Forecast",
                                  Layout::BANNER_TITLE_LEFT_OFFSET, GxEPD_WHITE);
 
-      // Contenuti dei riquadri. Tutti i renderBlock usano yOffset
-      // default 0 (baseline originali ICON_Y/DESC/TEMP/TIME invariate
-      // sia per current che per forecast).
-      renderIndoorBox(Layout::INDOOR_RR_X, Layout::INDOOR_RR_W);
+      // Contenuti dei riquadri. Baseline ICON_Y/DESC/TEMP/TIME invariate
+      // per current e forecast.
+      renderIndoorBox(Layout::INDOOR_RR_X);
       renderBlock(0, Layout::BLOCK_CURRENT_X, Layout::BLOCK_CURRENT_W);
       renderSunColumn(Layout::WEATHER_RR_X);
       renderBlock(1, Layout::BLOCK_FC0_X, Layout::BLOCK_FC_W);
@@ -1005,18 +1240,16 @@ namespace Weather
       time_t calEpoch = slots[0].valid ? slots[0].epoch : 0;
 
       /**
-       * Pre-write del canale yellow (0x28) per la barra temp-range della
-       * Row 3 nella sub-col sun: deve avvenire PRIMA di firstPage() e
-       * setta preserveYellow(true) cosi' il canale sopravvive al loop
-       * paged che gestisce solo black+red. Il driver custom auto-resetta
-       * preserveYellow alla fine di refresh().
+       * Pre-write del canale yellow (0x28) — @widget slider-temp-range.
+       * Deve avvenire PRIMA di firstPage() e setta preserveYellow(true)
+       * cosi' il canale sopravvive al loop paged che gestisce solo
+       * black+red. Il driver custom auto-resetta preserveYellow alla
+       * fine di refresh().
        * @since 22/04/26
        */
       {
-        const int16_t colX       = Layout::WEATHER_RR_X + Layout::SUN_COL_OFFSET;
-        const int16_t centerX    = sunsetRowCenterX(colX);   // allineato alla riga sunset sopra
-        const int16_t trbCellY   = Layout::INDOOR_ROW3_BASELINE + Layout::TRB_CELL_Y_OFFSET;
-        drawTempRangeBarYellow(centerX, trbCellY);
+        const int16_t trbCellY = Layout::SUN_ROW3_BASELINE + Layout::TRB_CELL_Y_OFFSET;
+        drawTempRangeBarYellow(Layout::SUN_COL_CENTER_X, trbCellY);
       }
 
       display.firstPage();
@@ -1071,6 +1304,11 @@ namespace Weather
     dailyFeelsLikeMorn = NAN;
     dailyFeelsLikeEve  = NAN;
 
+    // Reset storico del mini-chart temperatura (igienico: BSS gia' a 0).
+    tcHistCount     = 0;
+    tcHistHead      = 0;
+    tcHistLastEpoch = 0;
+
     lastForecastMs = 0;
     firstRun       = true;
     // Primo refresh posticipato fino all'arrivo di meteo corrente + almeno
@@ -1114,6 +1352,8 @@ namespace Weather
     {
       lastForecastMs = millis();
       needsRefresh   = true;
+      // Registra il campione corrente nello storico del mini-chart temperatura.
+      recordHistory(slots[0].feelsLikeC, slots[0].epoch);
     }
     /**
      * firstRun resta true finchè NON abbiamo sia meteo corrente che almeno

@@ -57,6 +57,12 @@ namespace Layout
   inline constexpr const GFXfont* FONT_BODY       = &FreeSans12pt7b;
   inline constexpr const GFXfont* FONT_SMALL      = &FreeSans9pt7b;
   inline constexpr const GFXfont* FONT_MICRO      = &Picopixel;
+  /** Sul pannello 12.2" l'orario dei blocchi meteo (current + forecast)
+   *  passa da FONT_LARGE a FONT_BODY: stesso font usato dagli eventi
+   *  calendario nella sidebar, per uniformita' visiva. Il blocco meteo
+   *  viene shiftato verso il basso (vedi baseline ICON_Y/DESC/TEMP/TIME)
+   *  per ridistribuire lo spazio liberato dal font piu' piccolo. */
+  inline constexpr const GFXfont* FONT_TIME       = FONT_BODY;
 
   // -------------------------------------------------------------------------
   // Sidebar: identica al 097c (stessa SCREEN_W).
@@ -104,15 +110,36 @@ namespace Layout
   inline constexpr int16_t BLOCK_FC1_X = BLOCK_FC0_X + BLOCK_FC_W;
   inline constexpr int16_t BLOCK_FC2_X = BLOCK_FC1_X + BLOCK_FC_W;
 
-  inline constexpr int16_t ICON_Y        = BANNER_Y + 6;
-  inline constexpr int16_t DESC_BASELINE = BANNER_Y + 118;
-  inline constexpr int16_t TEMP_BASELINE = BANNER_Y + 153;
-  inline constexpr int16_t TIME_BASELINE = BANNER_Y + 188;
+  /**
+   * Baseline del blocco meteo. Sul 122c sono shiftate di +8 px rispetto al
+   * 097c (+6 / +118 / +153 / +188) per ridistribuire lo spazio liberato dal
+   * passaggio dell'orario a FONT_BODY (FreeSans12pt7b al posto di FreeSans
+   * 18pt7b): l'icona scende dal margine superiore "stretto" del fieldset e
+   * l'orario (font piu' basso) mantiene comunque ~7 px di margine sopra il
+   * bordo inferiore del riquadro arrotondato.
+   * Banner 212 px alto, fieldset interno utile ~202 px (INSET_Y=5).
+   */
+  inline constexpr int16_t ICON_Y        = BANNER_Y + 14;     // 097c: +6
+  inline constexpr int16_t DESC_BASELINE = BANNER_Y + 126;    // 097c: +118
+  inline constexpr int16_t TEMP_BASELINE = BANNER_Y + 161;    // 097c: +153
+  inline constexpr int16_t TIME_BASELINE = BANNER_Y + 196;    // 097c: +188
 
   inline constexpr int16_t INDOOR_ROW1_BASELINE = BANNER_Y + 46;
   inline constexpr int16_t INDOOR_ROW2_BASELINE = BANNER_Y + 92;
   inline constexpr int16_t INDOOR_ROW3_BASELINE = BANNER_Y + 138;
   inline constexpr int16_t INDOOR_ROW4_BASELINE = BANNER_Y + 184;
+
+  /** Baseline dedicate sun: riga sunset avvicinata a sunrise (interlinea 24). */
+  inline constexpr int16_t SUN_ROW1_BASELINE = BANNER_Y + 46;
+  inline constexpr int16_t SUN_ROW2_BASELINE = BANNER_Y + 70;
+
+  /** Baseline slider temp-range traslata verso l'alto (-30 px rispetto a
+   *  INDOOR_ROW3_BASELINE) per ridurre il gap col blocco alba/tramonto. */
+  inline constexpr int16_t SUN_ROW3_BASELINE = BANNER_Y + 108;
+
+  /** Centro orizzontale della sub-col sun (118 px di larghezza). */
+  inline constexpr int16_t SUN_COL_CENTER_X =
+      WEATHER_RR_X + SUN_COL_OFFSET + (WEATHER_RR_W - SUN_COL_OFFSET) / 2;
 
   inline constexpr int16_t INDOOR_ICON_GAP    = 6;
   inline constexpr int16_t INDOOR_COL1_OFFSET = 10;
@@ -158,6 +185,7 @@ namespace Layout
   inline constexpr int16_t BANNER_TITLE_LEFT_OFFSET = 14;
 
   // -------------------------------------------------------------------------
+  // @widget slider-temp-range
   // Barra temp-range: identica al 097c (W/H del buffer non dipendono dal
   // pannello, sono dimensioni del widget).
   // -------------------------------------------------------------------------
@@ -165,6 +193,19 @@ namespace Layout
   inline constexpr int16_t TRB_H             = 14;
   inline constexpr int16_t TRB_BYTES_PER_ROW = TRB_W / 8;
   inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;
+
+  // -------------------------------------------------------------------------
+  // @widget storico-temperature
+  // Mini-chart temperatura: identico al 097c (baseline interne del banner
+  // sono uguali, offset relativi a BANNER_Y).
+  // -------------------------------------------------------------------------
+  inline constexpr int16_t TC_W            = TRB_W;    // 112
+  inline constexpr int16_t TC_H            = 56;
+  inline constexpr int16_t TC_TOP_OFFSET   = 116;      // = (SUN_ROW3_BASELINE - BANNER_Y) + 8
+  inline constexpr int16_t TC_LABEL_W      = 14;
+  inline constexpr int16_t TC_AXIS_PAD_BOT = 8;
+  inline constexpr int16_t TC_TICK_H       = 2;
+  inline constexpr int16_t TC_DOT_R        = 3;
 }
 
 #endif
