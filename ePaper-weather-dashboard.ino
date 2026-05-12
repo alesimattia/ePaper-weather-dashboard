@@ -19,8 +19,8 @@
 /**
  * Selezione del pannello display: scommenta UNA SOLA delle due varianti
  * per scegliere driver, coordinate del layout e font.
- *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960x672 BWRY)
- *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960x768 BWRY)
+ *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWRY)
+ *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960w x 768h BWRY)
  *
  * I due Layout_*.h definiscono lo stesso namespace `Layout` con gli stessi
  * simboli (Panel, pin, font, coord), quindi la logica applicativa nei
@@ -123,9 +123,14 @@ void initDisplay()
 // ===========================================================================
 // Background cinema
 //
-// Area disponibile per l'immagine: 620x440 (a sinistra della sidebar del
-// calendario x=620..960, 20px di margine verticale rispetto al banner
-// previsioni che inizia a y=460). L'immagine va disegnata a (0,0).
+// Area disponibile per l'immagine: Layout::CINEMA_W x Layout::CINEMA_H
+// (a sinistra della sidebar calendario x=Layout::SIDEBAR_X..960). La fascia
+// y=Layout::CINEMA_H..Layout::BANNER_Y resta bianca per ospitare la futura
+// UI mail. L'immagine va disegnata a (x=0, y=0).
+// Valori attuali per variante:
+//   097c (960w x 672h):  CINEMA = 620w x 300h, fascia mail 160h px
+//   122c (960w x 768h):  CINEMA = 620w x 335h, fascia mail 221h px
+// Convenzione: NwxMh = N px larghezza x M px altezza.
 //
 // Flusso:
 //   1. Boot: g_cinema_desc punta a img_apple_bwry_desc (fallback PROGMEM).
@@ -140,15 +145,16 @@ void initDisplay()
 
 /**
  * URL e dimensioni dell'area wallpaper sono in Layout::CINEMA_URL /
- * CINEMA_W / CINEMA_H / CINEMA_STRIDE / CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ.
+ * CINEMA_W (larghezza X) / CINEMA_H (altezza Y) / CINEMA_STRIDE /
+ * CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ.
  * Cambiare display (097c <-> 122c) regola automaticamente sia la query
  * string al server cinema sia la dimensione dei buffer in PSRAM/heap.
  *
- * NOTA: Layout::CINEMA_W / H NON sono un viewport che ritaglia.
+ * NOTA: Layout::CINEMA_W (larghezza X) / CINEMA_H (altezza Y) NON sono un viewport che ritaglia.
  * GxEPDImage::showImage() disegna pixel per pixel da (0,0) usando la
  * width/height del Descriptor, senza clipping. La sorgente (dinamica
  * dal server cinema o fallback PROGMEM img_apple_bwry_desc) deve essere
- * generata esattamente a Layout::CINEMA_W x Layout::CINEMA_H. Una sorgente
+ * generata esattamente a Layout::CINEMA_W (X) x Layout::CINEMA_H (Y). Una sorgente
  * piu' alta invade la fascia bianca fino a Layout::BANNER_Y; una piu'
  * larga entra nella sidebar (Layout::SIDEBAR_X), coperta con fillRect
  * bianco solo fino a Layout::BANNER_Y.
@@ -571,10 +577,11 @@ void loop()
 			 * (WiFi cade, batch HTTP error, budget esaurito) o se l'inbox e'
 			 * vuota, il flusso prosegue normalmente con i fetch calendario:
 			 * un problema mail NON deve impattare meteo/calendari/cinema.
-			 * Niente markDirty: per ora le mail non sono renderizzate.
+			 * markDirty su successo: la UI mail (Mail::draw) va ridisegnata.
 			 */
 			if (Mail::pendingFetch())
-				Mail::runFetch();
+				if (Mail::runFetch())
+					Weather::markDirty();
 
 			// Aggancio Outlook + Google al fetch corrente del meteo (stessa finestra WiFi)
 			if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Outlook::pendingFetch())
@@ -634,10 +641,12 @@ void loop()
 				 * fallisce (WiFi cade, batch HTTP error, budget esaurito) o
 				 * se l'inbox e' vuota, il flusso prosegue normalmente con i
 				 * fetch calendario: un problema mail NON deve impattare
-				 * meteo/calendari/cinema. Niente markDirty: no UI per ora.
+				 * meteo/calendari/cinema. markDirty su successo: la UI mail
+				 * (Mail::draw) va ridisegnata.
 				 */
 				if (needMail)
-					Mail::runFetch();
+					if (Mail::runFetch())
+						Weather::markDirty();
 				// Outlook + Google: stessa finestra WiFi del fetch meteo corrente
 				if ((need & Weather::FETCH_CURRENT_WEATHER) || needOutlook)
 					if (Calendar::Outlook::runFetch())

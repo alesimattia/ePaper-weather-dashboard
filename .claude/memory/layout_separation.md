@@ -1,10 +1,12 @@
 ---
 name: Separazione layout/logica via Layout.h dispatcher
-description: Architettura del firmware per supportare due display SOLUM (097c 960x672, 122c 960x768) con stessa logica applicativa
+description: Architettura del firmware per supportare due display SOLUM (097c 960w x 672h, 122c 960w x 768h) con stessa logica applicativa
 type: project
 ---
 
-Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960x672 e SOLUM 12.2" 960x768) con la stessa logica applicativa. La separazione e' realizzata da:
+Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y).
+
+Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960w x 672h e SOLUM 12.2" 960w x 768h, landscape post-rotation) con la stessa logica applicativa. La separazione e' realizzata da:
 
 - `Layout.h` (dispatcher): include `Layout_097c.h` o `Layout_122c.h` in base a `#define DISPLAY_VARIANT_097C` / `DISPLAY_VARIANT_122C` settato nel `.ino`. Emette `#error` se nessuno o entrambi sono definiti.
 - `Layout_097c.h` / `Layout_122c.h`: definiscono lo stesso namespace `Layout` con simboli identici (typedef `Panel`, pin display, font, costanti pixel). Il refactor ha estratto ~50 costanti coord/dim + 5 font dai moduli applicativi.
@@ -19,7 +21,7 @@ Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960x672 e SOLUM 12.2" 960x7
 - Per aggiungere un terzo pannello: scrivere driver + nuovo `Layout_<nome>.h` (stessi simboli) + ramo `#elif` nel dispatcher + `#define DISPLAY_VARIANT_<NOME>` nel `.ino`. I moduli non vanno toccati.
 
 **Differenze chiave 097c vs 122c (gia' codificate in Layout_122c.h):**
-- SCREEN_H 672 → 768; BANNER_Y 460 → 556 (banner ancorato al fondo); CINEMA_H 440 → 536; EVT_H 230 → 326. Tutto il resto invariato (stessa larghezza 960).
+- SCREEN_H (altezza Y) 672 → 768; BANNER_Y 460 → 556 (banner ancorato al fondo); CINEMA_H 440 → 536; EVT_H 230 → 326. Tutto il resto invariato (stessa larghezza X 960w).
 - Font identici per ora: `FONT_LARGE_BOLD = FreeSansBold18pt7b`, `FONT_LARGE = FreeSans18pt7b`, `FONT_BODY = FreeSans12pt7b`, `FONT_SMALL = FreeSans9pt7b`, `FONT_MICRO = Picopixel`. Cambiarli in Layout_122c.h se servisse.
 
 **Cosa NON sta nei Layout_*.h:**

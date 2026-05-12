@@ -2,16 +2,20 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>EPD SOLUM 12.2" 960x768 - Preview UI</title>
+<title>EPD SOLUM 12.2" 960w x 768h - Preview UI</title>
 <style>
-  /* Anteprima statica del layout per pannello SOLUM 12.2" (960x768, 4   */
-  /* colori BWRY ma qui resi solo nero/bianco/rosso/giallo). Le coord     */
+  /* Anteprima statica del layout per pannello SOLUM 12.2" (960w x 768h,  */
+  /* 4 colori BWRY ma qui resi solo nero/bianco/rosso/giallo). Le coord   */
   /* replicano fedelmente le costanti di Layout_122c.h e il codice di     */
   /* rendering di Weather.h / Calendar.h / Graphics.h.                    */
+  /* Convenzione dimensioni: NwxMh = N px in larghezza (asse X) e M px in */
+  /* altezza (asse Y). Le coordinate sono sempre (x, y) con origine in    */
+  /* alto a sinistra del pannello in landscape (post setRotation(0)).     */
   /* Differenze rispetto a 097c (oltre alle dimensioni):                  */
-  /*  - EVT_ROW_H = 326/5 = 65 px (vs 46): righe eventi piu' alte,        */
-  /*    time/date piu' distanziati verticalmente.                         */
-  /*  - solo 5 eventi visualizzati (MAX_EVENTS_DISPLAYED).                */
+  /*  - EVT_ROW_H = 326/7 = 46h px (uguale al 097c). Sul 122c ci stanno   */
+  /*    7 righe; sul 097c solo 5 (EVT_H minore -> 230/7 e 230/6 sotto    */
+  /*    soglia MIN_EVT_ROW_H=45 in Calendar.h, ripiego su 230/5=46).      */
+  /*  - 7 eventi visualizzati (MAX_EVENTS_DISPLAYED).                     */
   :root {
     --black: #111;
     --red:   #d7263d;
@@ -26,7 +30,7 @@
   }
   h1 { font-size: 14px; font-weight: 500; margin: 0 0 12px; color: #aaa; }
 
-  /* Schermo 960x768. Niente overflow: e' la cornice fisica del pannello. */
+  /* Schermo 960w x 768h. Niente overflow: e' la cornice fisica del pannello. */
   .screen {
     position: relative;
     width: 960px; height: 768px;
@@ -37,10 +41,11 @@
     overflow: hidden;
   }
 
-  /* Wallpaper cinema 620x536 in alto a sinistra. La fascia 536..556 x
-     0..620 (20 px) resta bianca fra wallpaper e banner (BANNER_Y=556). */
+  /* Wallpaper cinema 620w x 335h in alto a sinistra. La fascia
+     x=0..620, y=335..556 (221h px) resta bianca fra wallpaper e banner
+     (BANNER_Y=556) ed e' destinata alla futura UI mail. */
   .bg-image {
-    position: absolute; left: 0; top: 0; width: 620px; height: 536px;
+    position: absolute; left: 0; top: 0; width: 620px; height: 335px;
     background:
       repeating-linear-gradient(45deg,
         var(--img-bg) 0 18px, var(--img-stripe) 18px 36px);
@@ -146,10 +151,10 @@
   }
   .cal-cell.today > span { position: relative; z-index: 1; }
 
-  /* ===== Area eventi 320x326 @ (630, 220) =====
-     MAX_EVENTS_DISPLAYED calcolato da Layout::EVT_H: 7 se EVT_H/7 >= 35,
-     altrimenti 6. Sul 122c (EVT_H=326, 326/7=46 >= 35) -> 7 righe.
-     EVT_ROW_H = 326 / 7 ≈ 46 px (uguale al 097c che pero' ha solo 6 righe).
+  /* ===== Area eventi 320w x 326h @ (x=630, y=220) =====
+     MAX_EVENTS_DISPLAYED calcolato in Calendar.h con cascata 7->6->5 e
+     soglia MIN_EVT_ROW_H=45 px. Sul 122c (EVT_H=326, 326/7=46 >= 45) -> 7 righe.
+     EVT_ROW_H = 326 / 7 ≈ 46 px (uguale al 097c che pero' ha solo 5 righe).
      Separatore HLine fra le righe (non al top della prima).
      EVT_PAD_LEFT = 3, EVT_PAD = 8, EVT_SEP_PAD = 15 (separatore inset 15 px). */
   .events {
@@ -203,7 +208,69 @@
     color: inherit;
   }
 
-  /* ===== Banner footer 960x212 @ (0, 556) ===== */
+  /* ===== Area mail 620w x 221h @ (x=0, y=335) =====
+     Sotto al wallpaper cinema, sopra al banner. Solo nero.
+     NO header globale: icona busta inline accanto al sender solo se UNREAD.
+     Layout cella: vedi preview_097c.html. Spaziatura verticale:
+     TOP_PAD 5 + ROW 58 + GAP 12 + ROW 58 + GAP 12 + ROW 58 + BOT 18 = 221. */
+  .mail {
+    position: absolute;
+    left: 0; top: 335px; width: 620px; height: 221px;
+    background: var(--white);
+    color: var(--black);
+  }
+  .mail-grid {
+    position: absolute;
+    left: 0; top: 5px;                                  /* MAIL_TOP_PAD */
+    width: 620px;
+    display: grid;
+    grid-template-columns: 310px 310px;                 /* MAIL_COL_W = 310 */
+    grid-template-rows: 58px 58px 58px;                 /* MAIL_ROW_H = 58 */
+    grid-auto-flow: column;                             /* column-major: piu' recente top-sx, scende, poi continua top-dx */
+    row-gap: 12px;                                      /* MAIL_ROW_GAP */
+    column-gap: 0;
+  }
+  .mail-cell {
+    position: relative;
+    box-sizing: border-box;
+  }
+  .mail-top {
+    position: absolute;
+    left: 6px;
+    top: 4px;
+    display: flex; align-items: center; gap: 4px;
+    max-width: calc(100% - 6px - 60px);
+    font-size: 17px;
+  }
+  .mail-sender {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mail-icon-inline {
+    flex: 0 0 auto;
+    width: 20px; height: 20px;
+    margin-top: 1px;
+  }
+  .mail-subject {
+    position: absolute;
+    left: 6px; right: 70px;
+    top: 22px;
+    font-size: 13px; color: #333;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mail-time {
+    position: absolute;
+    right: 10px; top: 4px;
+    font-size: 17px; font-weight: 500;
+    line-height: 1;
+  }
+  .mail-date {
+    position: absolute;
+    right: 10px; top: 22px;
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  /* ===== Banner footer 960w x 212h @ (x=0, y=556) ===== */
   .banner {
     position: absolute;
     left: 0; top: 556px; width: 960px; height: 212px;
@@ -288,7 +355,7 @@
     left: 188px; right: 0; top: 0; height: 202px;
   }
 
-  /* Blocchi meteo (current + forecast): icona 88x88 centrata, desc/temp/time
+  /* Blocchi meteo (current + forecast): icona 88w x 88h centrata, desc/temp/time
      centrati orizzontalmente. Sul 122c le baseline sono shiftate di +8 px
      rispetto al 097c per ridistribuire lo spazio liberato dall'orario in
      FONT_BODY (al posto di FONT_LARGE), mantenendo ~7 px di margine sopra
@@ -380,7 +447,7 @@
   /* @widget storico-temperature. Top = TC_TOP_OFFSET - 5 = 111. */
   .sun-row.r4 { top: 111px; }
 
-  /* ===== Forecast: 3 slot da 156 px @ (485, 641, 797) abs ===== */
+  /* ===== Forecast: 3 slot da 156w px @ x=485, 641, 797 abs ===== */
   .group-forecast .block.fc0 { position: absolute; left: 0;   width: 156px; height: 202px; }
   .group-forecast .block.fc1 { position: absolute; left: 156px; width: 156px; height: 202px; }
   .group-forecast .block.fc2 { position: absolute; left: 312px; width: 156px; height: 202px; }
@@ -395,17 +462,17 @@
 </head>
 <body>
 
-<h1>EPD 960×768 · anteprima layout 12.2" (statica)</h1>
+<h1>EPD 960w × 768h · anteprima layout 12.2" (statica) — convenzione: Nw × Mh = larghezza × altezza in px</h1>
 
 <div class="screen">
 
   <!-- Wallpaper cinema -->
-  <div class="bg-image"><span>WALLPAPER 620 × 536</span></div>
+  <div class="bg-image"><span>WALLPAPER 620w × 335h</span></div>
 
   <!-- Sidebar -->
   <div class="sidebar"></div>
 
-  <!-- Calendario fieldset 320x200 @ (630,10) -->
+  <!-- Calendario fieldset 320w x 200h @ (x=630, y=10) -->
   <div class="cal">
     <div class="cal-title" id="cal-title">Aprile</div>
     <div class="cal-hdr">
@@ -415,10 +482,84 @@
     <div class="cal-grid" id="cal-grid"></div>
   </div>
 
-  <!-- Lista eventi 320x326 @ (630,220), 5 righe da 65 px -->
+  <!-- Lista eventi 320w x 326h @ (x=630, y=220), 7 righe da 46h px -->
   <div class="events" id="events"></div>
 
-  <!-- Banner footer 960x212 @ (0,556) -->
+  <!-- Area mail 620w x 221h @ (x=0, y=335). 6 celle 2x3, lettura LTR/TTB.
+       Indirizzo email come sender (no nome), icona busta inline SOLO se unread,
+       time HH:MM sopra + data dd/MM sotto sulla destra. -->
+  <div class="mail">
+    <div class="mail-grid">
+      <!-- 0 unread -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">mario.rossi@example.com</span>
+          <svg class="mail-icon-inline" viewBox="0 0 20 20" stroke="#111" stroke-width="1" fill="none">
+            <rect x="1" y="3" width="18" height="13"/>
+            <polyline points="1,3 10,8 19,3"/>
+          </svg>
+        </div>
+        <div class="mail-subject">Riunione domani ore 10, sala B</div>
+        <div class="mail-time">09:42</div>
+        <div class="mail-date">12/05</div>
+      </div>
+      <!-- 1 letta -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">notifications@github.com</span>
+        </div>
+        <div class="mail-subject">[anthropics/claude-code] New issue #1234</div>
+        <div class="mail-time">08:15</div>
+        <div class="mail-date">12/05</div>
+      </div>
+      <!-- 2 unread -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">ordini@amazon.it</span>
+          <svg class="mail-icon-inline" viewBox="0 0 20 20" stroke="#111" stroke-width="1" fill="none">
+            <rect x="1" y="3" width="18" height="13"/>
+            <polyline points="1,3 10,8 19,3"/>
+          </svg>
+        </div>
+        <div class="mail-subject">Il tuo ordine e' in arrivo: consegna oggi</div>
+        <div class="mail-time">07:30</div>
+        <div class="mail-date">11/05</div>
+      </div>
+      <!-- 3 letta -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">newsletter@tech.com</span>
+        </div>
+        <div class="mail-subject">5 trend ESP32 da seguire nel 2026</div>
+        <div class="mail-time">22:10</div>
+        <div class="mail-date">10/05</div>
+      </div>
+      <!-- 4 unread -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">info@intesasanpaolo.it</span>
+          <svg class="mail-icon-inline" viewBox="0 0 20 20" stroke="#111" stroke-width="1" fill="none">
+            <rect x="1" y="3" width="18" height="13"/>
+            <polyline points="1,3 10,8 19,3"/>
+          </svg>
+        </div>
+        <div class="mail-subject">Estratto conto disponibile online</div>
+        <div class="mail-time">14:20</div>
+        <div class="mail-date">09/05</div>
+      </div>
+      <!-- 5 letta -->
+      <div class="mail-cell">
+        <div class="mail-top">
+          <span class="mail-sender">noreply@linkedin.com</span>
+        </div>
+        <div class="mail-subject">Nuove connessioni dal tuo settore</div>
+        <div class="mail-time">11:05</div>
+        <div class="mail-date">08/05</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Banner footer 960w x 212h @ (x=0, y=556) -->
   <div class="banner">
 
     <!-- Indoor RR -->
@@ -465,7 +606,7 @@
 
       <div class="block-current">
         <div class="block">
-          <div class="icon">ICON 88×88</div>
+          <div class="icon">ICON 88w × 88h</div>
           <div class="desc">sereno</div>
           <div class="temp">18<span class="deg-circle"></span>C</div>
           <div class="time">14:30</div>
@@ -566,19 +707,19 @@
     <div class="rr group-forecast">
       <div class="rr-title">Forecast</div>
       <div class="block fc0">
-        <div class="icon">ICON 88×88</div>
+        <div class="icon">ICON 88w × 88h</div>
         <div class="desc">poco nuvoloso</div>
         <div class="temp">17<span class="deg-circle"></span>C</div>
         <div class="time">17:00</div>
       </div>
       <div class="block fc1">
-        <div class="icon">ICON 88×88</div>
+        <div class="icon">ICON 88w × 88h</div>
         <div class="desc">80% 0.5mm</div>
         <div class="temp">15<span class="deg-circle"></span>C</div>
         <div class="time">20:00</div>
       </div>
       <div class="block fc2">
-        <div class="icon">ICON 88×88</div>
+        <div class="icon">ICON 88w × 88h</div>
         <div class="desc">nubi sparse</div>
         <div class="temp">13<span class="deg-circle"></span>C</div>
         <div class="time">23:00</div>
@@ -589,11 +730,12 @@
 </div>
 
 <div class="legend-list">
-  <span><b>Schermo</b>: 960×768 (BWRY, rotation 0)</span>
-  <span><b>Wallpaper</b>: 620×536 @ (0,0) +96 px vs 097c</span>
-  <span><b>Calendario</b>: 320×200 @ (630,10), titolo FONT_LARGE sul bordo, cella oggi badge rosso</span>
-  <span><b>Eventi</b>: 320×326 @ (630,220), 7 righe da ~46 px (EVT_H/MAX_EVENTS=326/7, soglia 35 px superata), merge Outlook+Google</span>
-  <span><b>Banner</b>: 960×212 @ (0,556) · 3 fieldset (radius 18): Indoor 154×202 · Weather 306×202 · Forecast 470×202</span>
+  <span><b>Schermo</b>: 960w × 768h (BWRY, rotation 0)</span>
+  <span><b>Wallpaper</b>: 620w × 335h @ (x=0, y=0)</span>
+  <span><b>Area mail</b>: 620w × 221h @ (x=0, y=335) — griglia 2×3 = 6 mail, sx: email + (busta inline se unread) sopra / oggetto sotto, dx: HH:MM sopra / dd/MM sotto, solo nero</span>
+  <span><b>Calendario</b>: 320w × 200h @ (x=630, y=10), titolo FONT_LARGE sul bordo, cella oggi badge rosso</span>
+  <span><b>Eventi</b>: 320w × 326h @ (x=630, y=220), 7 righe da ~46h px (cascata 7→6→5 con soglia 45 px: 326/7=46 supera), merge Outlook+Google</span>
+  <span><b>Banner</b>: 960w × 212h @ (x=0, y=556) · 3 fieldset (radius 18): Indoor 154w × 202h · Weather 306w × 202h · Forecast 470w × 202h</span>
   <span><b>Sun row 3</b>: barra temp-range gialla (canale 0x28) + cifre nere</span>
   <span><b>Sun row 4</b>: mini-chart temperatura (nero passato 3h + rosso forecast 9h, pallino nero su "ora")</span>
   <span><b>Oggi (eventi)</b>: testo rosso</span>
@@ -683,7 +825,7 @@
         '<div class="evt-date">' + fmtDate(ev.start, y) + '</div>';
       host.appendChild(row);
     });
-    // Slot vuoti se ci sono meno di 5 eventi disponibili: nel firmware
+    // Slot vuoti se ci sono meno di 7 eventi disponibili: nel firmware
     // drawEventRow stampa "--" come placeholder.
     for (let i = displayed.length; i < MAX_EVENTS_DISPLAYED; i++) {
       const row = document.createElement("div");

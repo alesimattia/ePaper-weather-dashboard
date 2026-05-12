@@ -1,5 +1,6 @@
 // =============================================================================
-// Driver custom per pannello e-paper SOLUM 9.7" 672x960 su ESP32.
+// Driver custom per pannello e-paper SOLUM 9.7" 672w x 960h (native portrait) su ESP32.
+// Convenzione: NwxMh = N px larghezza (X) x M px altezza (Y).
 //
 // Origine:
 //   - Libreria base: GxEPD2 (https://github.com/ZinggJM/GxEPD2).
@@ -9,7 +10,7 @@
 //
 // Pannello pilotato (personalizzazione rispetto all'originale):
 //   - Produttore: SOLUM (modulo ESL 9.7" riusato).
-//   - Risoluzione: 672x960 (usato in landscape nativo 960x672).
+//   - Risoluzione: 672w x 960h native portrait (usato in landscape 960w x 672h dopo setRotation(0)).
 //   - Colori: 4 colori nativi (bianco / nero / rosso / giallo) pilotati
 //     rispettivamente via comando 0x24 (black plane), 0x26 (red accent),
 //     0x28 (yellow accent) del controller SSD1677.

@@ -1,5 +1,6 @@
 """
-Convertitore immagini per e-paper display (GxEPD2 / SOLUM 672x960 3-colori).
+Convertitore immagini per e-paper display (GxEPD2 / SOLUM 672w x 960h native portrait 3-colori).
+Convenzione dimensioni in questo file: NwxMh = N px larghezza (X) x M px altezza (Y).
 
 Interfaccia grafica semplice per convertire PNG/JPG/WEBP/BMP/GIF in array
 PROGMEM C++ pronti da includere in uno sketch Arduino/ESP32.
@@ -72,11 +73,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # La modalita' colore viene applicata automaticamente quando si seleziona il
 # preset: None = non modificare la scelta corrente dell'utente.
 SIZE_PRESETS = [
-    ("SOLUM 672x960 (landscape)", 960, 672, "bwr"),
-    ("SOLUM 672x960 (portrait)", 672, 960, "bwr"),
-    ("GDEY0420F51 400x300 (4 colori nativi)", 400, 300, "bwry"),
-    ("Waveshare 4.2\" 400x300", 400, 300, None),
-    ("Waveshare 7.5\" 800x480", 800, 480, None),
+    ("SOLUM 672x960 native (landscape 960w x 672h)", 960, 672, "bwr"),
+    ("SOLUM 672x960 native (portrait 672w x 960h)", 672, 960, "bwr"),
+    ("GDEY0420F51 400w x 300h (4 colori nativi)", 400, 300, "bwry"),
+    ("Waveshare 4.2\" 400w x 300h", 400, 300, None),
+    ("Waveshare 7.5\" 800w x 480h", 800, 480, None),
     ("Personalizzato", None, None, None),
 ]
 
@@ -203,7 +204,7 @@ def quantize_atkinson(img_rgb, palette_rgb):
              1/8
 
     Implementazione in pure-Python sulle nested list per evitare l'overhead
-    numpy per-pixel (diventerebbe lentissimo su 960x672).
+    numpy per-pixel (diventerebbe lentissimo su 960w x 672h).
     """
     arr_np = np.array(img_rgb, dtype=np.float32)
     h, w, _ = arr_np.shape
@@ -726,7 +727,7 @@ class ConverterApp:
                 f"// Generato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 "//",
                 "// NOTA: questo file usa GxEPDImage::Descriptor. Includilo DOPO",
-                "// l'header del driver (es. \"GxEPD2_SOLUM_097c_960x672.h\") che",
+                "// l'header del driver (es. \"GxEPD2_SOLUM_097c_960x672.h\", nome identificatore originale del driver) che",
                 "// definisce il namespace GxEPDImage. Se il tipo non è presente",
                 "// puoi comunque usare gli array raw direttamente.",
                 "",

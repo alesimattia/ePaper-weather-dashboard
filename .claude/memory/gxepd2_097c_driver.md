@@ -4,7 +4,7 @@ description: Pointer al README dedicato + sintesi vincoli architetturali del dri
 type: reference
 ---
 
-Il driver custom del pannello SOLUM 9.7" (672×960, controller SSD1677, 4 colori
+Il driver custom del pannello SOLUM 9.7" (672w × 960h native portrait, controller SSD1677, 4 colori
 nativi B/W/R/Y) ha una **doc dedicata** in:
 
 [c:\epd\GxEPD2_SOLUM_097c_960x672\README.md](../../GxEPD2_SOLUM_097c_960x672/README.md)
@@ -38,7 +38,7 @@ bullet di dettaglio delle ottimizzazioni applicate.
   dentro un loop `firstPage/nextPage`. Tutto il resto (single-channel API,
   `preserveYellow`) è compositing avanzato.
 
-- **Variante 122c**: il pannello SOLUM 12.2" (960x768) ha il proprio driver
+- **Variante 122c**: il pannello SOLUM 12.2" (960w x 768h landscape post-rotation) ha il proprio driver
   `GxEPD2_SOLUM_122c_960x768` (vive nel branch `Solum_12_2`, non sul filesystem
   di main), con la stessa architettura SSD1677 e probabilmente le stesse
   ottimizzazioni. Lo sketch seleziona il driver via `Layout::Panel`

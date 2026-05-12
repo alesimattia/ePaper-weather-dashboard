@@ -15,9 +15,19 @@ senza interruzioni". Le mail sono utili ma secondarie rispetto a
 meteo/calendario.
 
 **How to apply:** nel `.ino`, il return value di `Mail::runFetch()` va
-ignorato. Non aggiungere logica del tipo `if (!Mail::runFetch()) return;`
-o `goto`. Mail::runFetch() puo' fallire silenziosamente: la cache resta
-com'era e i fetch calendario partono comunque.
+usato SOLO per decidere `Weather::markDirty()` (la UI mail va ridisegnata
+solo se la cache e' cambiata). NON propagare l'errore al flusso:
+nessun `return`/`goto` su fail. Mail::runFetch() puo' fallire silenziosamente:
+la cache resta com'era e i fetch calendario partono comunque.
+
+**UPDATE (2026-05): La UI mail ora ESISTE.** Originariamente l'utente disse
+"per ora non voglio modificare l'interfaccia grafica ma devo solo scaricare
+le mail". Successivamente ha richiesto e approvato il rendering: griglia
+2x2 (097c, 4 mail) / 2x3 (122c, 6 mail) nell'area y=CINEMA_H..BANNER_Y,
+icona busta `INDOOR_ICON_MAIL` 20x20 in alto a sinistra, font come gli
+eventi calendario, solo nero. `Mail::draw()` viene chiamato dentro
+`Weather::renderFrame()` paged loop e il `.ino` chiama `Weather::markDirty()`
+dopo un `Mail::runFetch()` riuscito.
 
 **2. Mail va eseguito SUBITO PRIMA di Outlook + Google Calendar.**
 

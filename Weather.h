@@ -16,6 +16,7 @@
 #include "Graphics.h"
 #include "Calendar.h"
 #include "Indoor.h"
+#include "Mail.h"      // Mail::draw() invocato dentro renderFrame()
 
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Il tipo concreto del
@@ -627,7 +628,7 @@ namespace Weather
     //      (cmd 0x28, out-of-band rispetto al paged loop B+R).
     //   2. drawTempRangeBarLabels(): cifre nere e cerchietti ° nel paged.
     //
-    // Il canale giallo del pannello SOLUM 672x960 è "out-of-band" rispetto
+    // Il canale giallo del pannello SOLUM 672w x 960h native portrait è "out-of-band" rispetto
     // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
     // usiamo le API del driver custom (Layout::Panel):
     //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
@@ -1269,6 +1270,13 @@ namespace Weather
          * quello impostato da Calendar::initTimezone() in setup().
          */
         Calendar::draw(calEpoch);
+        /**
+         * Mail::draw: griglia di mail (4 sul 097c, 6 sul 122c) nell'area
+         * y=CINEMA_H..BANNER_Y, x=0..SIDEBAR_X, sotto al wallpaper cinema
+         * e sopra al banner meteo. Solo nero. fillScreen(WHITE) ha gia'
+         * azzerato lo sfondo, quindi non serve un fillRect dedicato.
+         */
+        Mail::draw();
         drawBanner();
       } while (display.nextPage());
       // Nota: preserveYellow(false) viene gestito automaticamente dentro

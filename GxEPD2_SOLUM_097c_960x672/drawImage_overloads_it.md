@@ -2,7 +2,7 @@
 
 Riferimento completo dei metodi pubblici del driver custom
 [GxEPD2_SOLUM_097c_960x672.h](GxEPD2_SOLUM_097c_960x672.h) per il
-pannello SOLUM 9.7" (672×960, controller SSD1677, 4 colori nativi).
+pannello SOLUM 9.7" (672w × 960h native portrait, controller SSD1677, 4 colori nativi).
 
 ## API custom (livello applicativo)
 

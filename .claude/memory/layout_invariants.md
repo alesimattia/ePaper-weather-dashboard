@@ -4,9 +4,11 @@ description: Somme che validano le costanti pixel + relazioni implicite tra cade
 type: project
 ---
 
+Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y); costanti `*_W` = larghezza, `*_H` = altezza.
+
 Numeri non immediatamente visibili che vincolano le costanti definite in `Layout_097c.h` / `Layout_122c.h` e usate da `Weather.h` / `Calendar.h` / `.ino` via `Layout::*`:
 
-**Banner orizzontale (uguale in entrambe le varianti, larghezza display 960):**
+**Banner orizzontale (uguale in entrambe le varianti, larghezza display 960w):**
 - `INDOOR_RR(5,154) + gap10 + WEATHER_RR(169,306) + gap10 + FORECAST_RR(485,470) + inset5 = 960`
 - Verifica: `5 + 154 + 10 + 306 + 10 + 470 + 5 = 960` ✓
 - Inset laterali 5 px, gap interni 10 px.

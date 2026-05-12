@@ -1,6 +1,8 @@
 # GxEPD2_SOLUM_097c_960x672 — Driver custom
 
-Driver header-only per pannello e-paper **SOLUM ESL 9.7"** (672×960 px,
+Driver header-only per pannello e-paper **SOLUM ESL 9.7"** (672w × 960h px
+native portrait → `setRotation(0)` → 960w × 672h px landscape,
+convenzione `NwxMh` = N px larghezza × M px altezza;
 4 colori nativi: bianco/nero/rosso/giallo, controller SSD1677) su
 **ESP32**. Estende [GxEPD2](https://github.com/ZinggJM/GxEPD2) di
 Jean-Marc Zingg, fornendo:

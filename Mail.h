@@ -2,6 +2,7 @@
 #define MAIL_H
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -10,6 +11,8 @@
 
 #include "Env.h"
 #include "Calendar.h" // riusa Calendar::detail::refreshGoogleToken / cachedGoogleToken
+                      // e include transitivamente Layout.h + display globale
+#include "icons.h"    // INDOOR_ICON_MAIL (busta 20x20)
 
 // ===========================================================================
 // Configurazione (override-abili dal .ino prima di #include "Mail.h")
@@ -23,9 +26,15 @@
   #define MAIL_GOOGLE_FETCH_MIN 15
 #endif
 
-/** Numero massimo di mail da scaricare/cachare. */
+/**
+ * Numero massimo di mail da scaricare/cachare. Il default e' allineato al
+ * layout grafico: Layout::MAIL_MAX (4 sul 097c, 6 sul 122c) garantisce che
+ * la cache abbia esattamente tante mail quante celle visualizzabili. Override
+ * dal .ino con #define MAIL_MAX_MESSAGES N solo se si vuole disaccoppiare
+ * cache size e numero di celle (es. cache piu' grande della UI per scrolling).
+ */
 #ifndef MAIL_MAX_MESSAGES
-  #define MAIL_MAX_MESSAGES 5
+  #define MAIL_MAX_MESSAGES Layout::MAIL_MAX
 #endif
 
 /**
@@ -252,8 +261,27 @@ namespace Mail
         if (!name[0] || !value[0]) continue;
         if (strcasecmp(name, "From") == 0)
         {
-          strncpy(out.sender, value, MAIL_SENDER_LEN - 1);
-          out.sender[MAIL_SENDER_LEN - 1] = '\0';
+          /**
+           * Estrae SOLO l'indirizzo email dal valore "Nome Cognome <user@x>"
+           * (richiesta utente: niente nome, solo email). Se il valore non
+           * contiene < >, si assume sia gia' un indirizzo nudo e si copia
+           * tutto. Robust su quote / spazi: cerca l'ultima coppia '<'..'>'
+           * per gestire correttamente nomi che contengono '<' letterali.
+           */
+          const char *lt = strrchr(value, '<');
+          const char *gt = strrchr(value, '>');
+          if (lt && gt && gt > lt + 1)
+          {
+            size_t n = (size_t)(gt - lt - 1);
+            if (n >= MAIL_SENDER_LEN) n = MAIL_SENDER_LEN - 1;
+            memcpy(out.sender, lt + 1, n);
+            out.sender[n] = '\0';
+          }
+          else
+          {
+            strncpy(out.sender, value, MAIL_SENDER_LEN - 1);
+            out.sender[MAIL_SENDER_LEN - 1] = '\0';
+          }
         }
         else if (strcasecmp(name, "Subject") == 0)
         {
@@ -461,6 +489,179 @@ namespace Mail
    */
   inline const MailMessage &at(size_t i) { return detail::messages[i]; }
 
+  // ==========================================================================
+  // Rendering UI
+  // ==========================================================================
+
+  namespace detail
+  {
+    /**
+     * Disegna l'orario o la data della mail nella colonna destra della cella.
+     * Mail ricevuta oggi -> "HH:MM"; altrimenti -> "dd/MM". Stessa convenzione
+     * del calendario per coerenza visiva.
+     */
+    inline void formatMailWhen(time_t whenUtc, const struct tm& today, char* buf, size_t bufLen)
+    {
+      if (whenUtc <= 0)
+      {
+        snprintf(buf, bufLen, "--:--");
+        return;
+      }
+      struct tm tmL;
+      localtime_r(&whenUtc, &tmL);
+      bool isToday = (tmL.tm_year == today.tm_year) &&
+                     (tmL.tm_yday == today.tm_yday);
+      if (isToday)
+        snprintf(buf, bufLen, "%02d:%02d", tmL.tm_hour, tmL.tm_min);
+      else
+        snprintf(buf, bufLen, "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
+    }
+
+    /**
+     * Disegna una singola cella mail.
+     *
+     * Layout per cella (speculare alle entry calendario, ma con sender al
+     * posto del title e data sotto l'orario):
+     *   - sx alto: indirizzo email mittente (FONT_BODY)
+     *   - sx alto, accanto al mittente: icona busta 20x20 SOLO se m.unread
+     *     (badge "non letto"; la busta e' compressa a 14h visibili per
+     *     allinearsi otticamente al cap-height del FONT_BODY)
+     *   - sx subito sotto: oggetto (FONT_SMALL, ravvicinato al mittente)
+     *   - dx alto: orario "HH:MM" (FONT_BODY)
+     *   - dx subito sotto: data "dd/MM" (FONT_BODY)
+     *
+     * Le righe sono distanziate da MAIL_ROW_GAP px verticali (cella
+     * successiva parte a cellY + ROW_H + ROW_GAP), che corrisponde a
+     * MAIL_ROW_H - 36 px di "vuoto" in basso ad ogni cella: questo crea
+     * la separazione visiva richiesta fra le entry.
+     */
+    inline void drawMailCell(int idx, const MailMessage& m, const struct tm& today)
+    {
+      /**
+       * Ordinamento column-major: la cache e' ordinata cronologicamente
+       * (idx 0 = piu' recente). Visualmente la colonna sinistra mostra i
+       * primi MAIL_ROWS_PER_COL elementi top-to-bottom, la colonna destra
+       * i successivi: cosi' la mail piu' vecchia visibile (ultima in colonna
+       * destra) e' immediatamente successiva all'ultima della colonna
+       * sinistra, mantenendo la sequenza cronologica nella lettura.
+       */
+      const int16_t col = idx / Layout::MAIL_ROWS_PER_COL;
+      const int16_t row = idx % Layout::MAIL_ROWS_PER_COL;
+      const int16_t cellX = Layout::MAIL_X + col * Layout::MAIL_COL_W;
+      const int16_t cellY = Layout::MAIL_BODY_Y
+                          + row * (Layout::MAIL_ROW_H + Layout::MAIL_ROW_GAP);
+
+      display.setTextColor(GxEPD_BLACK);
+
+      // Baseline coerenti con il calendario (time/date a +19 e +ROW_H-7).
+      const int16_t topBaseline = cellY + 19;
+      const int16_t botBaseline = cellY + 36;
+
+      if (!m.valid)
+      {
+        display.setFont(Layout::FONT_BODY);
+        display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, topBaseline);
+        display.print("--");
+        return;
+      }
+
+      // ----- Colonna destra: time sopra, date sotto -----
+      char timeBuf[8], dateBuf[8];
+      // Orario sempre HH:MM; data sempre dd/MM (richiesta utente).
+      {
+        struct tm tmL{};
+        if (m.receivedUtc > 0) localtime_r(&m.receivedUtc, &tmL);
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
+        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
+      }
+      (void)today; // riservato per future logiche "oggi vs altri giorni"
+
+      display.setFont(Layout::FONT_BODY);
+      int16_t x1, y1; uint16_t tw, th, dw, dh;
+      display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &tw, &th);
+      display.getTextBounds(dateBuf, 0, 0, &x1, &y1, &dw, &dh);
+      const int16_t rightColW = (int16_t)(tw > dw ? tw : dw);
+      const int16_t rightX    = cellX + Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_R;
+
+      Calendar::detail::drawRightAligned(timeBuf, rightX, topBaseline, GxEPD_BLACK);
+      Calendar::detail::drawRightAligned(dateBuf, rightX, botBaseline, GxEPD_BLACK);
+
+      // ----- Colonna sinistra: sender (+ badge unread) alto, subject sotto -----
+      const int16_t leftAreaW = Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_L
+                              - Layout::MAIL_CELL_PAD_R - rightColW - 8;
+      // Se unread, riserviamo spazio per icona 20w + 4 gap accanto al sender.
+      const int16_t iconReserve = m.unread ? (Layout::INDOOR_ICON_SIZE + 4) : 0;
+      const int16_t senderMaxW  = leftAreaW - iconReserve;
+
+      char senderBuf[MAIL_SENDER_LEN];
+      strncpy(senderBuf, m.sender, sizeof(senderBuf) - 1);
+      senderBuf[sizeof(senderBuf) - 1] = 0;
+      display.setFont(Layout::FONT_BODY);
+      Calendar::detail::truncateToWidth(senderBuf, senderMaxW);
+
+      display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, topBaseline);
+      display.print(senderBuf);
+
+      if (m.unread)
+      {
+        // Misura larghezza reale del sender troncato per posizionare l'icona
+        // subito a destra (con 4 px di gap). Icona compressa (14h visibili
+        // centrate nel frame 20x20): top a cellY+5 fa cadere il rettangolo
+        // della busta (rows 3..16) attorno a cellY+8..cellY+21, allineato
+        // otticamente al cap-height del sender.
+        uint16_t sw, sh;
+        display.getTextBounds(senderBuf, 0, 0, &x1, &y1, &sw, &sh);
+        const int16_t iconX = cellX + Layout::MAIL_CELL_PAD_L + (int16_t)sw + 4;
+        const int16_t iconY = cellY + 5;
+        display.drawBitmap(iconX, iconY, INDOOR_ICON_MAIL,
+                           Layout::INDOOR_ICON_SIZE, Layout::INDOOR_ICON_SIZE,
+                           GxEPD_BLACK);
+      }
+
+      // Oggetto (FONT_SMALL, ravvicinato al mittente). Estende fino al bordo
+      // sinistro della colonna time/date per massimizzare lo spazio testo.
+      char subjectBuf[MAIL_SUBJECT_LEN];
+      strncpy(subjectBuf, m.subject, sizeof(subjectBuf) - 1);
+      subjectBuf[sizeof(subjectBuf) - 1] = 0;
+      display.setFont(Layout::FONT_SMALL);
+      const int16_t subjMaxW = Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_L
+                             - Layout::MAIL_CELL_PAD_R - rightColW - 8;
+      Calendar::detail::truncateToWidth(subjectBuf, subjMaxW);
+      display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, botBaseline);
+      display.print(subjectBuf);
+    }
+  } // namespace detail
+
+  /**
+   * Disegna la griglia mail: MAIL_COLS x MAIL_ROWS_PER_COL di celle, lettura
+   * left-to-right top-to-bottom. NO icona header globale: l'icona busta
+   * appare inline accanto al mittente solo per le mail UNREAD (badge).
+   *
+   * Va chiamata DENTRO il paged loop di Weather::renderFrame() (tra
+   * Calendar::draw e drawBanner), perche' GxEPD2 ridisegna ogni pagina
+   * separatamente. L'area (x=0..MAIL_W, y=MAIL_Y..MAIL_Y+MAIL_H) non
+   * intercetta il wallpaper (che si ferma a CINEMA_H = MAIL_Y), quindi
+   * non serve fillRect bianco preventivo: lo fa gia' fillScreen.
+   *
+   * Solo colore nero (richiesta utente). L'ordinamento delle mail riflette
+   * quello in cache (insertion order del fetch Gmail: piu' recente prima).
+   */
+  inline void draw()
+  {
+    // Riferimento "oggi" locale (riservato per future logiche di formato data).
+    struct tm today{};
+    time_t nowUtc = time(nullptr);
+    if (nowUtc > 1000000000) localtime_r(&nowUtc, &today);
+
+    for (size_t i = 0; i < MAX_MESSAGES; ++i)
+    {
+      // Cella vuota: usa MailMessage{} con valid=false. Mostra "--".
+      const MailMessage empty{};
+      const MailMessage& m = (i < detail::messagesCount) ? detail::messages[i] : empty;
+      detail::drawMailCell((int)i, m, today);
+    }
+  }
+
   /**
    * true al primo fetch oppure se sono passati MAIL_GOOGLE_FETCH_MIN minuti
    * dall'ultimo. Stesso pattern di Calendar::Google::pendingFetch().
@@ -475,10 +676,21 @@ namespace Mail
 
   /**
    * Scarica le ultime MAIL_MAX_MESSAGES mail (1 GET list + 1 POST batch).
-   * Best-effort: WiFi assente / inbox vuota / errori sub-response NON
-   * propagano errori al chiamante; il flusso software prosegue normalmente.
-   * Wall-clock budget MAIL_FETCH_BUDGET_MS: oltre la soglia interrompe la
-   * fase metadata.
+   *
+   * GARANZIE DI RESILIENZA (richieste utente):
+   *   - Nessun fallimento di Mail propaga errori al chiamante: WiFi caduto,
+   *     server Gmail unreachable, token revocato, HTTP 4xx/5xx, JSON malformato,
+   *     budget scaduto, OOM su String/JSON -> ritorno semplicemente false e
+   *     il loop() del .ino prosegue con i fetch calendario / refresh display.
+   *   - La cache esistente NON viene corrotta da un fetch fallito: viene
+   *     riscritta solo se l'intero flusso (refresh+list+batch) ha successo.
+   *     Su transitorio (es. WiFi che cade tra list e batch) la cache
+   *     precedente resta intatta.
+   *   - Mai chiamate ricorsive, mai blocchi senza timeout: HTTPClient ha il
+   *     suo timeout interno e MAIL_FETCH_BUDGET_MS limita il wall-clock end-to-end.
+   *   - Backoff esponenziale soft: dopo MAX_CALENDAR_ATTEMPTS fallimenti
+   *     consecutivi il prossimo retry e' rimandato di MAIL_GOOGLE_FETCH_MIN
+   *     minuti, evitando hammering del token endpoint nel loop OTA (10ms).
    *
    * Richiamato da loop() del .ino subito prima dei fetch calendario.
    * Ritorna true se la cache e' stata aggiornata con successo (anche con 0 mail).
@@ -488,6 +700,18 @@ namespace Mail
     using namespace detail;
 
     uint32_t t0 = millis();
+
+    /**
+     * Guard rapido: se il WiFi e' caduto dopo che il .ino ha chiamato
+     * runFetch(), evitiamo di partire del tutto (HTTPClient fallirebbe lo
+     * stesso, ma con piu' overhead). Non incrementiamo failedAttempts:
+     * non e' un guasto del modulo Mail, e' un guasto upstream.
+     */
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      Serial.println(F("[Mail] WiFi non connesso, skip fetch"));
+      return false;
+    }
 
     if (!refreshToken())
     {
@@ -510,7 +734,16 @@ namespace Mail
     }
     if ((millis() - t0) >= MAIL_FETCH_BUDGET_MS)
     {
+      // Budget scaduto: applichiamo lo stesso backoff degli errori di rete
+      // altrimenti il loop OTA (10ms) rifa subito il refresh ad ogni iter.
       Serial.println(F("[Mail] budget esaurito sul refresh, skip"));
+      failedAttempts++;
+      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
+      {
+        failedAttempts = 0;
+        lastFetchMs = millis();
+        firstFetch = false;
+      }
       return false;
     }
 
@@ -518,6 +751,8 @@ namespace Mail
     size_t n = 0;
     if (!fetchMessageIds(ids, n))
     {
+      // Cache NON toccata: lo stato precedente viene preservato finche'
+      // un fetch successivo non ha successo.
       failedAttempts++;
       if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
       {
@@ -530,7 +765,7 @@ namespace Mail
 
     if (n == 0)
     {
-      // Inbox vuota: cache azzerata, NON e' un errore.
+      // Inbox vuota: cache azzerata, NON e' un errore. Confermato dal server.
       for (size_t i = 0; i < MAX_MESSAGES; ++i) messages[i].valid = false;
       messagesCount = 0;
       lastFetchMs   = millis();
@@ -542,17 +777,9 @@ namespace Mail
 
     if ((millis() - t0) >= MAIL_FETCH_BUDGET_MS)
     {
+      // Budget scaduto dopo la list: stesso backoff per evitare re-list
+      // continuo nel loop OTA (10ms).
       Serial.println(F("[Mail] budget esaurito prima del batch, skip"));
-      return false;
-    }
-
-    // Azzera la cache prima del batch: se il batch fallisce, cache rimane vuota
-    // (preferibile a mostrare dati stale di un fetch precedente).
-    for (size_t i = 0; i < MAX_MESSAGES; ++i) messages[i].valid = false;
-    messagesCount = 0;
-
-    if (!fetchMessagesBatch(ids, n, messages, messagesCount))
-    {
       failedAttempts++;
       if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
       {
@@ -563,6 +790,57 @@ namespace Mail
       return false;
     }
 
+    /**
+     * Buffer temporaneo: il batch scrive qui, e SOLO se ha successo
+     * sovrascriviamo la cache "live". Su transitorio (WiFi cade tra list
+     * e batch, batch HTTP 5xx, parse error) la cache precedente resta
+     * intatta e la futura UI continua a mostrare le ultime mail valide.
+     * Costo RAM: 5 * sizeof(MailMessage) ~ 600 byte sullo stack.
+     */
+    MailMessage tmp[MAX_MESSAGES] = {};
+    size_t tmpCount = 0;
+    if (!fetchMessagesBatch(ids, n, tmp, tmpCount))
+    {
+      // Batch fallito: cache esistente NON sovrascritta, resta valido
+      // l'ultimo snapshot. failedAttempts++ con backoff.
+      failedAttempts++;
+      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
+      {
+        failedAttempts = 0;
+        lastFetchMs = millis();
+        firstFetch = false;
+      }
+      return false;
+    }
+
+    /**
+     * Sanity check: la list ha restituito N>0 ma il batch non ha prodotto
+     * nessun MailMessage parsato. Significa che TUTTE le sub-response
+     * sono fallite il parse (es. API change Gmail, JSON malformato).
+     * Trattiamo come transitorio: preserviamo la cache esistente invece
+     * di azzerarla. Senza questa guardia, una rotta protocollare lato
+     * server cancellerebbe le mail valide gia' in cache.
+     */
+    if (tmpCount == 0)
+    {
+      Serial.println(F("[Mail] batch: 0 parsati su lista non vuota, cache preservata"));
+      failedAttempts++;
+      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
+      {
+        failedAttempts = 0;
+        lastFetchMs = millis();
+        firstFetch = false;
+      }
+      return false;
+    }
+
+    /**
+     * Commit atomico: copiamo il buffer temporaneo nella cache live solo
+     * adesso, quando il batch ha prodotto almeno una mail parsata.
+     */
+    for (size_t i = 0; i < MAX_MESSAGES; ++i)
+      messages[i] = (i < tmpCount) ? tmp[i] : MailMessage{};
+    messagesCount  = tmpCount;
     lastFetchMs    = millis();
     firstFetch     = false;
     failedAttempts = 0;

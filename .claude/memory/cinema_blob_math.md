@@ -6,23 +6,28 @@ type: reference
 
 Calcoli derivati. Le costanti `CINEMA_*` vivono nel namespace `Layout` (`Layout_097c.h` o `Layout_122c.h`); il `.ino` le riferisce come `Layout::CINEMA_*`.
 
-**097c (620×440 BWRY):**
-- `stride = ceil(620/8) = 78` byte/riga (`Layout::CINEMA_STRIDE`).
-- Dimensione singolo piano = `78 * 440 = 34320` byte (`Layout::CINEMA_PLANE_SZ`).
-- Total body = `3 piani * 34320 = 102960` byte (`Layout::CINEMA_TOTAL_SZ`).
-- `Content-Length` atteso = 102960 esatti; ogni mismatch → fallback PROGMEM.
+Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y).
 
-**122c (620×536 BWRY):**
+**097c (620w × 300h BWRY):**
+- `stride = ceil(620/8) = 78` byte/riga (`Layout::CINEMA_STRIDE`).
+- Dimensione singolo piano = `78 * 300 = 23400` byte (`Layout::CINEMA_PLANE_SZ`).
+- Total body = `3 piani * 23400 = 70200` byte (`Layout::CINEMA_TOTAL_SZ`).
+- `Content-Length` atteso = 70200 esatti; ogni mismatch → fallback PROGMEM.
+- Fascia bianca y=300..460 (160h px) riservata alla UI mail (`Mail.h`).
+
+**122c (620w × 335h BWRY):**
 - `stride = 78` (invariato, stessa width 620).
-- `Layout::CINEMA_PLANE_SZ = 78 * 536 = 41808` byte.
-- `Layout::CINEMA_TOTAL_SZ = 3 * 41808 = 125424` byte.
-- `Content-Length` atteso = 125424.
+- `Layout::CINEMA_PLANE_SZ = 78 * 335 = 26130` byte.
+- `Layout::CINEMA_TOTAL_SZ = 3 * 26130 = 78390` byte.
+- `Content-Length` atteso = 78390.
+- Fascia bianca y=335..556 (221h px) riservata alla UI mail.
 
 **Memoria ESP32:**
-- 097c: 3 buffer da 34320 ≈ 100 KB.
-- 122c: 3 buffer da 41808 ≈ 123 KB.
+- 097c: 3 buffer da 23400 ≈ 69 KB.
+- 122c: 3 buffer da 26130 ≈ 77 KB.
+- La riduzione di CINEMA_H (440→300 su 097c, 536→335 su 122c) ha liberato ~30-50 KB rispetto al layout pre-UI-mail.
 - Il modello Waveshare driver board ha tipicamente 4 MB PSRAM (modulo WROVER): allocazione comoda per entrambe le varianti.
-- Senza PSRAM (modulo WROOM bare): `ESP.getFreeHeap()` ≈ 200 KB libere. 097c (100 KB) passa al limite, 122c (123 KB) e' rischioso e potrebbe richiedere PSRAM. `allocPlaneBuffer()` preferisce PSRAM e fa fallback heap-interno.
+- Senza PSRAM (modulo WROOM bare): `ESP.getFreeHeap()` ≈ 200 KB libere; ora entrambe le varianti rientrano comodamente in heap interno. `allocPlaneBuffer()` preferisce PSRAM e fa fallback heap-interno.
 
 **Encoding bit (compatibilita' GxEPD2):**
 - `pack_mask_msb` lato webapp riceve `mask = (indices != color_idx)` → bit=1 dove pixel NON è di quel colore.

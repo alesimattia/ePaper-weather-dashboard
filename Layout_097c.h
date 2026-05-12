@@ -3,7 +3,14 @@
 
 /**
  * Layout per pannello SOLUM ESL 9.7" (controller SSD1677, 4 colori nativi
- * BWRY, native 672x960 -> setRotation(0) -> landscape 960x672 visibile).
+ * BWRY, native 672w x 960h -> setRotation(0) -> landscape 960w x 672h visibile).
+ *
+ * Convenzione dimensioni in questo header e nei commenti dei moduli:
+ *  - NwxMh (oppure Nw x Mh) = N px in larghezza (asse X) e M px in altezza (Y)
+ *  - le costanti che terminano in _W rappresentano una larghezza (X)
+ *  - le costanti che terminano in _H rappresentano un'altezza (Y)
+ *  - le coordinate sono sempre (x, y) con origine in alto a sinistra dopo
+ *    setRotation(ROTATION).
  *
  * Centralizza tutti i parametri layout del display:
  *  - tipo pannello (Layout::Panel) e pin del driver
@@ -13,7 +20,7 @@
  *  - selezione font usati dai moduli (Layout::FONT_*)
  *
  * Lo sketch .ino seleziona quale Layout includere via Layout.h. Per
- * compilare con un altro pannello SOLUM 12.2" (960x768) si commenta
+ * compilare con un altro pannello SOLUM 12.2" (960w x 768h) si commenta
  * DISPLAY_VARIANT_097C nello sketch e si scommenta DISPLAY_VARIANT_122C:
  * il dispatcher Layout.h ridirige all'header Layout_122c.h.
  */
@@ -80,18 +87,51 @@ namespace Layout
   // Wallpaper cinema (a sinistra, sotto la sidebar). Una sorgente piu'
   // alta di CINEMA_H invade la fascia bianca CINEMA_H..BANNER_Y; una piu'
   // larga di CINEMA_W entra nella sidebar.
+  //
+  // CINEMA_H ridotto da 440 a 300 per liberare la fascia y=300..460 (160h
+  // px) destinata alla futura UI mail. Banner ancorato al fondo invariato
+  // (BANNER_Y=460). Risparmio RAM: ~33 KB sui 3 piani (102960 -> 70200 byte).
   // -------------------------------------------------------------------------
   inline constexpr int16_t  CINEMA_W         = 620;
-  inline constexpr int16_t  CINEMA_H         = 440;
+  inline constexpr int16_t  CINEMA_H         = 300;
   inline constexpr uint16_t CINEMA_STRIDE    = (CINEMA_W + 7) / 8;             // 78
-  inline constexpr uint32_t CINEMA_PLANE_SZ  = (uint32_t)CINEMA_STRIDE * CINEMA_H;  // 34320
-  inline constexpr uint32_t CINEMA_TOTAL_SZ  = CINEMA_PLANE_SZ * 3;            // 102960
+  inline constexpr uint32_t CINEMA_PLANE_SZ  = (uint32_t)CINEMA_STRIDE * CINEMA_H;  // 23400
+  inline constexpr uint32_t CINEMA_TOTAL_SZ  = CINEMA_PLANE_SZ * 3;            // 70200
 
   /** URL del server cinema. width/height/colors devono corrispondere a
    *  CINEMA_W/H/BWRY: il server pre-genera i 3 piani 1bpp packed e l'ESP32
    *  fa solo readBytes nei buffer. */
   inline constexpr const char* CINEMA_URL =
-      "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd";
+      "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwry&dither=floyd";
+
+  // -------------------------------------------------------------------------
+  // Area mail (sotto al wallpaper cinema, sopra al banner meteo).
+  // Layout 097c: griglia 2 colonne x 2 righe = 4 mail visibili, lettura
+  // left-to-right top-to-bottom. NO header globale: l'icona busta appare
+  // inline accanto al mittente solo per le mail UNREAD (badge).
+  // Spaziatura: MAIL_TOP_PAD piccolo per recuperare verticale, MAIL_ROW_GAP
+  // generoso fra le righe (entry visivamente separate), MAIL_BOT_PAD ampio
+  // per staccare l'ultima riga dal banner Indoor sotto.
+  // Solo nero, font come gli eventi calendario.
+  // -------------------------------------------------------------------------
+  inline constexpr int16_t MAIL_X            = 0;
+  inline constexpr int16_t MAIL_Y            = CINEMA_H;                        // 300
+  inline constexpr int16_t MAIL_W            = SIDEBAR_X;                       // 620
+  inline constexpr int16_t MAIL_H            = BANNER_Y - CINEMA_H;             // 160
+  inline constexpr int16_t MAIL_COLS         = 2;
+  inline constexpr int16_t MAIL_ROWS_PER_COL = 2;
+  inline constexpr int16_t MAIL_MAX          = MAIL_COLS * MAIL_ROWS_PER_COL;   // 4
+  inline constexpr int16_t MAIL_COL_W        = MAIL_W / MAIL_COLS;              // 310
+  /** Spaziatura verticale: 4 + 63 + 12 + 63 + 18 = 160 */
+  inline constexpr int16_t MAIL_TOP_PAD      = 4;                               // sopra prima riga
+  inline constexpr int16_t MAIL_BOT_PAD      = 18;                              // sotto ultima riga
+  inline constexpr int16_t MAIL_ROW_GAP      = 12;                              // fra righe
+  inline constexpr int16_t MAIL_ROW_H        =
+      (MAIL_H - MAIL_TOP_PAD - MAIL_BOT_PAD - MAIL_ROW_GAP * (MAIL_ROWS_PER_COL - 1))
+      / MAIL_ROWS_PER_COL;                                                      // 63
+  inline constexpr int16_t MAIL_BODY_Y       = MAIL_Y + MAIL_TOP_PAD;           // 304
+  inline constexpr int16_t MAIL_CELL_PAD_L   = 6;
+  inline constexpr int16_t MAIL_CELL_PAD_R   = 10;
 
   // -------------------------------------------------------------------------
   // Banner meteo (3 fieldset in basso). Layout fisso 5+154+10+306+10+470+5.

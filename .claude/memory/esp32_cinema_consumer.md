@@ -4,7 +4,9 @@ description: Logica del firmware ePaper-weather-dashboard.ino che scarica e most
 type: project
 ---
 
-Lo sketch `c:\epd\ePaper-weather-dashboard.ino` contiene `fetchCinemaImage()` che scarica i 3 piani BWRY da `Layout::CINEMA_URL` (`cinema-epd.onrender.com/cinema/arduino?width=620&height=440&colors=bwry&dither=floyd` sul 097c, `height=536` sul 122c). Allocazione preferenziale in PSRAM (`psramFound() + heap_caps_malloc(MALLOC_CAP_SPIRAM)`), fallback heap interno con `malloc()`. I 3 buffer dinamici `g_cinema_black/red/yellow` (097c: 78×440=34320 byte ciascuno, 102960 totali; 122c: 78×536=41808 ciascuno, 125424 totali) rimpiazzano il fallback PROGMEM `img_apple_bwry_desc` solo dopo download riuscito.
+Convenzione dimensioni in questo file: `width=N&height=M` nell'URL = N px larghezza (X) × M px altezza (Y); `NwxMh` stessa convenzione.
+
+Lo sketch `a:\epd\ePaper-weather-dashboard.ino` contiene `fetchCinemaImage()` che scarica i 3 piani BWRY da `Layout::CINEMA_URL` (`cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwry&dither=floyd` sul 097c, `height=335` sul 122c → cioè 620w × 300h sul 097c e 620w × 335h sul 122c). Le altezze sono state ridotte da 440/536 per liberare la fascia y=CINEMA_H..BANNER_Y (160h px sul 097c, 221h px sul 122c) destinata alla UI mail di `Mail.h`. Allocazione preferenziale in PSRAM (`psramFound() + heap_caps_malloc(MALLOC_CAP_SPIRAM)`), fallback heap interno con `malloc()`. I 3 buffer dinamici `g_cinema_black/red/yellow` (097c: stride 78 × altezza 300 = 23400 byte ciascuno, 70200 totali; 122c: 78 × 335 = 26130 ciascuno, 78390 totali) rimpiazzano il fallback PROGMEM `img_apple_bwry_desc` solo dopo download riuscito.
 
 Il puntatore `g_cinema_desc` viene swappato a `&g_cinema_dynamic_desc` solo all'ultimo step (post readBytes OK), garantendo che durante un fetch in corso `drawTestBackground()` continui a mostrare il fallback PROGMEM invece di buffer parziali.
 
