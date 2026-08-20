@@ -7,7 +7,7 @@
 - [Design arduino binary header-less](arduino_binary_format.md) — il body di /cinema/arduino è raw packed, zero metadati
 - [Ordering flag prima del fetch](fetch_flag_ordering.md) — vincolo retry-storm durante OTA loop=10ms
 - [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 è dereferenza, descriptor unico per Flash/RAM/PSRAM
-- [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — pointer al README dedicato + vincoli (pittfall GxEPD_YELLOW, page-tracking, ottimizzazioni applicate)
+- [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — submodule GxEPD2_SOLUM_ESL (libreria Arduino GPL-3.0, dipende da GxEPD2) + vincoli e costi noti
 - [Separazione layout/logica](layout_separation.md) — Layout.h dispatcher + Layout_097c.h / Layout_122c.h: come supportare 2 display con stessa logica
 - [Modulo Mail Gmail](mail_module.md) — Mail.h riusa OAuth Google del Calendar (token condiviso), batch endpoint, no UI, best-effort
 - [Mail.h design preferences](feedback_mail_design.md) — regole utente: best-effort, mail-prima-dei-calendari, subject 60 char, fetch-min separato, zero nuovi secret

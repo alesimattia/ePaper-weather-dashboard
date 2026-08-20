@@ -25,7 +25,7 @@ Il driver custom (header-only) per il SOLUM 9.7" aggiunge:
   B/N (formato [image2cpp](https://javl.github.io/image2cpp/));
 - **3 API siblings uniformi** `writeImageBlack` / `writeImageRed` /
   `writeImageYellow` per scrittura single-channel, usate nel flusso
-  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_SOLUM_097c_960x672/README.md#3-perché-il-yellow-è-out-of-band-nel-flusso-paged));
+  paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_SOLUM_ESL/README.md#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged));
 - un **sistema di descrittori universale** (`GxEPDImage::Descriptor`) che
   porta con sé formato e dimensioni dell'immagine (BW / BWR / BWRY);
 - **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
@@ -74,7 +74,7 @@ ogni modifica dei parametri.
 - [Selezione del display](#selezione-del-display)
   - [Font utilizzati](#font-utilizzati)
 - [Configurazione (Env.h)](#configurazione-envh)
-- [Driver custom GxEPD2_SOLUM_097c_960x672](#driver-custom-gxepd2_solum_097c_960x672) (→ [doc dedicata](GxEPD2_SOLUM_097c_960x672/README.md))
+- [Driver custom GxEPD2_SOLUM_097c_960x672](#driver-custom-gxepd2_solum_097c_960x672) (→ [doc dedicata](GxEPD2_SOLUM_ESL/README.md))
 - [Moduli applicativi](#moduli-applicativi)
 - [Sketch principale](#sketch-principale)
 - [Flussi di boot e timeout](#flussi-di-boot-e-timeout)
@@ -91,7 +91,7 @@ ogni modifica dei parametri.
 
 | Pannello | Risoluzione (landscape) | Colori | Controller | Note |
 |----------|------------|--------|------------|------|
-| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso (`GxEPD2_SOLUM_097c_960x672/`). 4° colore via comando `0x28` confermato su HW. Selezione: `#define DISPLAY_VARIANT_097C` |
+| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). 4° colore via comando `0x28` confermato su HW. Selezione: `#define DISPLAY_VARIANT_097C` |
 | **SOLUM 12.2"** | 960w × 768h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom (`GxEPD2_SOLUM_122c_960x768/`) richiesto, vive nel branch `Solum_12_2`. Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
 | Good Display **GDEY0420F51** | 400w × 300h | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400w × 300h (no firmware completo) |
 
@@ -107,8 +107,11 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 
 ```
 .
-├── GxEPD2_SOLUM_097c_960x672/      # Driver SOLUM 9.7" (header-only, 672w x 960h BWRY native portrait)
-│   ├── GxEPD2_SOLUM_097c_960x672.h     # Classe + namespace GxEPDImage
+├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino del driver SOLUM 9.7" (672w x 960h BWRY native portrait)
+│   ├── src/                            # Header-only
+│   │   └── GxEPD2_SOLUM_097c_960x672.h # Classe + namespace GxEPDImage
+│   ├── library.properties              # name=GxEPD2_SOLUM_ESL, depends=GxEPD2 (>=1.6.9)
+│   ├── LICENSE                         # GPL-3.0, ereditata da GxEPD2
 │   ├── README.md                       # Documentazione dedicata del driver
 │   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
 │   └── drawImage_overloads_it.md       # Idem in italiano
@@ -253,7 +256,7 @@ Note pratiche:
 ### Aggiungere un terzo display
 
 1. Scrivere il driver custom (cartella + `.h` header-only sullo schema
-   di [`GxEPD2_SOLUM_097c_960x672/`](GxEPD2_SOLUM_097c_960x672/)).
+   di [`GxEPD2_SOLUM_ESL/`](GxEPD2_SOLUM_ESL/)).
 2. Creare `Layout_<nome>.h` con gli stessi simboli del namespace
    `Layout` (Panel, pin, font, coord, cinema).
 3. Aggiungere il ramo `#elif defined(DISPLAY_VARIANT_<NOME>)` in
@@ -362,7 +365,9 @@ sul `drawPixel(GxEPD_YELLOW)`, ottimizzazioni rispetto al driver stock
 (tabella 14 righe + dettaglio bullet), tracking della page corrente
 parallelo a `_current_page` privato del template, in:
 
-> 📘 **[GxEPD2_SOLUM_097c_960x672/README.md](GxEPD2_SOLUM_097c_960x672/README.md)** — documentazione dedicata del driver custom.
+> 📘 **[GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md)** — documentazione dedicata del driver custom,
+> che vive nel repo [GxEPD2_SOLUM_ESL](https://github.com/alesimattia/GxEPD2_SOLUM_ESL) come libreria Arduino
+> a sè: dopo il clone serve `git submodule update --init --recursive`.
 
 ---
 

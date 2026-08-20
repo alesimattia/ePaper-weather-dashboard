@@ -29,7 +29,8 @@
 #include <stdint.h>
 #include <Adafruit_GFX.h>
 
-#include "GxEPD2_SOLUM_097c_960x672/GxEPD2_SOLUM_097c_960x672.h"
+// Driver del pannello: submodule GxEPD2_SOLUM_ESL, libreria Arduino a sè
+#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_097c_960x672.h"
 
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>

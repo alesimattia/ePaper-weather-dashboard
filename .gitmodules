@@ -1,3 +1,7 @@
 [submodule "webapp"]
 	path = webapp
 	url = https://github.com/alesimattia/cinema-programmation-feed
+[submodule "GxEPD2_SOLUM_ESL"]
+	path = GxEPD2_SOLUM_ESL
+	url = https://github.com/alesimattia/GxEPD2_SOLUM_ESL.git
+	branch = main
