@@ -639,14 +639,16 @@ namespace Weather
     /** Dimensioni del buffer bitmap giallo della barra: vedi Layout::TRB_*. */
     inline constexpr size_t  TRB_BUF_BYTES = (size_t)Layout::TRB_BYTES_PER_ROW * Layout::TRB_H;
 
-    /** Buffer 1bpp MSB-first per il canale 0x28 (bit=1 -> pixel giallo). */
+    /** Buffer 1bpp MSB-first per il canale 0x28. Convenzione delle API
+     *  writeImage* del driver: bit=0 = pixel giallo, bit=1 = non giallo. */
     inline uint8_t trbYellowBuf[TRB_BUF_BYTES];
 
-    /** Set pixel nel buffer giallo (no-op se fuori bounds). */
+    /** Accende un pixel giallo nel buffer (no-op se fuori bounds). Azzera il
+     *  bit, perchè writeImageYellow inverte i dati prima del transfer. */
     inline void trbSetPx(int16_t x, int16_t y)
     {
       if (x < 0 || x >= Layout::TRB_W || y < 0 || y >= Layout::TRB_H) return;
-      trbYellowBuf[y * Layout::TRB_BYTES_PER_ROW + (x >> 3)] |= (uint8_t)(0x80 >> (x & 7));
+      trbYellowBuf[y * Layout::TRB_BYTES_PER_ROW + (x >> 3)] &= (uint8_t)~(0x80 >> (x & 7));
     }
 
     /** Rettangolo pieno nel buffer giallo. */
@@ -718,7 +720,7 @@ namespace Weather
       const float cur  = slots[0].feelsLikeC;
       if (isnan(morn) || isnan(eve) || isnan(cur)) return false;
 
-      memset(trbYellowBuf, 0, TRB_BUF_BYTES);
+      memset(trbYellowBuf, 0xFF, TRB_BUF_BYTES);  // 0xFF = nessun pixel giallo
 
       // Misura larghezza delle label in FONT_BODY (stessa logica di
       // drawTempRangeBarLabels cosi' i due rimangono allineati).
@@ -1047,7 +1049,7 @@ namespace Weather
       display.print(numBuf);
 
       /** Pallino sulla temperatura corrente (sopra la curva). */
-      display.fillCircle(xNow, mapY(slots[0].feelsLikeC), Layout::TC_DOT_R, GxEPD_BLACK);
+      display.fillCircle(mapX(now), mapY(slots[0].feelsLikeC), Layout::TC_DOT_R, GxEPD_BLACK);
     }
 
     /**

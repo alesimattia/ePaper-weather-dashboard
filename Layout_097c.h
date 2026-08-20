@@ -105,6 +105,10 @@ namespace Layout
   inline constexpr const char* CINEMA_URL =
       "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwry&dither=floyd";
 
+  // Ancoraggio verticale del banner: dichiarato qui, prima della fascia mail,
+  // perchè MAIL_H ne deriva. BANNER_H / BANNER_W e le baseline stanno sotto.
+  inline constexpr int16_t BANNER_Y = 460;
+
   // -------------------------------------------------------------------------
   // Area mail (sotto al wallpaper cinema, sopra al banner meteo).
   // Layout 097c: griglia 2 colonne x 2 righe = 4 mail visibili, lettura
@@ -139,7 +143,6 @@ namespace Layout
   // Tutte le baseline interne sono relative a BANNER_Y per cascata pulita
   // quando si cambia variante (banner ancorato al fondo del display).
   // -------------------------------------------------------------------------
-  inline constexpr int16_t BANNER_Y = 460;
   inline constexpr int16_t BANNER_H = 212;
   inline constexpr int16_t BANNER_W = SCREEN_W;
 

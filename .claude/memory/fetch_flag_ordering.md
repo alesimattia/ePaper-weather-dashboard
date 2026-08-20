@@ -26,7 +26,7 @@ g_cinema_attempted = true;
 **Conseguenze pratiche (dal commento esplicito nel `.ino`):**
 - Se il fetch fallisce, NON si ritenta nello stesso giorno (per il trigger daily) o nella stessa boot session (per il trigger primo-boot). Si mostra il fallback PROGMEM fino al prossimo trigger valido.
 - Se il WiFi non si connette mai, i flag restano invariati (early-return prima del set): appena la radio sale, il tentativo parte normalmente.
-- Daily refresh a `CINEMA_DAILY_FETCH_HOUR` (07:00 default): se il fetch fallisce alle 07:00 di lunedi', il prossimo tentativo è alle 07:00 di martedi'.
+- Daily refresh a `CINEMA_DAILY_FETCH_HOUR` (07:00 default): se il fetch fallisce alle 07:00 di lunedì, il prossimo tentativo è alle 07:00 di martedì.
 
 **Trade-off:**
 - Un singolo errore transiente (cold start render.com che timeoutta) costa una giornata di immagine vecchia.

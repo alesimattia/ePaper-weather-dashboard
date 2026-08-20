@@ -1,4 +1,5 @@
 .DS_Store
 Env.h
 **/.build
+**/build
 GxEPD2-master

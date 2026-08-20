@@ -25,14 +25,14 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 **Memoria ESP32:**
 - 097c: 3 buffer da 23400 ≈ 69 KB.
 - 122c: 3 buffer da 26130 ≈ 77 KB.
-- La riduzione di CINEMA_H (440→300 su 097c, 536→335 su 122c) ha liberato ~30-50 KB rispetto al layout pre-UI-mail.
+- I 3 buffer stanno in ~69 KB sul 097c e ~77 KB sul 122c: la fascia riservata alla UI mail tiene il wallpaper basso e con esso l'occupazione.
 - Il modello Waveshare driver board ha tipicamente 4 MB PSRAM (modulo WROVER): allocazione comoda per entrambe le varianti.
 - Senza PSRAM (modulo WROOM bare): `ESP.getFreeHeap()` ≈ 200 KB libere; ora entrambe le varianti rientrano comodamente in heap interno. `allocPlaneBuffer()` preferisce PSRAM e fa fallback heap-interno.
 
-**Encoding bit (compatibilita' GxEPD2):**
+**Encoding bit (compatibilità GxEPD2):**
 - `pack_mask_msb` lato webapp riceve `mask = (indices != color_idx)` → bit=1 dove pixel NON è di quel colore.
 - Conseguenza dedotta: padding di riga (per width non multiplo di 8) viene riempito con `1` perchè `np.ones(...)` nel pad. Coerente con la convenzione "1 = bianco/default": il pad non viene mai "acceso" su nessun canale.
 
 **Catena dimensioni → URL → ESP32 (compile-time per variante):**
-- Per cambiare display: scommentare l'altro `DISPLAY_VARIANT_*` nel `.ino`. Il `Layout_<variante>.h` corrispondente espone `CINEMA_W`, `CINEMA_H`, `CINEMA_URL` con la query `width=...&height=...&colors=bwry` gia' coerente. Niente da toccare a mano lato firmware.
+- Per cambiare display: scommentare l'altro `DISPLAY_VARIANT_*` nel `.ino`. Il `Layout_<variante>.h` corrispondente espone `CINEMA_W`, `CINEMA_H`, `CINEMA_URL` con la query `width=...&height=...&colors=bwry` già coerente. Niente da toccare a mano lato firmware.
 - Cambiare `Layout::CINEMA_W` / `CINEMA_H` SENZA aggiornare anche `width=`/`height=` in `Layout::CINEMA_URL` produce `Content-Length` mismatch silenzioso e fallback PROGMEM perpetuo. Stessa cosa per `colors`: se si vuole BWR (2 piani) bisogna cambiare URL E sostituire i 3 buffer/loop con 2 nel `.ino`.

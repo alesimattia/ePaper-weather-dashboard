@@ -80,7 +80,7 @@
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
 // Fallback wallpaper offline: immagine PROGMEM
-#include "img_wallpaper/img_apple_bwry.h" //img_apple_bwry_desc
+#include "wallpaper/img_apple_bwry.h" //img_apple_bwry_desc
 
 /** Weather.h contiene logica, fetch OpenWeather One Call 3.0, cache,
  * rendering banner. Il .ino si limita ad accendere/spegnere il WiFi
@@ -434,7 +434,7 @@ static void fetchCinemaImage()
  *   // Se in futuro vuoi tornare a un'immagine PROGMEM hardcoded (es.
  *   // slideshow multi-immagine generato da epd_image_converter.pyw):
  *   //
- *   // #include "img_wallpaper/my_image.h"   // genera my_image_desc
+ *   // #include "wallpaper/my_image.h"   // genera my_image_desc
  *   // GxEPDImage::showImage(display, my_image_desc);
  *   //
  *   // Per piu' immagini in rotazione:

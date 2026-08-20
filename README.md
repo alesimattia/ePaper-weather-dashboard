@@ -27,9 +27,11 @@ Il driver custom (header-only) per il SOLUM 9.7" aggiunge:
   `writeImageYellow` per scrittura single-channel, usate nel flusso
   paged con yellow iniettato "out-of-band" (vedi [sezione dedicata](GxEPD2_SOLUM_ESL/README.md#3-perchè-il-yellow-è-out-of-band-nel-flusso-paged));
 - un **sistema di descrittori universale** (`GxEPDImage::Descriptor`) che
-  porta con sé formato e dimensioni dell'immagine (BW / BWR / BWRY);
-- **supporto nativo al 4° colore** (giallo) sul comando `0x28` del
-  controller SSD1677 — verificato su hardware.
+  porta con sè formato e dimensioni dell'immagine (BW / BWR / BWRY);
+- **API per il 4° colore** (giallo) sul comando `0x28` del controller
+  SSD1677. Sul pannello però il giallo non compare: che `0x28` sia il piano
+  giallo è un assunto non confermato, vedi
+  [§0.10 del README del driver](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta).
 
 Lo sketch principale compone uno schermo completo con:
 
@@ -37,7 +39,7 @@ Lo sketch principale compone uno schermo completo con:
   [`webapp/`](webapp/) (collage locandine + orari del prossimo martedì);
   fetch una tantum al primo boot con WiFi su, immagine tenuta in RAM/PSRAM
   per tutti i refresh successivi. Se il fetch fallisce o il WiFi non c'è
-  si usa il fallback PROGMEM [`img_wallpaper/img_apple_bwry.h`](img_wallpaper/img_apple_bwry.h).
+  si usa il fallback PROGMEM [`wallpaper/img_apple_bwry.h`](wallpaper/img_apple_bwry.h).
   Vedi [Background cinema](#background-cinema);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
   bordo): **Indoor** (BME680, 1 colonna × 4 righe: T/RH/IAQ/pressione),
@@ -52,7 +54,7 @@ Lo sketch principale compone uno schermo completo con:
   in corso (end nel futuro) mantenuto fino al termine effettivo;
 - **griglia mail Gmail** sotto al wallpaper: 4 mail su 097c (2×2) / 6 su
   122c (2×3). Per cella: indirizzo email del mittente + badge busta inline
-  se la mail e' non letta, oggetto subito sotto, orario `HH:MM` e data
+  se la mail è non letta, oggetto subito sotto, orario `HH:MM` e data
   `dd/MM` impilati a destra (come per gli eventi calendario). Solo nero,
   font come gli eventi calendario. Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
@@ -91,7 +93,7 @@ ogni modifica dei parametri.
 
 | Pannello | Risoluzione (landscape) | Colori | Controller | Note |
 |----------|------------|--------|------------|------|
-| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). 4° colore via comando `0x28` confermato su HW. Selezione: `#define DISPLAY_VARIANT_097C` |
+| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). Il 4° colore via comando `0x28` non compare sul pannello ([questione aperta](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta)). Selezione: `#define DISPLAY_VARIANT_097C` |
 | **SOLUM 12.2"** | 960w × 768h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom (`GxEPD2_SOLUM_122c_960x768/`) richiesto, vive nel branch `Solum_12_2`. Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
 | Good Display **GDEY0420F51** | 400w × 300h | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400w × 300h (no firmware completo) |
 
@@ -110,6 +112,8 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino del driver SOLUM 9.7" (672w x 960h BWRY native portrait)
 │   ├── src/                            # Header-only
 │   │   └── GxEPD2_SOLUM_097c_960x672.h # Classe + namespace GxEPDImage
+│   ├── examples/panel_diagnostic/      # Diagnostica del pannello: solo SPI.h, nessuna libreria
+│   ├── docs/                           # Cataloghi SOLUM + schematico Waveshare V3 (PDF)
 │   ├── library.properties              # name=GxEPD2_SOLUM_ESL, depends=GxEPD2 (>=1.6.9)
 │   ├── LICENSE                         # GPL-3.0, ereditata da GxEPD2
 │   ├── README.md                       # Documentazione dedicata del driver
@@ -128,8 +132,10 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
 ├── icons.h                         # Bitmap icone meteo indicizzate per icon code OWM
 ├── preview_097c.html               # Anteprima statica HTML del layout SOLUM 9.7" (960w x 672h)
+├── preview_122c.html               # Idem per il SOLUM 12.2" (960w x 768h)
+├── preview.svg                     # Anteprima del layout 097c renderizzata da GitHub nel README
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
-├── img_wallpaper/
+├── wallpaper/
 │   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
 ├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
 ├── LICENSE
@@ -179,7 +185,7 @@ referenzino in modo uniforme:
   `FORECAST_RR_*`, `BLOCK_*`** — fieldset e blocchi del banner meteo.
 - **`Layout::ICON_Y / DESC_BASELINE / TEMP_BASELINE / TIME_BASELINE`** —
   baseline del rendering testo dentro un blocco meteo (relative a
-  `BANNER_Y`, cosi' lo scaling 097c→122c si propaga in automatico).
+  `BANNER_Y`, così lo scaling 097c→122c si propaga in automatico).
 - **`Layout::INDOOR_ROW1..4_BASELINE`, `INDOOR_COL1_OFFSET`,
   `INDOOR_ICON_GAP`** — sub-colonna dati indoor + sub-colonna sun.
 - **`Layout::CAL_*` / `EVT_*`** — riquadro mese e area eventi sidebar.
@@ -196,7 +202,7 @@ solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
 
 ### Differenze layout 097c vs 122c
 
-Il pannello 12.2" ha la stessa larghezza (960 px) e 96 px in piu' in
+Il pannello 12.2" ha la stessa larghezza (960 px) e 96 px in più in
 altezza (672→768). I 96 px aggiuntivi sono distribuiti per mantenere il
 banner ancorato al fondo schermo:
 
@@ -213,12 +219,12 @@ banner ancorato al fondo schermo:
 | `CINEMA_URL` height| 300    | 335    | il server riceve la dimensione corretta     |
 
 Tutto il banner (`X/W` dei fieldset, `BLOCK_FC*_X`, `SUN_COL_OFFSET`)
-resta invariato perche' la larghezza e' identica. Le baseline interne
+resta invariato perchè la larghezza è identica. Le baseline interne
 del banner (icona, description, temp, time, indoor row1..4) sono
 espresse come `BANNER_Y + offset` in entrambi i Layout, quindi seguono
 la traslazione di `BANNER_Y` in automatico. I font sono gli stessi
 nelle due varianti per ora: modificare `Layout_122c.h` per scegliere
-size diverse e' un cambio mirato che non tocca i moduli.
+size diverse è un cambio mirato che non tocca i moduli.
 
 ### Font utilizzati
 
@@ -316,7 +322,7 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 | `OTA_AP_PASSWORD`       | si | Minimo 8 caratteri (limite WPA2). Unico gate sulla `/update`.    |
 | `MSGRAPH_CLIENT_ID`     | opz | Client pubblico Azure AD con scope `Calendars.Read offline_access`. Omettere tutti e due i MSGRAPH_* se non si usa Outlook. |
 | `MSGRAPH_REFRESH_TOKEN` | opz | Refresh token ottenuto da PC via MSAL.                          |
-| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa ne' Google Calendar ne' Gmail. |
+| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa nè Google Calendar nè Gmail. |
 | `GOOGLE_CLIENT_SECRET`  | opz | Client secret della stessa app.                                 |
 | `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly` **e/o** `gmail.readonly` (vedi sotto). |
 
@@ -324,7 +330,7 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 > `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REFRESH_TOKEN`: se
 > abiliti entrambi i moduli (Calendar Google + Mail), il refresh_token deve
 > essere stato emesso con **scope unificati** `calendar.readonly` +
-> `gmail.readonly`. Per aggiungere il modulo Mail a un progetto che gia'
+> `gmail.readonly`. Per aggiungere il modulo Mail a un progetto che già
 > usa il Calendar: ri-esegui il flusso OAuth (con `prompt=consent`)
 > chiedendo entrambi gli scope, sostituisci `GOOGLE_REFRESH_TOKEN` con il
 > nuovo valore e abilita la **Gmail API** sullo stesso progetto Cloud.
@@ -357,6 +363,8 @@ Implementa la sequenza di comandi specifica del SOLUM 9.7" e introduce
 3. **Pattern "yellow out-of-band"** — il giallo (`0x28`) viene iniettato
    prima del loop paged e protetto via `preserveYellow(true)`, perchè il
    template upstream `GxEPD2_3C` ha un'architettura hard-coded a 2 canali.
+   Sul pannello quelle scritture per ora non producono giallo:
+   [questione aperta](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta).
 4. **Sistema di descrittori universali** (`GxEPDImage::Descriptor`) con
    formato + dimensioni dell'immagine (BW / BWR / BWRY).
 
@@ -416,22 +424,24 @@ Scheduler + fetch OpenWeather One Call 3.0 + rendering del banner meteo.
   temp-range ha linea orizzontale gialla (4 px spessa) + triangolo
   indicatore giallo renderizzati via `writeImageYellow` +
   `preserveYellow(true)` del driver custom, chiamati *prima* del loop
-  paged perché il canale 0x28 è out-of-band rispetto al template
-  `GxEPD2_3C`; cifre e cerchietti ° di morn/eve sono in **nero**,
+  paged perchè il canale 0x28 è out-of-band rispetto al template
+  `GxEPD2_3C` (il giallo per ora non compare sul pannello, vedi
+  [§0.10 del driver](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta));
+  cifre e cerchietti ° di morn/eve sono in **nero**,
   disegnati normalmente nel paged. La barra è centrata orizzontalmente
   rispetto alla riga sunset sovrastante. Utility condivisa
   `Graphics::drawFieldsetRect` in [`Graphics.h`](Graphics.h).
 - `Weather::render()` compone il frame completo dentro un loop paged
   `firstPage()`/`nextPage()`: `fillScreen(WHITE)` → `drawBackground()`
   → sidebar placeholder → `Calendar::draw()` → `drawBanner()`.
-- **Gate del primo refresh** — `render()` blocca il primo refresh finché
+- **Gate del primo refresh** — `render()` blocca il primo refresh finchè
   `slots[0]` (meteo corrente) e `slots[1]` (prima previsione) non sono
   entrambi validi, per evitare un refresh sprecato (~22 s) col banner
   a `--` al boot. `Weather::forceFirstRender()` sblocca il gate
   esplicitamente: è chiamato dal `.ino` (a) subito dopo il primo
-  tentativo di fetch durante la finestra OTA, cosi' il display si
+  tentativo di fetch durante la finestra OTA, così il display si
   aggiorna non appena il meteo scende, e (b) su timeout `wifiOn()` nel
-  ramo normale, cosi' il display parte comunque con placeholder `--`
+  ramo normale, così il display parte comunque con placeholder `--`
   dove mancano dati. Dopo il primo refresh la funzione è un no-op:
   i refresh successivi tornano a essere pilotati da `needsRefresh`
   (rotazione background, `markDirty()`, nuovi sample BME680).
@@ -467,7 +477,7 @@ il `TENANT_ID` Microsoft è in `Calendar.h` come `CAL_MSGRAPH_TENANT_ID`
 `graph.microsoft.com/v1.0/me/events?$filter=end/dateTime ge <now>` e
 `googleapis.com/calendar/v3/calendars/primary/events?timeMin=<now>`:
 in entrambi i casi un evento in corso (iniziato ma non ancora finito)
-resta in lista finché non termina.
+resta in lista finchè non termina.
 
 **Timezone** — `Calendar::initTimezone()` applica la stringa POSIX
 `CAL_POSIX_TZ = "CET-1CEST,M3.5.0,M10.5.0/3"` al processo via
@@ -492,7 +502,7 @@ Modulo di lettura delle ultime mail della propria casella Gmail con
 |---|---|
 | `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
 | `Mail::pendingFetch()` | `true` al primo fetch o se sono passati `MAIL_GOOGLE_FETCH_MIN` minuti dall'ultimo. |
-| `Mail::runFetch()` | Esegue il fetch (best-effort). Ritorna `true` se la cache e' aggiornata: il `.ino` la usa come gate per `Weather::markDirty()`. |
+| `Mail::runFetch()` | Esegue il fetch (best-effort). Ritorna `true` se la cache è aggiornata: il `.ino` la usa come gate per `Weather::markDirty()`. |
 | `Mail::draw()` | Disegna la griglia mail nell'area `Layout::MAIL_*`. Chiamato da `Weather::renderFrame()` nel paged loop, tra `Calendar::draw` e `drawBanner`. |
 | `Mail::count()` | Numero di mail attualmente in cache (0..`Layout::MAIL_MAX`). |
 | `Mail::at(i)` | Slot `i` della cache (`MailMessage`: `sender`, `subject`, `receivedUtc`, `unread`). |
@@ -551,7 +561,7 @@ l'ultima riga dal banner meteo sottostante.
   valore nudo se il `From` non contiene `< >`. Troncato a `MAIL_SENDER_LEN-1`.
 - `subject` (max **60 char**) — header `Subject` troncato.
 - `receivedUtc` — `internalDate` Gmail (timestamp UTC autoritativo del
-  server, **non** l'header `Date` che puo' essere falso/vuoto).
+  server, **non** l'header `Date` che può essere falso/vuoto).
 - `unread` — `true` se `labelIds` contiene `UNREAD`.
 - `valid` — slot popolato.
 
@@ -567,10 +577,10 @@ l'ultima riga dal banner meteo sottostante.
 | `MAIL_GMAIL_SCOPE` | `gmail.readonly` (URL-encoded) | Scope OAuth richiesto. |
 | `MAIL_SENDER_LEN` | `64` | Lunghezza buffer mittente. |
 | `MAIL_SUBJECT_LEN` | `60` | Lunghezza buffer oggetto. |
-| `MAIL_FETCH_BUDGET_MS` | `10000` | Wall-clock budget end-to-end di `runFetch()`. Oltre la soglia interrompe la fase metadata e lascia in cache le mail gia' parseate (cache parziale, non e' un errore). Evita che un fetch mail patologicamente lento eroda il tempo dei fetch calendario successivi. |
+| `MAIL_FETCH_BUDGET_MS` | `10000` | Wall-clock budget end-to-end di `runFetch()`. Oltre la soglia interrompe la fase metadata e lascia in cache le mail già parseate (cache parziale, non è un errore). Evita che un fetch mail patologicamente lento eroda il tempo dei fetch calendario successivi. |
 
-**Resilienza** — `Mail::runFetch()` e' best-effort: se WiFi cade durante
-il fetch, se l'inbox e' vuota, se il batch HTTP risponde con errore o
+**Resilienza** — `Mail::runFetch()` è best-effort: se WiFi cade durante
+il fetch, se l'inbox è vuota, se il batch HTTP risponde con errore o
 se il budget scade, il flusso software del `.ino` **prosegue normalmente**
 con i fetch calendario successivi. Backoff `MAX_CALENDAR_ATTEMPTS=2` per
 evitare hammering del token endpoint durante la finestra OTA (loop a
@@ -581,7 +591,7 @@ Garanzie complete di `Mail::runFetch()` per ogni scenario di failure:
 
 | Scenario | Comportamento | Cache | Backoff |
 |---|---|---|---|
-| WiFi giu' all'ingresso | Return false immediato | Preservata | No (non e' guasto Mail) |
+| WiFi giù all'ingresso | Return false immediato | Preservata | No (non è guasto Mail) |
 | Token refresh fallito (rete / auth) | Return false | Preservata | `failedAttempts++`, 2× → `MAIL_GOOGLE_FETCH_MIN` |
 | Budget esaurito (refresh / pre-batch) | Return false | Preservata | `failedAttempts++` → backoff |
 | `messages.list` HTTP 4xx/5xx/timeout | Return false | Preservata | `failedAttempts++` → backoff |
@@ -592,7 +602,7 @@ Garanzie complete di `Mail::runFetch()` per ogni scenario di failure:
 | `messages.batch` HTTP 200 con M<N parsati | Return true | Aggiornata con M mail | Reset |
 | Tutto OK | Return true | Aggiornata con N mail | Reset |
 
-Nessun percorso puo' propagare un'eccezione o bloccare il `.ino`:
+Nessun percorso può propagare un'eccezione o bloccare il `.ino`:
 `runFetch()` ritorna sempre, sempre rapidamente (entro
 `MAIL_FETCH_BUDGET_MS = 10 s`), e il chiamante ignora il return value.
 La cache esistente viene riscritta SOLO su fetch end-to-end riuscito
@@ -602,7 +612,7 @@ l'ultimo snapshot valido resta visibile alla futura UI.
 **Setup OAuth (una tantum)** — vedi tabella `Env.h` sopra. Il modulo
 non aggiunge **nessun nuovo segreto**: riusa `GOOGLE_CLIENT_ID`,
 `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. Il refresh_token deve
-pero' essere stato emesso con scope `calendar.readonly` **+**
+però essere stato emesso con scope `calendar.readonly` **+**
 `gmail.readonly` (consent unificato).
 
 ### Indoor (`Indoor.h`)
@@ -660,7 +670,7 @@ volta per device"). I nostri handler sono registrati **prima** di
 `updater.setup()`: il `WebServer` ESP32 matcha i route in ordine FIFO
 (first-match-wins), quindi la nostra pagina vince sul default su
 `GET /update`. Il `POST /update` (logica reale di upload + flash) resta
-gestito da `HTTPUpdateServer`, intoccato — niente conflitto perché i
+gestito da `HTTPUpdateServer`, intoccato — niente conflitto perchè i
 metodi HTTP differiscono.
 
 Vantaggio rispetto alla soluzione precedente con redirect 301 `/` → `/update`:
@@ -785,7 +795,7 @@ fondo (`y=556..768`). Area mail `y=335..556` (221h, griglia 2×3 = 6 mail vs
 
 Anteprima statica del layout (rendering nativo GitHub via SVG):
 
-![Anteprima layout 960w × 672h](DOCS/preview.svg)
+![Anteprima layout 960w × 672h](preview.svg)
 
 > La versione HTML interattiva equivalente è in [`preview_097c.html`](preview_097c.html)
 > (offre stile più ricco, calendario popolato dinamicamente da JS sul mese
@@ -944,7 +954,7 @@ t+10ms    iterazione successiva del loop OTA:
           └─ Mail 2° tentativo → fail → "consumed" (silenzio per MAIL_GOOGLE_FETCH_MIN)
 ```
 
-Il fallimento di Mail e' completamente isolato dagli altri moduli: meteo,
+Il fallimento di Mail è completamente isolato dagli altri moduli: meteo,
 cinema, Outlook e Google Calendar partono lo stesso. Una volta corretto
 il refresh_token (riemesso con scope unificati), il prossimo trigger
 `MAIL_GOOGLE_FETCH_MIN` riporta Mail al primo successo senza reboot.
@@ -1010,13 +1020,13 @@ sample BME680 (ogni 5 min). Le cache di meteo e calendari restano
 | Mail Gmail (refresh KO / list 5xx / batch fail / boundary corrotto / 0 parsati) | `Mail::failedAttempts++`, **cache mail preservata** (commit atomico via buffer tmp), log seriale | Iterazione successiva del loop; dopo 2× fail consumo `MAIL_GOOGLE_FETCH_MIN` (default 10 min) |
 | Mail Gmail (list 401) | Reset `cachedGoogleToken` condiviso → self-heal del refresh al prossimo ciclo, cache mail preservata | Iterazione successiva del loop |
 | Mail Gmail (list ritorna 0 mail) | Cache **azzerata** (confermato dal server) | `MAIL_GOOGLE_FETCH_MIN` |
-| Mail Gmail (WiFi caduto durante runFetch) | Return false immediato, cache preservata, **nessun** incremento failedAttempts | Iterazione successiva (sara' il `.ino` a decidere se accendere WiFi) |
+| Mail Gmail (WiFi caduto durante runFetch) | Return false immediato, cache preservata, **nessun** incremento failedAttempts | Iterazione successiva (sarà il `.ino` a decidere se accendere WiFi) |
 | Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Domani alle `CINEMA_DAILY_FETCH_HOUR`, oppure al reboot |
 | BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 
-### Matrice di degradazione per scenario di connettivita'
+### Matrice di degradazione per scenario di connettività
 
-Cosa vede l'utente sullo schermo in funzione della disponibilita' di
+Cosa vede l'utente sullo schermo in funzione della disponibilità di
 rete e dei singoli server backend. **Il dispositivo non si blocca mai**:
 qualunque combinazione di failure produce comunque un refresh del display
 con i dati disponibili.
@@ -1025,7 +1035,7 @@ con i dati disponibili.
 |---|---|---|---|---|---|---|
 | Tutto disponibile | OK | OK | Sfondo HTTP | Eventi visibili | Cache popolata | Tutti i campi reali, refresh ogni `DISPLAY_REFRESH_MIN` |
 | Solo Internet down (DNS / gateway down) | OK | Cache precedente o `--` | Fallback `img_apple_bwry` PROGMEM | Cache precedente o `--` | Cache preservata | Display funzionante, log seriale con i fail |
-| Solo WiFi giu' (boot iniziale, mai connesso) | OK (dopo primo ULP sample 5 min) | `--` | Fallback PROGMEM | `--` | Griglia con placeholder `--` | Refresh dopo `BOOT_WIFI_TIMEOUT_MS=15s` con i soli dati locali |
+| Solo WiFi giù (boot iniziale, mai connesso) | OK (dopo primo ULP sample 5 min) | `--` | Fallback PROGMEM | `--` | Griglia con placeholder `--` | Refresh dopo `BOOT_WIFI_TIMEOUT_MS=15s` con i soli dati locali |
 | WiFi OK, server **meteo OWM** down (`401`/`429`/timeout) | OK | Cache invariata (ultimo snapshot) | OK | OK | OK | Banner meteo mostra valori storici fino al prossimo successo |
 | WiFi OK, server **Microsoft Graph** down (Outlook 5xx/timeout) | OK | OK | OK | Outlook cache invariata; Google OK | OK | Lista eventi mostra solo i Google + cache Outlook precedente |
 | WiFi OK, server **Google Calendar** down (5xx/timeout) | OK | OK | OK | Outlook OK; Google cache invariata | Possibile fail (stesso refresh_token Google) → backoff | Lista eventi mostra solo Outlook + cache Google precedente |
@@ -1036,11 +1046,11 @@ con i dati disponibili.
 | WiFi cade **durante** un fetch | OK | Cache invariata | Buffer riallocato al prossimo trigger | Cache invariata | Cache **preservata** | Display ok, retry al prossimo trigger di cadenza |
 | Tutto down salvo BME680 | OK | `--` | Fallback PROGMEM | `--` | Cache vuota | Display mostra solo Indoor + grafica fissa |
 
-**Principio di base**: ogni modulo applicativo e' **completamente isolato**.
+**Principio di base**: ogni modulo applicativo è **completamente isolato**.
 Un fallimento di Mail non blocca Calendar; un fallimento di Calendar non
 blocca Weather; un fallimento di Weather non blocca Indoor. L'ordine
-sequenziale dei fetch (weather → cinema → mail → outlook → google) e' un
-ordering di priorita', non una catena di dipendenze: ognuno parte
+sequenziale dei fetch (weather → cinema → mail → outlook → google) è un
+ordering di priorità, non una catena di dipendenze: ognuno parte
 indipendentemente e fallisce indipendentemente con il proprio backoff.
 
 ### Tempi caratteristici da aspettarsi
@@ -1111,14 +1121,14 @@ default `7`, allineato a `WIFI_ACTIVE_HOUR_START`): prima connessione
 utile della mattina. Al trigger i buffer vecchi vengono liberati,
 `g_cinema_desc` torna temporaneamente al fallback PROGMEM durante il
 download, e se il fetch va a buon fine vengono swappati i nuovi buffer
-con la locandina del prossimo martedi'.
+con la locandina del prossimo martedì.
 
 Helper che governa il gate: `shouldFetchCinema()` in
 [ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
 primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
 
 **Cold-start mitigation via GitHub Actions.** Render.com free tier dorme
-dopo 15 min di inattivita'; al fetch delle 07:00 il server sarebbe
+dopo 15 min di inattività; al fetch delle 07:00 il server sarebbe
 freddo. Il workflow
 [`webapp/.github/workflows/keep-warm.yml`](webapp/.github/workflows/keep-warm.yml)
 pinga `/health` a 06:55 local (due cron UTC per coprire DST CET/CEST),
@@ -1215,7 +1225,7 @@ pronto da includere nello sketch.
   1. B/N (2 colori) → 1 array 1bpp
   2. B/N + Rosso (3 colori) → 2 array 1bpp (`_black`, `_red`)
   3. B/N + Rosso + Giallo (4 colori) → 3 array 1bpp (`_black`, `_red`, `_yellow`),
-     sfrutta il 4° colore nativo del pannello SOLUM tramite il canale 0x28
+     destinati al canale 0x28 del pannello SOLUM (che per ora non rende il giallo)
 - **Naming automatico**: il file di output si chiama `img_<stem>.h` con
   `<stem>` sanitizzato (caratteri non alfanumerici → underscore). Le
   variabili interne seguono lo stesso pattern con i suffissi di canale.

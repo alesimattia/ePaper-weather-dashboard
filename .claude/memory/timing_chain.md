@@ -20,9 +20,9 @@ I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
 - Pinga `/health` 5 min prima del fetch ESP32 alle 07:00 local (CINEMA_DAILY_FETCH_HOUR, apertura finestra WiFi mattutina).
 
 **Worst case dedotto:**
-- Boot freddo render.com: 15s (WiFi) + 30s (cold start HTTP) + ~3-4s (download 100 KB sul 097c, ~123 KB sul 122c, su WiFi) ≈ 48-49s.
-- Sta sotto i 45s di `http.setTimeout` solo grazie al keep-warm. SENZA keep-warm, scenario realistico = timeout HTTP a 45s e fallback PROGMEM.
-- OTA window 180s contiene anche il caso freddo (~50s fetch + altri fetch in parallelo: meteo + 2 calendari + mail).
+- Boot freddo render.com: 15s (WiFi) + 30s (cold start HTTP) + ~2-3s (download 69 KB sul 097c, ~77 KB sul 122c, su WiFi) ≈ 47-48s di wall-clock.
+- `http.setTimeout(45000)` copre però solo la fase HTTP, non i 15s di WiFi: lì si spendono ~32-33s, quindi il fetch rientra finchè il cold start resta nei 30s tipici. Oltre quella soglia scatta il timeout e il fallback PROGMEM: il keep-warm serve a evitare il cold start, non a stare nel timeout.
+- OTA window 180s contiene anche il caso freddo (~48s fetch + altri fetch in parallelo: meteo + 2 calendari + mail).
 
 **Budget durante OTA:**
 - `loop()` gira con `delay(10)` durante OTA window per `WebServer::handleClient()`. Un fetch cinema bloccante da 45s congela l'AP per 45s: utenti che provano `/update` durante quel periodo vedono timeout dal browser. Accettato perchè la finestra OTA è rara e l'utente se ne accorge.

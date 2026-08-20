@@ -1,13 +1,15 @@
+- [Toolchain compilazione Arduino](build_toolchain_arduino.md) — questa macchina compila: build.ps1, arduino-cli su A:\tmp, core esp32 3.3.11 filtrato su C:\xz, junction sketch/GxEPD2
 - [ESP32 cinema consumer](esp32_cinema_consumer.md) — fetchCinemaImage nel .ino: trigger boot+CINEMA_DAILY_FETCH_HOUR (default 07:00), PSRAM, fallback PROGMEM
-- [Cautela su firmware Arduino](arduino_root_caution.md) — i .h/.ino in c:\epd\ root sono firmware in produzione, modifiche solo su richiesta
-- [Webapp è git submodule](webapp_submodule.md) — c:\epd\webapp punta a github.com/alesimattia/cinema-programmation-feed; memorie webapp in webapp\.claude\memory\
+- [Cautela su firmware Arduino](arduino_root_caution.md) — i .h/.ino in A:\epd\ root sono firmware in produzione, modifiche solo su richiesta
+- [Webapp è git submodule](webapp_submodule.md) — A:\epd\webapp punta a github.com/alesimattia/cinema-programmation-feed; memorie webapp in webapp\.claude\memory\
 - [Vincoli numerici layout 960w x 672h](layout_invariants.md) — somme che validano costanti pixel + DISPLAY_REFRESH_MIN ↔ BSEC ↔ HOUR_END
 - [Aritmetica blob cinema](cinema_blob_math.md) — stride 78, plane 34320, total 102960 + dipendenza fetch ↔ finestra WiFi
 - [Catena di timeout fetch](timing_chain.md) — WiFi 15s + HTTP 45s vs OTA 180s vs render.com sleep 15min
 - [Design arduino binary header-less](arduino_binary_format.md) — il body di /cinema/arduino è raw packed, zero metadati
 - [Ordering flag prima del fetch](fetch_flag_ordering.md) — vincolo retry-storm durante OTA loop=10ms
-- [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 è dereferenza, descriptor unico per Flash/RAM/PSRAM
-- [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — submodule GxEPD2_SOLUM_ESL (libreria Arduino GPL-3.0, dipende da GxEPD2) + vincoli e costi noti
+- [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 è dereferenza, descriptor unico per Flash/RAM/PSRAM; apple è 620x460 contro CINEMA_H 300
+- [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — submodule GxEPD2_SOLUM_ESL (libreria Arduino GPL-3.0, dipende da GxEPD2); B/W/R verificati, questione 4o colore APERTA e cosa deve misurare la sonda panel_diagnostic, init di fabbrica della 9.7", identificazione del pannello, perchè la base è SSD1677 e non SSD2677, pista del refresh differenziale a ~600 ms, vincoli e costi noti
+- [SSD1677 command set](ssd1677_command_set.md) — riferimento verbatim dal datasheet: le 2 sole RAM e le loro polarità, 0x22 con la tabella dei parametri E la decodifica per bit (da cui 0xFC e 0xF4, fuori tabella), 0x21, deep sleep 0x10, pattern 0x46/0x47, registri in lettura inutilizzabili senza SDO, estrazione del PDF con pdftotext
 - [Separazione layout/logica](layout_separation.md) — Layout.h dispatcher + Layout_097c.h / Layout_122c.h: come supportare 2 display con stessa logica
 - [Modulo Mail Gmail](mail_module.md) — Mail.h riusa OAuth Google del Calendar (token condiviso), batch endpoint, no UI, best-effort
 - [Mail.h design preferences](feedback_mail_design.md) — regole utente: best-effort, mail-prima-dei-calendari, subject 60 char, fetch-min separato, zero nuovi secret

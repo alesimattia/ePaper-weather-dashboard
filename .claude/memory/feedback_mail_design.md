@@ -9,15 +9,15 @@ Vincoli di design dichiarati dall'utente durante l'implementazione di
 
 **1. `Mail::runFetch()` deve essere best-effort, MAI bloccante per gli altri fetch.**
 
-**Why:** l'utente ha detto esplicitamente "se non trova mail o se non c'e'
+**Why:** l'utente ha detto esplicitamente "se non trova mail o se non c'è
 connessione wifi il flusso del software deve continuare regolarmente
 senza interruzioni". Le mail sono utili ma secondarie rispetto a
 meteo/calendario.
 
 **How to apply:** nel `.ino`, il return value di `Mail::runFetch()` va
 usato SOLO per decidere `Weather::markDirty()` (la UI mail va ridisegnata
-solo se la cache e' cambiata). NON propagare l'errore al flusso:
-nessun `return`/`goto` su fail. Mail::runFetch() puo' fallire silenziosamente:
+solo se la cache è cambiata). NON propagare l'errore al flusso:
+nessun `return`/`goto` su fail. Mail::runFetch() può fallire silenziosamente:
 la cache resta com'era e i fetch calendario partono comunque.
 
 **UPDATE (2026-05): La UI mail ora ESISTE.** Originariamente l'utente disse
@@ -33,7 +33,7 @@ dopo un `Mail::runFetch()` riuscito.
 
 **Why:** richiesta esplicita ("lo scaricamento delle mail deve essere
 fatto subito prima dei calendari"). Le mail vengono percepite come
-informazione a piu' alta priorita' del calendario.
+informazione a più alta priorità del calendario.
 
 **How to apply:** in entrambi i rami del `loop()` (OTA aperta + on-demand),
 `Mail::pendingFetch()` / `Mail::runFetch()` va piazzato dopo
@@ -46,18 +46,18 @@ inverte l'ordine va validato con l'utente.
 60 caratteri massimo".
 
 **How to apply:** se si cambia `MAIL_SUBJECT_LEN` ricontrollare con l'utente.
-Il cap a 60 e' una scelta di prodotto, non vincolato all'API Gmail.
+Il cap a 60 è una scelta di prodotto, non vincolato all'API Gmail.
 
 **4. `MAIL_GOOGLE_FETCH_MIN` deve essere un `#define` SEPARATO da
 `CAL_GOOGLE_FETCH_MIN`, anche se attualmente l'utente lo tiene allineato.**
 
 **Why:** richiesta esplicita "voglio che il tempo di refresh
 MAIL_GOOGLE_FETCH_MIN sia configurabile separatamente rispetto al tempo
-di refresh del calendario". Anche se nel `.ino` il valore corrente e'
+di refresh del calendario". Anche se nel `.ino` il valore corrente è
 identico (10), il knob deve restare indipendente per future regolazioni.
 
 **How to apply:** non collassare i due `#define` in un alias, anche se
-sembra DRY. L'indipendenza concettuale e' un requisito.
+sembra DRY. L'indipendenza concettuale è un requisito.
 
 **5. Numero minimo di secret in `Env_template.h`.**
 
@@ -65,5 +65,5 @@ sembra DRY. L'indipendenza concettuale e' un requisito.
 
 **How to apply:** Mail.h NON aggiunge nuovi `#define` in Env_template.h.
 Riusa `GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN` con scope unificati.
-Tutto cio' che e' configurazione (host, scope, cadenza, cap) vive in
+Tutto ciò che è configurazione (host, scope, cadenza, cap) vive in
 Mail.h come `#define` override-abile.
