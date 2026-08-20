@@ -23,7 +23,7 @@
 // pannello (Layout::Panel) e' scelto dal dispatcher Layout.h in base al
 // #define DISPLAY_VARIANT_* nello sketch.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display;
+extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 
 // ---------------------------------------------------------------------------
 // Helper definito nello sketch .ino: disegna l'immagine di background

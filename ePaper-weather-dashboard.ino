@@ -20,7 +20,7 @@
  * Selezione del pannello display: scommenta UNA SOLA delle due varianti
  * per scegliere driver, coordinate del layout e font.
  *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWRY)
- *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960w x 768h BWRY)
+ *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960w x 768h BWR)
  *
  * I due Layout_*.h definiscono lo stesso namespace `Layout` con gli stessi
  * simboli (Panel, pin, font, coord), quindi la logica applicativa nei
@@ -97,13 +97,16 @@
 SPIClass hspi(HSPI);
 
 /**
- * Istanza del display. Il tipo concreto del pannello (Layout::Panel) e i
- * pin del driver (Layout::PIN_*) arrivano dal Layout selezionato. I pin
- * HSPI del bus (SCK/MISO/MOSI/SS = 13/12/14/15) restano qui perche' sono
+ * Istanza del display. Tipo del pannello (Layout::Panel), altezza della page
+ * (Layout::PAGE_HEIGHT) e costruzione del driver (Layout::makePanel) arrivano
+ * dal Layout selezionato: i costruttori dei driver hanno arità diversa fra
+ * un pannello e l'altro e la factory tiene questa riga indipendente dal
+ * pannello montato. Aggiungere un terzo display non tocca il .ino.
+ *
+ * I pin HSPI del bus (SCK/MISO/MOSI/SS = 13/12/14/15) restano qui perchè sono
  * board-specific (Waveshare ESP32 Driver Board), non display-specific.
  */
-GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display(
-	Layout::Panel(Layout::PIN_CS, Layout::PIN_DC, Layout::PIN_RST, Layout::PIN_BUSY));
+GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());
 
 // Inizializza il bus HSPI e il display in orientamento landscape fisso.
 // Chiamato una sola volta in setup().

@@ -39,9 +39,8 @@ merge (verificato con `core download`), quindi il filtro ha effetto.
 **Librerie:** ArduinoJson 7.4.3, Adafruit GFX 1.12.6 + BusIO 1.17.4, bsec2 1.10.2610 (usa la
 precompilata `src\esp32`), BME68x 1.3.40408.
 
-**Esito verificato 20/08/2026** (FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`, variante 097c):
-flash 1358220 B = 43% di 3145728; RAM globali 78368 B = 23% di 327680 — coerente con la stima ~69 KB
-in [[esp32_cinema_consumer]]. Binari in `A:\tmp\arduino\out`, incluso `.merged.bin` per il flash altrove.
+Binari in `A:\tmp\arduino\out`, incluso `.merged.bin` per il flash altrove. La RAM
+globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_consumer]].
 
 **Trappole già pagate:**
 - `directories.builtin.libraries` nel yaml fa fallire `lib install` con "la directory dell'utente non
@@ -51,4 +50,15 @@ in [[esp32_cinema_consumer]]. Binari in `A:\tmp\arduino\out`, incluso `.merged.b
 - `Env.h` è gitignored e obbligatorio per compilare; quello attuale ha solo placeholder, quindi il
   firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
 
-**Variante 122c non compilabile da qui:** `Layout_122c.h` include `GxEPD2_SOLUM_122c_960x768/` che vive nel branch `Solum_12_2` e non esiste su `main` (vedi [[layout_separation]]). Con `DISPLAY_VARIANT_122C` la build fallisce sull'include, non sul layout.
+**Entrambe le varianti compilano** (FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`):
+
+| variante | flash | RAM globali |
+|---|---|---|
+| `DISPLAY_VARIANT_097C` | 1 358 336 B (43%) | 78 368 B (23%) |
+| `DISPLAY_VARIANT_122C` | 1 358 956 B (43%) | 81 592 B (24%) |
+
+I ~3,2 KB di RAM in più della 122c sono i buffer di page più alti (96 righe invece di 84). Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
+
+**Dipendenza non ovvia:** `wallpaper/img_apple_bwry.h` definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `img_apple_bwry_desc was not declared` su tutte le altre varianti. La emette `epd_image_converter.pyw`, quindi va corretta lì e non solo nel file generato.
+
+**Gli examples del submodule non li compila questo build** (Arduino concatena i `.ino` solo dalla root dello sketch). Si compilano a parte passando la libreria per quella build, senza installarla: comando e caveat in [[gxepd2_solum_esl_library]].

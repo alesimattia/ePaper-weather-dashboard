@@ -24,6 +24,13 @@ type: project
 - `freeCinemaBuffers()` libera la RAM e ripuntare `g_cinema_desc = &img_apple_bwry_desc` riporta a un descrittore in Flash. Lo swap è atomico per il rendering perchè il puntatore è una variabile statica (anche se non `volatile`, il loop del display è single-thread sul core principale: nessun lock necessario).
 - L'immagine fallback PROGMEM costa solo Flash (~100 KB) già inclusa nel firmware: nessun runtime overhead.
 
+**Guardia del descrittore.** `wallpaper/img_apple_bwry.h` definisce `img_apple_bwry_desc` solo
+dentro `#ifdef _GxEPDImage_H_`, cioè la include guard dell'header che definisce il namespace
+(`GxEPD2_SOLUM_ESL/src/GxEPDImage.h`), non quella di un driver: gli array raw restano sempre
+disponibili, il descrittore solo se il tipo esiste. La guardia la emette `epd_image_converter.pyw`,
+quindi va corretta lì oltre che nel file generato. Nominare un driver specifico romperebbe la build
+su tutte le altre varianti di display.
+
 **Disallineamento di dimensione del fallback.** `img_apple_bwry_desc` è **620x460** mentre
 `Layout::CINEMA_W x CINEMA_H` è **620x300**. `showImage` non clippa (disegna da `(0,0)` usando
 width/height del `Descriptor`), quindi le righe 300..459 del fallback cadono nella fascia mail

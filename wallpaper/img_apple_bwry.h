@@ -4,8 +4,9 @@
 // Generato: 2026-04-21 22:47:36
 //
 // NOTA: questo file usa GxEPDImage::Descriptor. Includilo DOPO
-// l'header del driver (es. "GxEPD2_SOLUM_097c_960x672.h") che
-// definisce il namespace GxEPDImage. Se il tipo non è presente
+// l'header che definisce il namespace GxEPDImage, cioè
+// GxEPD2_SOLUM_ESL/src/GxEPDImage.h oppure uno qualsiasi dei driver
+// della libreria, che lo includono. Se il tipo non è presente
 // puoi comunque usare gli array raw direttamente.
 
 #ifndef IMG_APPLE_BWRY_H
@@ -17,7 +18,7 @@
 #include <avr/pgmspace.h>
 #endif
 
-#ifdef _GxEPD2_SOLUM_097c_960x672_H_
+#ifdef _GxEPDImage_H_
 extern const unsigned char img_apple_bwry_black[];
 extern const unsigned char img_apple_bwry_red[];
 extern const unsigned char img_apple_bwry_yellow[];

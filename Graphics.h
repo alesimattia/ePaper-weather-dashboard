@@ -20,7 +20,7 @@
 // (Layout::Panel) viene scelto dal Layout dispatcher in base al
 // DISPLAY_VARIANT_* definito nello sketch.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display;
+extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 
 namespace Graphics
 {

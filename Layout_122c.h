@@ -2,8 +2,11 @@
 #define LAYOUT_122C_H
 
 /**
- * Layout per pannello SOLUM 12.2" (controller SSD1677, 4 colori nativi
- * BWRY, native 768w x 960h -> setRotation(0) -> landscape 960w x 768h visibile).
+ * Layout per pannello SOLUM Newton-Core 12.2" (960w x 768h, 3 colori nativi
+ * bianco/nero/rosso, nessun giallo). Il driver assume un UC8179
+ * dual-controller master/slave: assumption NON validata sul pannello, vedi
+ * GxEPD2_SOLUM_ESL/README_122c.md. Con questa variante il firmware compila,
+ * ma che il pannello risponda non è dimostrato.
  *
  * Convenzione dimensioni in questo header (uguale al gemello Layout_097c.h):
  *  - NwxMh (oppure Nw x Mh) = N px in larghezza (asse X) e M px in altezza (Y)
@@ -30,7 +33,14 @@
 #include <stdint.h>
 #include <Adafruit_GFX.h>
 
-#include "GxEPD2_SOLUM_122c_960x768/GxEPD2_SOLUM_122c_960x768.h"
+/**
+ * Selezione del driver: l'header ombrello della libreria include il driver
+ * del pannello scelto e ne espone il nome come GxEPD2_SOLUM_DRIVER_CLASS,
+ * così questo file non nomina la classe concreta. Aggiungere un pannello
+ * alla libreria non cambia niente qui oltre al define.
+ */
+#define SOLUM_PANEL_122C
+#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h"
 
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>
@@ -43,14 +53,48 @@ namespace Layout
   // -------------------------------------------------------------------------
   // Driver / pannello
   // -------------------------------------------------------------------------
-  using Panel = GxEPD2_SOLUM_122c_960x768;
+  using Panel = GxEPD2_SOLUM_DRIVER_CLASS;
 
-  // Pin del driver display: stessa Waveshare ESP32 Driver Board, stesso
-  // cablaggio. Da rivedere se il pannello 12.2" richiede pin diversi.
-  inline constexpr int PIN_CS   = 15;
-  inline constexpr int PIN_DC   = 27;
-  inline constexpr int PIN_RST  = 26;
-  inline constexpr int PIN_BUSY = 25;
+  /**
+   * Pin del driver display. Il pannello ha due FFC, uno per controller:
+   * il master è quello cablato al connettore interno della Waveshare ESP32
+   * Driver Board, lo slave passa da un breakout esterno con CS e BUSY
+   * propri e tutti gli altri segnali in parallelo. Schema e procedura di
+   * verifica in GxEPD2_SOLUM_ESL/docs/122c/connessioni.html.
+   */
+  inline constexpr int PIN_CS_M   = 15;
+  inline constexpr int PIN_CS_S   = 33;
+  inline constexpr int PIN_DC     = 27;
+  inline constexpr int PIN_RST    = 26;
+  inline constexpr int PIN_BUSY_M = 25;
+  inline constexpr int PIN_BUSY_S = 35;
+
+  /**
+   * Altezza della page del template GxEPD2_3C. Sta qui e non nel .ino perchè
+   * dipende dal pannello: è il compromesso fra RAM occupata dai due buffer
+   * di page e numero di iterazioni del loop paged. Non usa la
+   * SOLUM_MAX_HEIGHT() della libreria, che su un pannello 960 px di larghezza
+   * spenderebbe ~65 KB: qui la RAM serve anche al resto del firmware.
+   */
+  inline constexpr int16_t PAGE_HEIGHT = Panel::HEIGHT / 8;
+
+  /**
+   * Costruisce il driver del pannello. Il pinout passa dalla struct uniforme
+   * della libreria, quindi la firma è identica per tutti i driver e il .ino
+   * non cambia quando cambia il pannello. Ordine dei campi: cs, dc, rst,
+   * busy, cs2, busy2, sck, miso, mosi; quelli non passati restano -1.
+   *
+   * I pin del bus servono a questo driver, che apre l'SPI da sè dentro
+   * init(): sono gli stessi HSPI della board (13/12/14) su cui lo sketch fa
+   * hspi.begin(), e il selectSPI() dello sketch resta valido perchè il driver
+   * usa _pSPIx della base.
+   */
+  inline Panel makePanel()
+  {
+    return Panel(GxEPD2_SOLUM_Pins{ PIN_CS_M, PIN_DC, PIN_RST, PIN_BUSY_M,
+                                    PIN_CS_S, PIN_BUSY_S,
+                                    13, 12, 14 });
+  }
 
   inline constexpr uint8_t ROTATION = 0;
   inline constexpr int16_t SCREEN_W = 960;

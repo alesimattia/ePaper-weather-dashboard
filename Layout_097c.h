@@ -29,8 +29,14 @@
 #include <stdint.h>
 #include <Adafruit_GFX.h>
 
-// Driver del pannello: submodule GxEPD2_SOLUM_ESL, libreria Arduino a sè
-#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_097c_960x672.h"
+/**
+ * Selezione del driver: l'header ombrello della libreria include il driver
+ * del pannello scelto e ne espone il nome come GxEPD2_SOLUM_DRIVER_CLASS,
+ * così questo file non nomina la classe concreta. Aggiungere un pannello
+ * alla libreria non cambia niente qui oltre al define.
+ */
+#define SOLUM_PANEL_097C
+#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h"
 
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>
@@ -43,7 +49,7 @@ namespace Layout
   // -------------------------------------------------------------------------
   // Driver / pannello
   // -------------------------------------------------------------------------
-  using Panel = GxEPD2_SOLUM_097c_960x672;
+  using Panel = GxEPD2_SOLUM_DRIVER_CLASS;
 
   // Pin del driver display (CS, DC, RST, BUSY) sul costruttore Panel(...).
   // Il bus HSPI (SCK/MISO/MOSI) e' condiviso fra le varianti (board-level)
@@ -52,6 +58,26 @@ namespace Layout
   inline constexpr int PIN_DC   = 27;
   inline constexpr int PIN_RST  = 26;
   inline constexpr int PIN_BUSY = 25;
+
+  /**
+   * Altezza della page del template GxEPD2_3C. Sta qui e non nel .ino perchè
+   * dipende dal pannello: è il compromesso fra RAM occupata dai due buffer
+   * di page e numero di iterazioni del loop paged. Non usa la
+   * SOLUM_MAX_HEIGHT() della libreria, che su un pannello 960 px di larghezza
+   * spenderebbe ~65 KB: qui la RAM serve anche al resto del firmware.
+   */
+  inline constexpr int16_t PAGE_HEIGHT = Panel::HEIGHT / 8;
+
+  /**
+   * Costruisce il driver del pannello. Il pinout passa dalla struct uniforme
+   * della libreria, quindi la firma è identica per tutti i driver e il .ino
+   * non cambia quando cambia il pannello. Ordine dei campi: cs, dc, rst,
+   * busy, cs2, busy2, sck, miso, mosi; quelli non passati restano -1.
+   */
+  inline Panel makePanel()
+  {
+    return Panel(GxEPD2_SOLUM_Pins{ PIN_CS, PIN_DC, PIN_RST, PIN_BUSY });
+  }
 
   // Orientamento e geometria visibile dopo setRotation(ROTATION).
   inline constexpr uint8_t ROTATION = 0;

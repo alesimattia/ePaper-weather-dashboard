@@ -19,7 +19,7 @@
 // globale perchè il simbolo lato .ino non vive in alcun namespace.
 // Il tipo concreto del pannello e' scelto dal dispatcher Layout.h.
 // ---------------------------------------------------------------------------
-extern GxEPD2_3C<Layout::Panel, Layout::Panel::HEIGHT / 8> display;
+extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 
 // ---------------------------------------------------------------------------
 // Configurazione non-segreta del modulo. Non sta in Env.h perchè non

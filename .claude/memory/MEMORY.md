@@ -8,8 +8,10 @@
 - [Design arduino binary header-less](arduino_binary_format.md) — il body di /cinema/arduino è raw packed, zero metadati
 - [Ordering flag prima del fetch](fetch_flag_ordering.md) — vincolo retry-storm durante OTA loop=10ms
 - [Fallback PROGMEM uniforme](fallback_progmem_uniformity.md) — pgm_read_byte() su ESP32 è dereferenza, descriptor unico per Flash/RAM/PSRAM; apple è 620x460 contro CINEMA_H 300
+- [Libreria GxEPD2_SOLUM_ESL](gxepd2_solum_esl_library.md) — submodule bi-driver: ombrello GxEPD2_SOLUM.h con SOLUM_PANEL_*/GxEPD2_SOLUM_DRIVER_CLASS/SOLUM_MAX_HEIGHT, pinout uniforme GxEPD2_SOLUM_Pins, contratto dei 5 metodi che GxEPDImage pretende, regole per aggiungere un driver, come si compilano gli examples
+- [Driver custom GxEPD2_122c](gxepd2_122c_driver.md) — 12.2" nel submodule: base UC8179 assunta e NON validata, controller in discussione (SSD16xx?), cosa devono stabilire dual_panel_finder e il multimetro, tabella delle assumption, perchè i fix del 097c non si portano
 - [Driver custom GxEPD2_097c](gxepd2_097c_driver.md) — submodule GxEPD2_SOLUM_ESL (libreria Arduino GPL-3.0, dipende da GxEPD2); B/W/R verificati, questione 4o colore APERTA e cosa deve misurare la sonda panel_diagnostic, init di fabbrica della 9.7", identificazione del pannello, perchè la base è SSD1677 e non SSD2677, pista del refresh differenziale a ~600 ms, vincoli e costi noti
 - [SSD1677 command set](ssd1677_command_set.md) — riferimento verbatim dal datasheet: le 2 sole RAM e le loro polarità, 0x22 con la tabella dei parametri E la decodifica per bit (da cui 0xFC e 0xF4, fuori tabella), 0x21, deep sleep 0x10, pattern 0x46/0x47, registri in lettura inutilizzabili senza SDO, estrazione del PDF con pdftotext
-- [Separazione layout/logica](layout_separation.md) — Layout.h dispatcher + Layout_097c.h / Layout_122c.h: come supportare 2 display con stessa logica
+- [Separazione layout/logica](layout_separation.md) — Layout.h dispatcher + Layout_097c.h / Layout_122c.h: Panel/PAGE_HEIGHT/makePanel, come supportare N display con stessa logica e .ino invariato
 - [Modulo Mail Gmail](mail_module.md) — Mail.h riusa OAuth Google del Calendar (token condiviso), batch endpoint, no UI, best-effort
 - [Mail.h design preferences](feedback_mail_design.md) — regole utente: best-effort, mail-prima-dei-calendari, subject 60 char, fetch-min separato, zero nuovi secret

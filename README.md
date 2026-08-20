@@ -2,13 +2,19 @@
 
 Firmware Arduino/ESP32 + tool Python per pilotare display e-paper a colori
 tramite la libreria [GxEPD2](https://github.com/ZinggJM/GxEPD2) di
-Jean-Marc Zingg. Il repository supporta due pannelli SOLUM (controller
-SSD1677, **4 colori nativi** B/N/R/Y) con la stessa logica applicativa,
-selezionabili a compile-time via `#define DISPLAY_VARIANT_*` (vedi
+Jean-Marc Zingg. Il repository supporta due pannelli SOLUM con la stessa
+logica applicativa, selezionabili a compile-time via
+`#define DISPLAY_VARIANT_*` (vedi
 [Selezione del display](#selezione-del-display)):
 
-- **SOLUM ESL 9.7"** (672w × 960h nativo → 960w × 672h landscape) — driver custom incluso.
-- **SOLUM 12.2"** (768w × 960h nativo → 960w × 768h landscape) — driver custom richiesto (branch `Solum_12_2`).
+- **SOLUM ESL 9.7"** (672w × 960h nativo → 960w × 672h landscape, controller
+  SSD1677) — driver in uso e verificato su B/N/R.
+- **SOLUM 12.2"** (960w × 768h, controller UC8179 assunto) — driver presente
+  ma **non validato sul pannello**.
+
+Entrambi i driver stanno nel submodule
+[`GxEPD2_SOLUM_ESL/`](GxEPD2_SOLUM_ESL), che è una libreria Arduino a sè
+stante.
 
 > **Convenzione dimensioni in questo README**: `NwxMh` (o `Nw × Mh`) significa
 > `N` pixel in larghezza (asse X) e `M` pixel in altezza (asse Y). Le
@@ -94,7 +100,7 @@ ogni modifica dei parametri.
 | Pannello | Risoluzione (landscape) | Colori | Controller | Note |
 |----------|------------|--------|------------|------|
 | **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). Il 4° colore via comando `0x28` non compare sul pannello ([questione aperta](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta)). Selezione: `#define DISPLAY_VARIANT_097C` |
-| **SOLUM 12.2"** | 960w × 768h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom (`GxEPD2_SOLUM_122c_960x768/`) richiesto, vive nel branch `Solum_12_2`. Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
+| **SOLUM 12.2"** | 960w × 768h | B/N + rosso | UC8179 dual-controller, **assunto** | Driver nel submodule (`GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_122c_960x768.h`), **non validato sul pannello**: nemmeno il controller è confermato ([README_122c.md](GxEPD2_SOLUM_ESL/README_122c.md)). Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
 | Good Display **GDEY0420F51** | 400w × 300h | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400w × 300h (no firmware completo) |
 
 Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**.

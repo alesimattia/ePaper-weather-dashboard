@@ -5,16 +5,23 @@ type: reference
 ---
 
 Il driver del pannello SOLUM 9.7" (672w × 960h native portrait, controller SSD1677; bianco, nero e
-rosso verificati sul pannello) è una **libreria Arduino a sè stante**, non un pezzo di `A:\epd`:
+rosso verificati sul pannello) sta in una **libreria Arduino a sè stante**, non in `A:\epd`. La
+libreria ospita due driver: struttura, ombrello di selezione, pinout uniforme e contratto in
+[[gxepd2_solum_esl_library]]; il fratello 12.2" in [[gxepd2_122c_driver]].
 
 - submodule al path `A:\epd\GxEPD2_SOLUM_ESL`, branch `main`
 - repo <https://github.com/alesimattia/GxEPD2_SOLUM_ESL>, fork di ZinggJM/GxEPD2 in cui l'albero
   upstream non è duplicato: l'unico branch remoto è `main`
 - header in `src/GxEPD2_SOLUM_097c_960x672.h`; `library.properties` dichiara
-  `depends=GxEPD2 (>=1.6.9),Adafruit GFX Library` e `architectures=esp32`
+  `depends=GxEPD2 (>=1.6.9),Adafruit GFX Library`, `architectures=esp32` e
+  `includes=GxEPD2_SOLUM.h` (l'ombrello, non i driver)
+- il namespace `GxEPDImage` **non** sta in questo header: è in `src/GxEPDImage.h`, condiviso da
+  tutti i driver della libreria
+- due costruttori: `(cs, dc, rst, busy)` nativo e `explicit (const GxEPD2_SOLUM_Pins&)`, che è la
+  firma uniforme con cui gli sketch costruiscono qualunque driver della libreria
 - licenza **GPL-3.0**, obbligata: il driver è copia modificata di `GxEPD2_1330c_GDEM133Z91`
-- include nello sketch, in `Layout_097c.h`:
-  `#include "GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_097c_960x672.h"`
+- lo sketch non include questo header direttamente: `Layout_097c.h` definisce `SOLUM_PANEL_097C` e
+  include `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h`
 - le modifiche al driver si committano e pushano nel suo repo; nel padre si aggiorna il puntatore
   del submodule. `A:\epd` va clonato con `--recursive` (submodule anche `webapp`)
 - upstream GxEPD2 sta in `A:\epd\GxEPD2-master`: clone gitignorato al tag 1.6.9 (`de82887`), copia
@@ -216,8 +223,7 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   SSD2677 su questo pannello manderebbe `0x10` per iniziare l'immagine, cioè lo addormenterebbe, e
   `0x12` per il refresh, cioè lo resetterebbe. SSD2677 (con template `GxEPD2_4C`, base
   `GDEY116F51`, 2bpp packed su `0x10`) è la strada giusta solo per un pannello davvero a 4 colori:
-  i SOLUM BWY fino alla 11.6", non questa 9.7". Vale per il branch `Solum_12_2`: finchè quel
-  pannello risponde a `0x24`/`0x26` resta correttamente su base SSD1677.
+  i SOLUM BWY fino alla 11.6", non questa 9.7".
 
 - **Refresh differenziale, la pista per ~600 ms invece di 22 s.** Il fratello monocromatico dello
   stesso silicio, `gdem/GxEPD2_1330_GDEM133T91` (960×680, SSD1677), dichiara
@@ -250,10 +256,11 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
 - **`showImage` hardcoda `pgm=true`** (`src/GxEPD2_SOLUM_097c_960x672.h:185` e `:221-223`): vale per
   immagini pre-compilate nello sketch, non per buffer scaricati via HTTP.
 
-- **Variante 122c**: il pannello SOLUM 12.2" (960w × 768h landscape post-rotation) ha il proprio
-  driver `GxEPD2_SOLUM_122c_960x768`, che vive nel branch `Solum_12_2` e non sul filesystem di
-  `main`, con la stessa architettura SSD1677. Lo sketch sceglie il driver via `Layout::Panel`
-  (typedef in `Layout_097c.h` / `Layout_122c.h`) — vedi `layout_separation.md`.
+- **Variante 122c**: il pannello SOLUM 12.2" (960w × 768h) ha il proprio driver
+  `GxEPD2_SOLUM_122c_960x768` nello stesso `src/` della libreria, ma **non** è SSD1677: assume
+  UC8179 dual-controller e non è validato su hardware — vedi [[gxepd2_122c_driver]]. Lo sketch
+  sceglie il driver via `Layout::Panel` / `Layout::makePanel()` (in `Layout_097c.h` /
+  `Layout_122c.h`) — vedi [[layout_separation]].
 
 - **Il test a MUX ridotto a banda non va eseguito**: l'utente ha deciso di non percorrere quella
   strada. Il codice del test sta nel probe `A:\rd\probe_refresh_097c` e resta fermo.
