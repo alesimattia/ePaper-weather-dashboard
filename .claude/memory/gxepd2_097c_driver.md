@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_097c_960x672
-description: Dove vive il driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL, libreria Arduino), identificazione del pannello, stato APERTO della questione 4o colore e cosa deve misurare la sonda, sequenza di init di fabbrica, vincoli architetturali e costi noti
+description: Dove vive il driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL, libreria Arduino), identificazione del pannello, questione 4o colore APERTA con l'etichetta sul vetro come verifica diretta, cosa deve misurare la sonda, sequenza di init di fabbrica, vincoli architetturali e costi noti
 type: reference
 ---
 
@@ -85,7 +85,7 @@ Le combinazioni per pixel che due piani a 1 bit possono esprimere sono esattamen
   percorso: se quello non torna, dichiara inattendibili anche gli altri due invece di stampare
   numeri senza senso. Ricablare la linea avrebbe senso solo per `0x2E` e per i byte G..J di `0x37`
   (module ID / waveform version), che identificherebbero il modulo senza ambiguità.
-- **Sonda**: `A:\epd\GxEPD2_SOLUM_ESL\examples\panel_diagnostic\panel_diagnostic.ino`, cioè
+- **Sonda**: `A:\epd\GxEPD2_SOLUM_ESL\examples\097c\panel_diagnostic\panel_diagnostic.ino`, cioè
   dentro il **submodule**, non nel progetto consumer: appartiene al processo di costruzione del driver, e
   `examples/` è la posizione che la convenzione delle librerie Arduino prevede per gli sketch.
   Sketch autonomo (solo `SPI.h`, nè GxEPD2 nè il driver custom). Non viene compilato dal build del
@@ -168,6 +168,26 @@ la cifra `4`: potrebbe essere una SKU di famiglia e non una garanzia per taglia.
 9.7" sia una delle taglie in cui l'opzione 4 colori non viene prodotta, e la sostengono l'enum OEPL
 e il crash del driver unissd; contro c'è la pagina 9.7" del F5, che dichiara BWRY per quella taglia
 specifica. Non è dirimente in nessuna delle due direzioni: serve la sonda.
+
+**C'è una via di verifica più diretta della sonda: l'etichetta sul vetro.** Le foto interne delle
+pratiche FCC mostrano che SOLUM serigrafa i colori **sul pannello stesso**, taglia per taglia e
+unità per unità: il 9.7" `EL097F6W4A` porta `NEWTON PRO 9.7" BWRY Normal`, mentre 11.6" e 12.2"
+della stessa generazione portano `BWR normal`. Quindi **leggere l'etichetta del donor del progetto
+dice se il film è BWR o BWRY** senza misurare niente.
+
+Questo però non chiude la questione, la sposta: dimostra che un 9.7" BWRY si produce e che la
+cifra `4` del codice modello non è solo catalogo, ma non dice nulla sul donor del progetto (che è
+un F5 `EL097F5C4C`, l'etichetta letta è di un F6). Ed è **compatibile** con i riscontri qui sopra:
+se i pannelli SOLUM BWRY veri usano il controller UC/JD a nibble da 2 bit, il 9.7" BWRY può essere
+proprio una variante con silicio diverso da quello del donor, che risponde a SSD1677. Le due letture
+restano entrambe in piedi; a deciderle basta l'etichetta del proprio pannello, e in subordine la
+sonda.
+
+Il PDF sta in `GxEPD2_SOLUM_ESL/docs/097c/fcc/fcc_2AFWN-EL097F6W4A_internal_photos.pdf`, i JPEG del
+pannello e della scheda tag nella stessa cartella; il confronto fra le tre taglie è in
+`GxEPD2_SOLUM_ESL/docs/122c/identificazione_pannello.md` ([[gxepd2_122c_driver]]). In `docs/` il
+materiale è separato per pannello: `097c/` il 9.7", `122c/` il 12.2" con dentro il confronto 11.6",
+alla radice quello che vale per entrambi (SSD1677, datasheet Newton, board Waveshare, sorgenti OEPL).
 
 - Nelle pagine F5 del PDF `pdftotext -layout` sfalsa le etichette di una riga rispetto ai valori
   (si vede da `ACTIVE DISPLAY AREA -> 168.05 x 224.07 x 14.81 mm`, che è la DIMENSION): va

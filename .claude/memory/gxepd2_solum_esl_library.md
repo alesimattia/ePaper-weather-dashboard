@@ -15,11 +15,13 @@ src/GxEPD2_SOLUM.h                  ombrello di selezione, unico header che gli 
 src/GxEPD2_SOLUM_Pins.h             struct di pinout uniforme fra i driver
 src/GxEPDImage.h                    namespace GxEPDImage + template showImage(), condiviso
 src/GxEPD2_SOLUM_097c_960x672.h     driver 9.7" SSD1677, vedi [[gxepd2_097c_driver]]
-src/GxEPD2_SOLUM_122c_960x768.h     driver 12.2" UC8179 assunto, vedi [[gxepd2_122c_driver]]
-examples/panel_diagnostic/          sonda del 9.7"
-examples/12_2c/dual_panel_finder/   sonda del 12.2"
-examples/12_2c/color_cycle/         primo uso del driver 12.2"
-docs/                               PDF e sorgenti OEPL; docs/122c/ cablaggi del 12.2"
+src/GxEPD2_SOLUM_122c_960x768.h     driver 12.2" SSD16xx, vedi [[gxepd2_122c_driver]]
+examples/097c/panel_diagnostic/     sonda del 9.7"
+examples/12_2c/dual_panel_finder/   unico example del 12.2": probe del silicio a SPI
+                                    diretta + verifica del driver, due fasi separabili
+docs/097c/, docs/122c/              materiale per pannello (cablaggi, foto FCC, identificazione)
+docs/                               alla radice quello che vale per entrambi: datasheet SSD1677,
+                                    datasheet di famiglia Newton, board Waveshare, sorgenti OEPL
 README.md                           libreria + driver 9.7"; README_122c.md il 12.2"
 ```
 
@@ -52,6 +54,10 @@ significa assente e i campi non passati lo prendono dal default member initializ
 il core ESP32 compila a gnu++17). Ogni driver ha un `explicit Driver(const GxEPD2_SOLUM_Pins&)` che
 delega al proprio costruttore nativo leggendo i campi che gli servono.
 
+Nota sullo snippet qui sopra: serve a mostrare la forma della struct, non un pinout valido. Il `33`
+è il CS del secondo controller e su questa board va sostituito con **32**, perchè il 33 non è
+portato fuori — vedi [[waveshare_esp32_driver_board]] e [[gxepd2_122c_driver]].
+
 **Contratto di `GxEPDImage.h`.** Il namespace e il template `showImage()` sono **unici** per la
 libreria, non duplicati per driver: due header driver possono stare nella stessa translation unit.
 Il template è indipendente dal silicio ma pretende cinque metodi pubblici da ogni driver —
@@ -69,15 +75,19 @@ libreria*):
 2. costruttore `explicit Driver(const GxEPD2_SOLUM_Pins&)` oltre a quelli nativi. Da qui segue che
    ogni pin va guardato con `>= 0` prima di `pinMode()` / `digitalWrite()`, come fa
    `GxEPD2_EPD::init()` e `_writeCommand()` della base: `-1` è un valore legale della struct e non
-   deve arrivare all'API Arduino;
+   deve arrivare all'API Arduino. Ricordare anche il caso "pin valorizzato ma inutilizzabile": se
+   un CS è assente il BUSY corrispondente va ignorato comunque, perchè un controller mai selezionato
+   non può essere occupato e il suo pin può essere flottante (la doppia guardia in
+   `_waitWhileAnyBusy` del 122c, vedi [[gxepd2_122c_driver]]);
 3. bus SPI **sempre** da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`, mai dall'oggetto `SPI`
    globale: un default proprio si imposta chiamando `selectSPI()` nel costruttore, non cablando le
    `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte;
 4. membro `panel`: i driver prendono in prestito un valore di `GxEPD2::Panel` upstream. **Non**
    scegliere `GDEW0154Z04` nè `GDE0213B1`: i template li trattano in modo speciale
    (`GxEPD2_3C.h:373` e `:504`, `GxEPD2_BW.h:249` in `A:\epd\GxEPD2-master`) e il driver si
-   porterebbe dietro il workaround di un altro pannello. Il 097c usa `GDEM133Z91`, il 122c
-   `GDEY1248Z51`, nessuno dei due nelle liste dei quirk;
+   porterebbe dietro il workaround di un altro pannello. Entrambi i driver usano
+   `GDEM133Z91`, che è un pannello SSD1677 e non è nelle liste dei quirk: è un identificatore preso
+   a prestito, non una dichiarazione di modello;
 5. tre righe nell'ombrello: ramo `#elif`, include, `GxEPD2_SOLUM_DRIVER_CLASS`;
 6. `library.properties` non si tocca: `includes=GxEPD2_SOLUM.h`, non i driver.
 

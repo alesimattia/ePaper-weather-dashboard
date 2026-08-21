@@ -55,7 +55,7 @@ globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_consumer]].
 | variante | flash | RAM globali |
 |---|---|---|
 | `DISPLAY_VARIANT_097C` | 1 358 336 B (43%) | 78 368 B (23%) |
-| `DISPLAY_VARIANT_122C` | 1 358 956 B (43%) | 81 592 B (24%) |
+| `DISPLAY_VARIANT_122C` | 1 359 044 B (43%) | 81 592 B (24%) |
 
 I ~3,2 KB di RAM in più della 122c sono i buffer di page più alti (96 righe invece di 84). Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 

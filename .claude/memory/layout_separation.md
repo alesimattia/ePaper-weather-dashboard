@@ -20,7 +20,7 @@ Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960w x 672h e SOLUM 12.2" 9
 - `makePanel()` — factory che costruisce il driver passando `GxEPD2_SOLUM_Pins`, la struct di pinout uniforme della libreria. È ciò che assorbe le arità diverse dei costruttori (il 12.2" ha due CS e due BUSY) e tiene il `.ino` a una riga sola:
   `GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());`
 
-**Why:** supportare più pannelli con lo stesso codice applicativo. Entrambi i driver stanno nel submodule `GxEPD2_SOLUM_ESL` (vedi [[gxepd2_solum_esl_library]]); il 12.2" **non è validato su hardware**, vedi [[gxepd2_122c_driver]].
+**Why:** supportare più pannelli con lo stesso codice applicativo. Entrambi i driver stanno nel submodule `GxEPD2_SOLUM_ESL` (vedi [[gxepd2_solum_esl_library]]); del 12.2" **è validata una sola banda** (960x384 stampa con una coda cablata), mentre il funzionamento delle due bande insieme non è ancora provato, vedi [[gxepd2_122c_driver]].
 
 **How to apply:**
 - Modifiche al layout (coord, font, dimensioni cinema): editare SOLO `Layout_097c.h` e/o `Layout_122c.h`. Mai hardcoded nei moduli.

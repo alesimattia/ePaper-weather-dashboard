@@ -118,7 +118,7 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino del driver SOLUM 9.7" (672w x 960h BWRY native portrait)
 │   ├── src/                            # Header-only
 │   │   └── GxEPD2_SOLUM_097c_960x672.h # Classe + namespace GxEPDImage
-│   ├── examples/panel_diagnostic/      # Diagnostica del pannello: solo SPI.h, nessuna libreria
+│   ├── examples/097c/panel_diagnostic/ # Diagnostica del pannello: solo SPI.h, nessuna libreria
 │   ├── docs/                           # Cataloghi SOLUM + schematico Waveshare V3 (PDF)
 │   ├── library.properties              # name=GxEPD2_SOLUM_ESL, depends=GxEPD2 (>=1.6.9)
 │   ├── LICENSE                         # GPL-3.0, ereditata da GxEPD2

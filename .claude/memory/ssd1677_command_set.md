@@ -1,6 +1,6 @@
 ---
 name: SSD1677 command set e registri (estratto dal datasheet Rev 1.0)
-description: Riferimento verbatim dei comandi SSD1677 che servono al driver SOLUM 9.7" - polarità delle due RAM, tabella parametri di 0x22, 0x21, deep sleep, pattern hardware, registri in lettura, cosa il datasheet NON contiene, più la ricetta per riestrarre il PDF
+description: Riferimento verbatim dei comandi SSD1677 che servono ai driver SOLUM 9.7" e 12.2" - polarità delle due RAM, tabella parametri di 0x22, 0x21, MUX e TB riservato, data entry, finestre in pixel, HV Ready e VCI detection misurabili col BUSY, deep sleep, pattern hardware, registri in lettura, cosa il datasheet NON contiene, più la ricetta per riestrarre il PDF
 type: reference
 ---
 
@@ -45,7 +45,7 @@ Dopo `0x24` / `0x26` i puntatori di indirizzo avanzano da soli fino al comando s
 immagine. Le combinazioni per pixel documentate sono 4: (BW,RED) = (1,0), (0,0), (1,1), (0,1). Che
 colore renda ciascuna sul film montato, e se `0x28` su questo modulo scriva comunque qualcosa, lo
 dice solo la misura — la fa
-`GxEPD2_SOLUM_ESL\examples\panel_diagnostic\panel_diagnostic.ino`, vedi
+`GxEPD2_SOLUM_ESL\examples\097c\panel_diagnostic\panel_diagnostic.ino`, vedi
 [[gxepd2_097c_driver]].
 
 ## 0x22 Display Update Control 2 — tabella parametri completa
@@ -112,11 +112,12 @@ software: convenzione equivalente.
 
 | Cmd | Significato | Note |
 |---|---|---|
-| `0x01` | Driver Output Control (MUX) | A[9:0] POR `2A7h` = 680 MUX. `{0x9F,0x02,0x00}` = 671 -> 672 gate line |
+| `0x01` | Driver Output Control (MUX + direzione scan) | A[9:0] POR `2A7h` = 680 MUX, gate line = A[9:0]+1. `{0x9F,0x02,0x00}` = 671 -> 672 gate line. B[2:0]: B[2] GD (primo gate output, POR 0 = G0), B[1] SM (ordine di scansione: POR 0 = G0,G1,G2... interlacciato sinistra/destra; 1 = pari poi dispari), B[0] **TB = 1 è dichiarato Reserved**: TB=0, scan da G0 a G679, ed è l'unica opzione. **Non esiste una reverse scan hardware sull'asse gate** — conseguenza diretta sul 122c, dove il ribaltamento della banda deve vivere nel data path, vedi [[gxepd2_122c_driver]] |
 | `0x0C` | Booster soft start | 5 byte; i livelli in OTP hanno E[7:0] = `0x40` (Level 1) / `0x80` (Level 2) |
 | `0x10` | **Deep Sleep mode** | A[1:0]: `00` Normal [POR], `11` Enter Deep Sleep. In deep sleep **il BUSY resta alto**, e questo lo rende verificabile a occhio sul pin. `0x11` ha A[1:0]=01, che nella tabella non c'è; `0x03` ha A[1:0]=11 ed è quello che usa OEPL sulla stessa famiglia. Quale dei due il modulo accetti davvero lo misura la sonda |
-| `0x11` | Data Entry mode | A[2:0] POR `011`. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0 |
-| `0x15` | Setup voltage detect | |
+| `0x11` | Data Entry mode | A[1:0] = ID: `00` Y-- X--, `01` Y-- X++, `10` Y++ X--, `11` Y++ X++ [POR]. A[2] = AM, direzione di avanzamento del contatore dopo ogni byte: `0` in X [POR], `1` in Y. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0. Attenzione: il decremento cambia **dove atterrano i byte**, non l'ordine dei bit dentro il byte, quindi da solo non specchia un'immagine |
+| `0x14` | **HV Ready Detection** | A[6:4] = n, cool down `10ms x (n+1)`; A[2:0] = m, numero di cicli; durata massima `10ms x (n+1) x m`. `A[7:0] = 00h` fa una detection singola. Richiede **CLKEN=1 e ANALOGEN=1** (cioè power on via `0x22`=0xC0 prima). "BUSY pad will output high during detection", e "the detection will be completed when HV is ready": quindi **la durata del BUSY è l'esito**, leggibile anche senza SDO — molto più corta del massimo = alte tensioni salite, uguale al massimo = mai salite. L'esito esplicito sta in `0x2F` bit 5 |
+| `0x15` | **VCI Detection** | A[2:0] livello di soglia: `011` 2.2 V, `100` 2.3 V [POR], `101` 2.4 V, `110` 2.5 V, `111` 2.6 V. Richiede CLKEN=1 e ANALOGEN=1. BUSY alto durante la misura, esito in `0x2F` bit 4. Qui il datasheet **non** promette una conclusione anticipata, quindi la durata dice meno che in `0x14`: quello che conta è che il BUSY reagisca, cioè che il blocco analogico sia vivo |
 | `0x18` | Temperature Sensor Control | A[7:0] = `0x48` [POR] sensore esterno, `0x80` interno |
 | `0x1A` | Write temperature register | 12 bit, POR `7FFh` |
 | `0x1B` | **Read temperature register** | frame di lettura: byte0 = A[11:4], byte1 = A[3:0] nei bit alti. `(b0<<8\|b1)>>4` dà A[11:0] |
@@ -127,7 +128,7 @@ software: convenzione equivalente.
 | `0x2F` | **Status Bit Read** | POR `0x01`. A[5] HV Ready flag (0 ready), A[4] VCI detect flag (0 normale), A[2] Busy flag, A[1:0] **Chip ID** [POR=01]. Qui finiscono anche gli esiti di VCI detect e HV Ready detect |
 | `0x37` | registro opzioni display, 10 byte A..J | B[7:0]..F[3:0] = bit Display Mode per ogni stadio waveform WS[35:0] (`0`=Mode 1, `1`=Mode 2); F[6] = RAM ping-pong per Mode 2; **G[7:0]~J[7:0] = module ID / waveform version**. Tutto memorizzabile in OTP |
 | `0x3C` | Border waveform control | il driver manda `0x01` (LUT1, bianco), OEPL `0x05` sulle altre taglie |
-| `0x44` / `0x45` | finestra RAM X / Y | Y: A[9:0] YSA POR `000h`, B[9:0] YEA POR `2A7h` |
+| `0x44` / `0x45` | finestra RAM X / Y | **coordinate in pixel, non in byte**: X ha A[9:0] XSA POR `000h` e B[9:0] XEA POR `3BFh` = **959**, cioè l'ultimo source. Y: A[9:0] YSA POR `000h`, B[9:0] YEA POR `2A7h` = 679 |
 | `0x4E` / `0x4F` | cursore RAM X / Y | POR `000h` |
 | `0x46` | Auto Write **RED** RAM for Regular Pattern | vedi sotto |
 | `0x47` | Auto Write **B/W** RAM for Regular Pattern | vedi sotto |
@@ -164,6 +165,12 @@ sui due piani immagine — qualunque altro valore passa dal bus.
   entrambi con esito leggibile da `0x2F`
 
 ## Vincolo pratico che annulla tutte le letture
+
+**Ma HV Ready e VCI si misurano comunque, senza SDO**: `0x14` e `0x15` alzano il BUSY per la
+durata della detection, e per `0x14` il datasheet dichiara che la detection si conclude quando HV è
+pronta. Cronometrare il BUSY dà l'esito senza leggere `0x2F`, ed è così che
+`examples/12_2c/dual_panel_finder` stabilisce se una coda del 12.2" ha le alte tensioni: vedi
+[[gxepd2_122c_driver]]. Resta vero che tutto il resto delle letture non è disponibile.
 
 `0x1B`, `0x27`, `0x2E`, `0x2F` e il read-back di `0x37` richiedono la linea dati in uscita del
 pannello. Sul FPC 24 pin **non c'è SDO** (pin 12 = solo SDI, schematico Waveshare V3 in
