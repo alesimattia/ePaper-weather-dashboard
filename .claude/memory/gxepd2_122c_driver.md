@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_122c_960x768 (pannello SOLUM 12.2")
-description: Il 12.2" nel submodule - identità Newton PRO EL122H6W4A, controller SSD16xx 2x960x384 con split sull'asse corto, command set e geometria già allineati nel codice, mirror della banda nel data path, seconda coda FFC muta e le tre ipotesi, dove stanno le evidenze FCC
+description: Il 12.2" nel submodule - identità Newton PRO EL122H6W4A, controller SSD16xx 2x960x384 con split sull'asse corto, command set e geometria già allineati nel codice, mirror della banda nel data path, seconda coda FFC muta e le quattro ipotesi (compreso il secondo controller indirizzato con opcode|0x80 senza secondo CS), i pin M/S# e CL della cascade presenti nel pin table dell'SSD1677, come si decodifica il codice modello SOLUM, dove stanno le evidenze FCC
 type: reference
 ---
 
@@ -24,7 +24,8 @@ diverso fra le taglie (24 sul 9.7", 21 misurati sul 12.2"), quindi la serie non 
 identico. 768×960 px, 102 dpi, area attiva
 190.1×237.6 mm, pitch quadrato 0.2475 mm. Label 216.2×260×15.35 mm, 586 g, 6 CR2450.
 Tag di fabbrica: scheda `PRO_12.2_Nordic_TAG_R02`, MCU **nRF52811**, nessun TCON discreto
-(i controller sono i COF alla base delle due code), **due reti di boost** una per controller.
+(i controller sono i COF alla base delle due code), e **una sola rete di boost, accanto a un solo
+dei due connettori FFC**: l'altro è nudo (vedi la sezione sulla cascade).
 Famiglia: il 9.7" è **BWRY**, l'11.6" e il 12.2" sono **BWR** (etichette dei pannelli).
 
 **GEOMETRIA E CONTROLLER: RISOLTI, e il driver è allineato.**
@@ -60,24 +61,57 @@ Famiglia: il 9.7" è **BWRY**, l'11.6" e il 12.2" sono **BWR** (etichette dei pa
   quindi legate da una rotazione di 180° **geometrica**; l'orientamento **elettrico** no, perchè
   il fan-out sul vetro può incrociare le linee. Da qui il default `setSlaveMirror(true, true)` e
   il fatto che resti configurabile.
-- **Ribaltamento della banda nel data path**, non nei registri: l'SSD1677 non ha reverse scan
-  hardware (`0x01` bit TB = 1 è Reserved). `ScreenPart` porta `_mirror_x`/`_mirror_y` e
+- **Ribaltamento della banda nel data path**, che è una scelta di implementazione e non un
+  obbligo: quello che manca è la reverse scan delle **gate** (`0x01` bit TB = 1 è Reserved), mentre
+  il verso del **contatore di indirizzo** è configurabile da `0x11` A[1:0] su entrambi gli assi.
+  Specchiare col solo entry mode è la strada che usa GxEPD2 sul GDEY0579Z93 (entry mode diverso per
+  chip più coordinate rimappate, nessun dato toccato) e risparmierebbe reverse di byte e bit per
+  riga; resta da verificare sul pannello che l'ordine dei bit dentro il byte torni da sè. `ScreenPart` porta `_mirror_x`/`_mirror_y` e
   inverte ordine righe nella banda, ordine byte nella riga e bit nel byte (`_reverseBits`),
   riposizionando la finestra RAM in modo simmetrico. Default: master normale, slave 180°;
   `setMasterMirror()` / `setSlaveMirror()` provano le combinazioni dallo sketch.
 
-**SECONDA CODA MUTA.** Lo stesso cablaggio spostato sull'altro FFC non aggiorna nulla.
-Ipotesi in ordine, da distinguere con una sola sessione di multimetro (mappa GND/VCI su
-entrambe le code + verifica che i pin di boost siano cablati anche sul secondo attacco):
+**SECONDA CODA MUTA: è la coda dello SLAVE di una coppia in CASCADE, e da sola non può
+funzionare.** Il firmware di produzione stampa già correttamente la metà servita dalla coda che
+risponde; lo stesso cablaggio spostato sull'altro FFC non aggiorna nulla, ed è il comportamento
+previsto.
 
-1. **ordine dei pin ribaltato**: le code escono da bordi opposti, se sono la stessa parte la
-   seconda è ruotata di 180° e il pin *n* cade sul pin *N+1-n*;
-2. **rail di boost non portati** sul secondo attacco → logica sì, elettroforesi no;
-3. **BUSY o RST fuori posizione** → il driver resta appeso e nessun comando arriva.
+Meccanismo, dal datasheet **SSD1683 §6.12** (archiviato in
+`docs/SSD1683_Rev1.0_2021-01_Solomon-Systech.pdf`): il pin `M/S#` fissa il ruolo (VDDIO master,
+VSS slave); **nello slave oscillatore e booster/regolatore sono disabilitati**, e clock CL più
+tutte le tensioni (VDD, VGH, VGL, VSH1, VSH2, VSL, VCOM) **devono arrivare dal master**. Il master
+si mette in cascade dal registro **`0x21`, secondo parametro, bit B[4] *ckouten***.
 
-L'ipotesi "lo slave non genera le alte tensioni e dipende dal master" è **indebolita** dalle
-foto del tag di fabbrica: due reti di boost identiche, una per coda, mentre 9.7" e 11.6"
-single-controller ne hanno una sola.
+Evidenze, dalla più diretta:
+
+1. sul tag di fabbrica **un connettore FFC ha tutta l'elettronica analogica** (switcher, induttore,
+   diodi, condensatori) e **l'altro è nudo**, con un fascio di piste che arriva dal primo —
+   verificato sulle foto PRO (`docs/122c/fcc/122_pcb_ffc_con_boost.jpg` contro
+   `122_pcb_ffc_secondo.jpg`) e su quelle Core a 4032x3024. **Questa è la correzione di una
+   conclusione precedente**: non ci sono due reti di boost, ce n'è una sola;
+2. l'HAL del tag nRF52811 ha **un solo `EPD_CS`** per il pannello: due chip su un CS non sono
+   separabili se non per opcode ([[oepl_nrf52811_tag_fw]]);
+3. `dualssd.cpp` di OEPL indirizza il secondo chip con **opcode|0x80** e scrive `0x21` con
+   **B = 0x10**, che è esattamente il bit di cascade;
+4. GxEPD2 upstream fa lo stesso per il Good Display **GDEY0579Z93** (5.79" 792x272, SSD1683, due
+   chip): `A:\epd\GxEPD2-master\src\gdey3c\GxEPD2_579c_GDEY0579Z93.cpp`.
+
+Conseguenza sul cablaggio: **non serve un secondo CS** (nè GPIO32 nè altro). Servono un solo
+CS/SCK/MOSI/DC/RST/BUSY condivisi e un **ponte passivo fra le due code** che porti CL e i rail dal
+connettore master a quello slave, cioè quello che fa il tag di fabbrica. `BS1` basso su entrambe.
+
+Restano possibili, ma spiegano solo il silenzio e non l'assenza di secondo CS e secondo boost sul
+tag: ordine dei pin ribaltato sulla seconda coda (le code escono da bordi opposti, il pin *n* può
+cadere sul pin *N+1-n*), BUSY o RST fuori posizione. Si distinguono con una sessione di
+multimetro: mappa GND/VCI su entrambe le code e continuità dei rail fra i due FFC.
+
+**Base per riscrivere il driver**: `GxEPD2_579c_GDEY0579Z93` di GxEPD2, non più lo scheletro del
+1248c (che è UC8179 con CS separati — come `gdem/GxEPD2_1085_GDEM1085T51`, l'altro modo, quello
+sbagliato per questa famiglia). Da lì si prende: init in broadcast senza offset (`0x12`, `0x18`,
+`0x1A`, `0x22`=0xB1 + `0x20`), `_setPartialRamArea(..., target)` con target 0x00/0x80 che offsetta
+`0x11/0x44/0x45/0x4E/0x4F`, piani `0x24|target` / `0x26|target`, refresh e power on in broadcast, e
+soprattutto **il mirror di una metà fatto con l'entry mode** (`0x11` = 0x02 su un chip, 0x03
+sull'altro) invece che ribaltando byte e bit nel data path come fa oggi il nostro driver.
 
 **OEPL, stato corrente** (`Shared_OEPL_Definitions` letto live, non lo snapshot in `docs/`):
 niente 12.2". Le taglie grandi arrivano a `STYPE_SIZE_116` 0x65, `STYPE_SIZE_116B` 0x4A,
@@ -110,9 +144,24 @@ esclude il formato del descrittore.
 
 **Bus SPI**: passa da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`, ScreenPart comprese —
 che ne tengono un **riferimento**, non una copia, così un `selectSPI()` vale anche per loro. I
-costruttori impostano come default `SPI` globale a 20 MHz; lo sketch lo sostituisce chiamando
+costruttori impostano come default `SPI` globale a **10 MHz** — era 20, abbassato perchè alcuni
+SSD1677 non tollerano clock superiori e con una sola banda validata un clock fuori specifica è una
+variabile in più; costa ~130 ms su un refresh da 25 s. Lo sketch lo sostituisce chiamando
 `selectSPI()` prima di `init()`. Il driver apre il bus da sè dentro `init()` → `_initSPI()`,
 per questo il pinout gli passa anche `sck`/`miso`/`mosi`.
+
+**Indirizzamento selezionabile a runtime**: `enum AddressingMode { ADDRESSING_DUAL_CS,
+ADDRESSING_CASCADE }` + `setAddressingMode()`, default `DUAL_CS` (comportamento storico). Va
+chiamata **prima di `init()`**, che in base al modo decide quali pin configurare. In cascade: la
+`ScreenPart` slave passa sul chip select del master e somma `CASCADE_CMD_OFFSET` (0x80) ai propri
+opcode — cioè esattamente i comandi per-controller `0x44`, `0x45`, `0x4E`, `0x4F`, `0x24`, `0x26`,
+perchè quelli sono gli unici che la ScreenPart emette; `_writeCommandAll`/`_writeDataAll` abbassano
+un solo CS e restano **senza** offset (convenzione di `dualssd.cpp`); `_InitDisplay()` aggiunge
+`0x21 = 08 10` per mettere il master in cascade; `init()` non pilota `_cs_s` e `_waitWhileAnyBusy`
+ignora `_busy_s`. Effetto collaterale voluto: in cascade `S.isActive()` è vero anche con `cs2 = -1`,
+perchè un secondo CS non serve. La costante **non** si chiama `SLAVE_CMD_OFFSET`: quel nome è già
+una macro in `dual_panel_finder.ino` e la qualificazione di classe non compilerebbe.
+Lo sketch la seleziona col flag `DRIVER_CASCADE`.
 
 **Costruttori**: ESP32 a 9 pin (sck, miso, mosi, cs_m, cs_s, dc, rst, busy_m, busy_s), 6 pin
 (senza bus), single-CS a 4 pin per il bring-up con una sola coda cablata (`cs_s = -1`, le
@@ -144,9 +193,9 @@ ogni sezione marcata [OBBLIGATORIO] / [OPZIONALE] e il suo costo in tempo: `TEST
 (`CAND_MINIMAL` stile 1160c, `CAND_SOLUM` stile 097c/1330c, `CAND_OEPL` init di fabbrica OEPL 9.7"
 con i pattern `0x46`/`0x47` e `0x21` = 08 00 che lì raddrizza l'immagine — da ripetere una volta per
 candidata, il confronto è il punto), `MUX_LINES` (384 misurate / 680 POR per confrontare i tempi),
-più gli opzionali `SHOW_SOLID_COLORS` (+3:15) e `SHOW_FAST_CLOCK_FRAME` (+1:05) e `OBSERVE_MS`
-(pausa fra i frame, 10 pause pesano 7:30). Durata con i default **circa 11 minuti**: 7 refresh + 6
-pause nel probe, 4 + 3 nella fase driver; giro minimo utile 4 refresh, ~1:20. Il banner a runtime
+più gli opzionali `SHOW_SOLID_COLORS` (+3:15), `SHOW_FAST_CLOCK_FRAME` (+1:05),
+`SHOW_PARTIAL_PROBE` (+1:55), `SHOW_SLAVE_OPCODE_PROBE` (+1:05) e `OBSERVE_MS`
+(pausa fra i frame). Durata con i default **circa 15 minuti**; giro minimo utile 4 refresh, ~1:20. Il banner a runtime
 stampa quali fasi e quali opzionali sono attivi. Il pattern è
 composto riga per riga tutto allineato al byte: cornice, blocco nero nell'origine RAM, blocco
 accent nell'angolo opposto in X, righelli numerati X e Y con font 5x7 scalato, scaletta diagonale,
@@ -191,9 +240,132 @@ cui le due fasi stanno nello stesso sketch. Con `DRIVER_DUAL 0` il master della 
 `TEST_TARGET`** invece di essere fisso su CS=15: con una coda alla volta le due fasi devono parlare
 allo stesso silicio, altrimenti provando la sola coda lunga il driver piloterebbe un attacco non
 collegato e sembrerebbe rotto. Compila in tutte le combinazioni di fasi
-(298 036 B flash con entrambe attive).
+(318 748 B flash con entrambe attive).
 
 **I fix del 097c ora sono portabili**: i due driver condividono command set oltre che
 infrastruttura (`GxEPDImage` in un header a parte, bulk-SPI con `writeBytes`, page-hint di
 `showImage`, dirty flag dell'accent, `_cleanAccentIfDirty`). Le differenze che restano sono il
 piano giallo `0x28`, che qui non esiste, e la geometria per controller.
+
+## Ipotesi 4 sulla coda muta: il secondo controller si indirizza con opcode|0x80
+
+Dal firmware OEPL dei tag nRF52811, che è la famiglia di questo pannello ([[oepl_nrf52811_tag_fw]]):
+il loro `dualssd.cpp` pilota un pannello a **due controller SSD con un solo CS**, sommando **0x80
+all'opcode** per il secondo (`0x11→0x91`, `0x44→0xC4`, `0x45→0xC5`, `0x4E→0xCE`, `0x4F→0xCF`,
+`0x24→0xA4`, `0x26→0xA6`); comandi comuni scritti una volta sola. Un solo BUSY, un solo RST.
+
+Se i due COF del 12.2" sono strappati master/slave allo stesso modo, il secondo controller risponde
+**solo** agli opcode con bit 7 alto: niente CS_S, niente GPIO32. **Attenzione a cosa questo non
+implica**: indirizzare lo slave non basta a farlo stampare, perchè in cascade non ha nè oscillatore
+nè booster (vedi la sezione sulla coda muta). Il test dell'offset da solo, su una coda sola, può
+dire soltanto se il chip di quella coda è lo slave; per vedere un pixel servono anche il ponte dei
+rail e `0x21` B[4] = 1 sul master. **Il finder la implementa**: `SHOW_SLAVE_OPCODE_PROBE`
+(default 1, +1:05) esegue `probeSlaveByOpcodeOffset()`, che scrive il pattern di identificazione con
+gli opcode offset di `SLAVE_CMD_OFFSET` e lancia il refresh. `SLAVE_OPCODE_CASCADE` (default 1)
+scrive `0x21 = 00 10` **sempre al master, senza offset**: è il bit B[4] ckouten, senza il quale il
+master non emette CL e lo slave resta senza clock. `SLAVE_OPCODE_BROADCAST_COMMON` decide se
+`0x3C`/`0x18`/`0x22`/`0x20` restino in broadcast (come dualssd) o vadano anch'essi offset, e
+`SLAVE_OPCODE_BOTH_CS` tiene bassi entrambi i CS insieme per riprodurre il chip select unico del
+tag — ha senso solo con la seconda coda cablata su un pin che esiste (32, non 33).
+**Esito negativo = nessuna informazione** finchè non c'è il ponte dei rail: lo sketch lo dice sia nel
+banner sia nella scheda di osservazione. La sonda configura **anche il master** (soft start, MUX,
+entry mode, border, sensore) perchè è la sua master activation a chiudere la sequenza e la sua banda
+viene scandita comunque; allo slave manda MUX, entry mode, finestra e dati — i due riferimenti gli
+mandano solo entry mode e dati, ma là lo split è sulle sorgenti e le gate sono comuni, qui no.
+
+**L'avvertenza è nell'header del driver e in `README_122c.md`** (banner in testa, §3 e §5), che
+sono stati anche ripuliti da tutta la descrizione del vecchio driver UC8179 — sequenza `0x00`/`0x06`/`0x61`,
+split per colonne, `writeImageBlack` su `0x10`: roba che il codice non fa da tempo: il modello a due chip select di
+`GxEPD2_SOLUM_122c_960x768.h` potrebbe essere sbagliato, e cosa cambierebbe se il finder conferma la
+cascade. Il modello non è più cablato nel file: `setAddressingMode()` rende entrambi i modelli
+raggiungibili a runtime, così la misura sceglie senza riscrivere il driver. Le primitive del
+finder passano da `cmdOffset` e da `csAssert()`/`csRelease()`, che fuori dalla sonda valgono 0 e
+CS singolo, quindi il resto del test è invariato. Il BUSY lì non è testimone (è quello del
+controller che risponde ai comandi normali): il timeout di `runRefresh` è esito previsto e la sonda
+attende a tempo `SLAVE_OPCODE_WAIT_MS`.
+
+**L'hardware di cascade sta nel pin table dell'SSD1677**, non solo in quello dell'SSD1683: `M/S#`
+è dato *"reserved pin, should be connected to VDDIO"* (categoria "Reserved for Testing") e `CL` è
+dichiarato **I/O**, *"should be left open in application"*, e compare nelle caratteristiche
+elettriche sia fra i VIH d'ingresso sia fra i VOH d'uscita — un pin da lasciare aperto non ha
+bisogno di poter pilotare. Sono i due pin che l'SSD1683 §6.12 usa per la cascade: presenti nel
+nostro silicio, solo non documentati. Nella stessa direzione va un reference SSD1677 di terzi
+(<https://github.com/bigbag/papyrix-reader>, `docs/ssd1677-driver.md`), che scrive `0x21` con **due**
+byte, `0x40 0x00`, commentando il secondo con **"single chip"**: è il `ckouten` dell'SSD1683.
+Non esiste una revisione pubblica dell'SSD1677 più recente: le copie reperibili altrove sono la
+stessa Rev 1.0 del 2018 byte per byte, quindi inutile ricercarle. Vedi [[ssd1677_command_set]].
+
+**SSD2677, il fratello a 4 colori da non confondere**: 960 × 680 come l'SSD1677, ma RAM a **2 bit
+per pixel**, licenza E Ink Spectra 3100, command set in stile **UC** (`0x00` PSR, `0x06` BTST,
+`0x50` CDI, `0x60` TCON, `0x61` TRES, `0xE0` CCSET, `0xE3` PWS), cascade fino a 1920 × 680 con il
+bit `CSEIN` di `0xE0`, e preset di risoluzione `960 × 680 / 960 × 672 / 960 × 640 / 880 × 528` —
+cioè su misura per le taglie SOLUM. Datasheet archiviati in `docs/` (Rev 1.0 2024-03 e Rev 1.1
+2023-08); li nominano i driver GxEPD2 `epd4c/GxEPD2_1160c_GDEY116F51` (960 × 640 a 4 colori) e
+`epd/GxEPD2_576_GDEH0576T81` (920 × 680 B/N). **Serve a due cose**: spiega da dove veniva la
+"sequenza UC8179" che i README descrivevano (era in stile SSD2677, non UC8179), e chiude un
+discriminante che sembrava esserci — "parla SSD16xx quindi è a 3 colori" **non regge**, perchè la
+Table 6-4 dell'SSD1677 mostra quattro combinazioni delle due RAM con `LUT3` distinta.
+
+**Clock SPI**: il driver 12.2" ha il default a 20 MHz, il 9.7" gira a 10. Su alcuni pannelli
+SSD1677 il controller non tollera clock alti (stesso reference di terzi): se comparissero errori
+intermittenti sulla banda che stampa, abbassare il clock è la prima prova, prima del cablaggio.
+
+**Come si legge il codice modello**: `EL <taglia> <generazione> <colore scocca> <colore display>
+<tipo tag>`, quindi `EL122H6W4A` = 12.2", gen H6, scocca bianca, campo colore `4`, tag con pulsante.
+Il `4` significa "RED, YELLOW (BWRY)" nel §3.6 del datasheet PRO, ma **non è un dato per unità**:
+nel modello table ogni taglia della linea PRO è `...W4A`, e le serigrafie sul vetro della stessa
+generazione dicono BWRY sulla 9.7" e **BWR sull'11.6" e sulla 12.2"**. Il campo distingue la linea
+(PRO nominalmente a 4 colori, Core `R` a 3); il film lo dice il vetro. Per il 12.2" il vetro dice
+`Newton PRO 12.2" BWR normal`, quindi lì la questione è chiusa — non lo è sul 9.7"
+([[gxepd2_097c_driver]]).
+
+Altri sospetti nuovi, dallo stesso firmware e dal wiki della board:
+
+- **BS (bus select) flottante**: gli SSD16xx scelgono 3 o 4 fili da un pin che il tag di fabbrica
+  tiene basso. Su una coda cablata a mano un BS non pilotato può far ignorare tutto. Da verificare
+  anche sulla coda che funziona.
+- **Switch n.1 della board Waveshare** (A = 3R contro B = 0.47R): è la resistenza di sense del
+  booster, non un selettore di pannello — vedi [[waveshare_esp32_driver_board]].
+- **VPP**: sul cavo del pannello esiste una linea di lettura; individuarla rende leggibile `0x2E` e
+  chiude il part number del controller. Sul pannello c'è anche una **EEPROM** con CS dedicato
+  (`HLT`), sede tipica di waveform/LUT.
+
+**Scheda tag Core, foto FCC ricomposte**: `docs/122c/fcc/122_core_tag_board_due_FFC.jpg` e il suo
+zoom mostrano che i **due connettori FFC hanno larghezza e passo identici** (~24 contatti ciascuno,
+misurati sul profilo di intensità): la scheda di fabbrica tratta le due code come pari.
+
+OEPL **continua a non avere il 12.2"**: `dualssd` si attiva solo per 792×272 e `oepl-definitions.h`
+riscaricato è identico alla copia archiviata.
+
+
+## Come è cablato un pannello commerciale a due code, e cosa dice della cascade
+
+Il 12.48" di Good Display (**GDEY1248Z51**) e il modulo Waveshare 12.48" (B) sono lo stesso
+pannello: 1304 × 984, **due FPC da 30 pin**, UC8179. Lo schematico del breakout ufficiale
+DESPI-C1248 e quello Waveshare coincidono e mostrano la topologia standard:
+
+- **quattro controller con quattro chip select** — `CSB_M1`, `CSB_M2` sulla coda master, `CSB_S1`,
+  `CSB_S2` sulla coda slave (aree 648×492, 656×492, 656×492, 648×492);
+- **quattro BUSY**, **due DC**, **due RST**, **due BS** (`BS`, `BS_2`);
+- **due sezioni di boost indipendenti**, con punti di misura separati `VGH_P1`/`VGL_P1` e
+  `VGH_P2`/`VGL_P2` ("P1 MOS tube gate voltage", "P2 MOS tube gate voltage"), VCOM in comune;
+- code **non intercambiabili**, serigrafate `WFT1248BZ23` (master) e `WFT1248BZ24` (slave):
+  invertirle e il pannello non si aggiorna.
+
+Il confronto è quello che serviva. L'asimmetria master/slave delle due code **non** è di per sè
+un'anomalia, ce l'ha anche un pannello commerciale; ma un pannello a N controller indipendenti la
+paga con **N chip select e N sezioni di boost**. Il tag di fabbrica della 12.2" ha **un solo CS**,
+**una sola sezione analogica** e il secondo connettore nudo alimentato da un fascio di piste che
+arriva dal primo. Il conteggio dei pin esclude la topologia a controller indipendenti e lascia in
+piedi la cascade.
+
+**Modello di driver già scritto**: `GxEPD2-master/src/epd3c/GxEPD2_1248c.{h,cpp}` scompone il
+pannello in `ScreenPart(w, h, rev, cs, dc)` — dimensioni, **flag di mirror**, CS e DC per pezzo —
+e fa broadcast con `_writeCommandMaster()` / `_writeCommandAll()`, che abbassano **più CS insieme**.
+È la stessa scomposizione che serve qui (due parti 960 × 384, una specchiata). Corollario sul
+`|0x80`: con un secondo CS il broadcast non servirebbe il trucco degli opcode: basterebbero due CS
+bassi. Il trucco serve **perchè un secondo CS non c'è**.
+
+Componenti del circuito di boost per un eventuale breakout (VGH +20 V, VGL −20 V, induttore 10 µH
+1 A, MOSFET Si1304BDL/Si1308EDL, Schottky MBR0530) e resto del materiale in
+[[pannelli_affini_commerciali]].

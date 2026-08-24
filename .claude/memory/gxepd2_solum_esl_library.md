@@ -104,7 +104,10 @@ A:\tmp\arduino\bin\arduino-cli.exe compile --config-file A:/tmp/arduino/arduino-
 
 Per forzare il define di selezione da riga di comando:
 `--build-property "compiler.cpp.extra_flags=-DSOLUM_PANEL_122C"` (cambia i flag, quindi ricompila
-tutto il core: ~10 min).
+tutto il core: ~10 min). **Senza** extra_flags la build di un example è incrementale e dura circa un
+minuto: è il modo normale di verificare una modifica alle sonde. Misure correnti:
+`12_2c/dual_panel_finder` 319 224 B flash / 22 652 B RAM con entrambe le fasi attive,
+`097c/panel_diagnostic` 308 008 B / 26 604 B.
 
 **Consumer.** `A:\epd` usa la libreria come submodule: i suoi `Layout_097c.h` / `Layout_122c.h`
 definiscono il proprio `SOLUM_PANEL_*`, includono `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h` ed

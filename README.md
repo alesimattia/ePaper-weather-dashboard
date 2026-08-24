@@ -9,8 +9,8 @@ logica applicativa, selezionabili a compile-time via
 
 - **SOLUM ESL 9.7"** (672w × 960h nativo → 960w × 672h landscape, controller
   SSD1677) — driver in uso e verificato su B/N/R.
-- **SOLUM 12.2"** (960w × 768h, controller UC8179 assunto) — driver presente
-  ma **non validato sul pannello**.
+- **SOLUM 12.2"** (960w × 768h, **due controller SSD16xx** da 960 × 384
+  ciascuno) — una banda stampa, le due insieme no.
 
 Entrambi i driver stanno nel submodule
 [`GxEPD2_SOLUM_ESL/`](GxEPD2_SOLUM_ESL), che è una libreria Arduino a sè
@@ -99,8 +99,8 @@ ogni modifica dei parametri.
 
 | Pannello | Risoluzione (landscape) | Colori | Controller | Note |
 |----------|------------|--------|------------|------|
-| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso + giallo (nativi) | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). Il 4° colore via comando `0x28` non compare sul pannello ([questione aperta](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta)). Selezione: `#define DISPLAY_VARIANT_097C` |
-| **SOLUM 12.2"** | 960w × 768h | B/N + rosso | UC8179 dual-controller, **assunto** | Driver nel submodule (`GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_122c_960x768.h`), **non validato sul pannello**: nemmeno il controller è confermato ([README_122c.md](GxEPD2_SOLUM_ESL/README_122c.md)). Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
+| **SOLUM ESL 9.7"** | 960w × 672h | B/N + rosso verificati; **4° colore da verificare** | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). Il giallo scritto sul comando `0x28` non compare sul pannello; il code point ancora inesplorato è `(0x24 = 0, 0x26 = 1)` ([questione aperta](GxEPD2_SOLUM_ESL/README.md#010-il-4-colore-non-appare-questione-aperta)). Selezione: `#define DISPLAY_VARIANT_097C` |
+| **SOLUM 12.2"** | 960w × 768h | B/N + rosso (serigrafia sul vetro) | **2 × SSD16xx**, 960 × 384 ciascuno | Driver nel submodule (`GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_122c_960x768.h`), **una banda validata, le due insieme no**: resta aperto come si indirizzi il secondo controller ([README_122c.md](GxEPD2_SOLUM_ESL/README_122c.md)). Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
 | Good Display **GDEY0420F51** | 400w × 300h | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400w × 300h (no firmware completo) |
 
 Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**.
@@ -115,7 +115,7 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 
 ```
 .
-├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino del driver SOLUM 9.7" (672w x 960h BWRY native portrait)
+├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino dei driver SOLUM (9.7" 672w x 960h native portrait, 12.2" 768w x 960h)
 │   ├── src/                            # Header-only
 │   │   └── GxEPD2_SOLUM_097c_960x672.h # Classe + namespace GxEPDImage
 │   ├── examples/097c/panel_diagnostic/ # Diagnostica del pannello: solo SPI.h, nessuna libreria

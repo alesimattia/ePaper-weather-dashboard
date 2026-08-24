@@ -15,7 +15,8 @@ usando i binari esportati.
 **Layout dell'installazione (spezzata su due dischi):**
 - `A:\tmp\arduino\bin\arduino-cli.exe` (1.5.2) + `A:\tmp\arduino\arduino-cli.yaml`.
   Il config NON è nel percorso di default: passare SEMPRE `--config-file A:/tmp/arduino/arduino-cli.yaml`.
-- `A:\tmp\arduino\user\libraries` (librerie), `A:\tmp\arduino\sketch` (junction), `A:\tmp\arduino\out` (binari).
+- `A:\tmp\arduino\user\libraries` (librerie), `A:\tmp\arduino\sketch` (junction). Nessuna cartella di uscita:
+  vedi la nota sull'export più sotto.
 - `C:\xz\arduino\{data,staging,cache}` = core + toolchain + build cache (~1,9 GB). Su A: c'erano solo
   1,58 GB liberi e la 3.3.11 completa ne chiede ~3,4 GB: l'utente ha autorizzato `C:\xz` come deroga
   al vincolo "tutto su A:\tmp".
@@ -32,15 +33,24 @@ merge (verificato con `core download`), quindi il filtro ha effetto.
 
 **Due junction, non copie** (Arduino pretende che la cartella si chiami come il `.ino`):
 - `A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`
-- `A:\tmp\arduino\user\libraries\GxEPD2` → `A:\epd\GxEPD2-master` (identico a upstream 1.6.9 a meno
+- `A:\tmp\arduino\user\libraries\GxEPD2` → `A:\epd\GxEPD2-master` (**1.6.9 è la head upstream**:
+  `de82887` è il merge commit del tag, e `library.properties` di master dichiara 1.6.9. Non c'è
+  niente da aggiornare finchè non esce una release nuova. Identico a upstream a meno
   dei CRLF, verificato con diff). `GxEPD2_SOLUM_ESL` NON va installato come libreria: lo sketch lo
   include per path relativo ed è header-only (installarlo creerebbe due path per lo stesso header).
 
 **Librerie:** ArduinoJson 7.4.3, Adafruit GFX 1.12.6 + BusIO 1.17.4, bsec2 1.10.2610 (usa la
 precompilata `src\esp32`), BME68x 1.3.40408.
 
-Binari in `A:\tmp\arduino\out`, incluso `.merged.bin` per il flash altrove. La RAM
-globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_consumer]].
+**Dal 25/08/2026 la compilazione non esporta più nessun binario** (decisione
+dell'utente, presa sul progetto `A:\rd` ed estesa qui): `--output-dir` è stato tolto
+dallo script e la cartella `A:\tmp\arduino\out` è stata rimossa. Su questa
+macchina non si flasha, quindi un `.bin` qui non serviva a niente; gli oggetti
+intermedi restano in `build\` dentro la cartella dello sketch e bastano
+all'incrementale. Se un giorno servisse davvero il `.merged.bin`, si rimette
+`--output-dir` nello script.
+
+La RAM globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_consumer]].
 
 **Trappole già pagate:**
 - `directories.builtin.libraries` nel yaml fa fallire `lib install` con "la directory dell'utente non

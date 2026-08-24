@@ -1,6 +1,6 @@
 ---
 name: Waveshare E-Paper ESP32 Driver Board V3 (hardware di bring-up)
-description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper, HSPI con SCK e MOSI scambiati, MISO dummy perchè il FPC non ha SDO, GPIO33 NON portato fuori, quali GPIO restano liberi per un secondo controller, caveat di estrazione del PDF
+description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper, HSPI con SCK e MOSI scambiati, MISO dummy perchè il FPC non ha SDO, GPIO33 NON portato fuori, quali GPIO restano liberi per un secondo controller, switch n.1 = resistenza di sense del booster (A=3R / B=0.47R), caveat di estrazione del PDF
 type: reference
 ---
 
@@ -96,8 +96,41 @@ visivo. È lo stesso genere di trappola dei PDF SOLUM descritta in [[ssd1677_com
   (GPIO6-11), `SDI` è il dato del FPC. Il commento dell'example upstream "use HSPI for EPD (and
   VSPI for SD)" è un pattern per quando una SD la si aggiunge, non una descrizione della board:
   è la trappola in cui si cade leggendolo di fretta.
-- Presenti invece: pulsanti KEY_RST / KEY_FLASH, USB-seriale CH343P, switch di selezione del tipo
-  di pannello (il manuale dice "set types switch according to the e-paper you use").
+- Presenti invece: pulsanti KEY_RST / KEY_FLASH, USB-seriale CH343P e un doppio switch. Il n.1 il
+  manuale lo descrive come "set types switch according to the e-paper you use", ma il wiki dice cosa
+  commuta davvero: la **resistenza di sense del booster**, A = 3R e B = 0.47R — non è un selettore
+  di modello (vedi la sezione sul wiki, più sotto). Il n.2 alimenta il modulo USB-UART.
 - `hspi.begin()` e `selectSPI()` sono roba board-level: nel firmware stanno nel `.ino` e non nei
   `Layout_*.h`, con l'eccezione documentata in [[layout_separation]] (il driver 12.2" apre il bus
   da sè in `init()`, quindi `Layout_122c.h` gli passa anche sck/miso/mosi).
+
+## Wiki ufficiale: cosa aggiunge allo schematico
+
+<https://www.waveshare.com/wiki/E-Paper_ESP32_Driver_Board>, testo estratto in
+`A:\epd\GxEPD2_SOLUM_ESL\docs\waveshare-E-Paper_ESP32_Driver_Board_wiki.txt`; analisi in
+`docs\fonti_esterne.md`. Il wiki conferma il pinout dell'interfaccia e-paper (DIN P14, SCLK P13,
+CS P15, DC P27, RST P26, BUSY P25) e **non elenca alcun MISO**: riscontro indipendente che il
+connettore non porta una linea di lettura. Non pubblica invece il pinout dell'header, quindi la
+questione GPIO33 resta decisa dal solo schematico.
+
+**Lo switch n.1 non è un selettore di "tipo pannello": sceglie la resistenza di sense del
+booster.** Posizione **A = 3R**, posizione **B = 0.47R**, con tabella per pannello:
+
+- **A (3R)**: 1.54", 1.54"(B), 2.13", 2.13"(B), 2.66", 2.66"(B), 2.9", 2.9"(B), 3.7", 4.2",
+  4.2"(B), **13.3"**, **13.3"(B)**
+- **B (0.47R)**: 2.13"(D), 2.7", 2.9"(D), 4.01"(F), 4.2"(C), 5.65"(F), 5.83", 5.83"(B), 7.5",
+  7.5"(B)
+
+I SOLUM non sono in tabella; il riferimento più vicino per silicio e geometria sono i 13.3"
+(SSD1677, 960 source), che stanno in **A**. Il wiki dice di provare l'altra posizione se il display
+è anomalo o non si pilota. Agisce sul circuito di boost, quindi va escluso prima di attribuire al
+driver un refresh debole, un ghosting o una coda che non risponde ([[gxepd2_122c_driver]]).
+
+Altro dal wiki: switch n.2 = alimentazione del modulo USB-UART, con OFF **non si programma**;
+revisioni **2022-07-28** CP2102 → **CH343** e **2024-12-30** micro-USB → **USB-C** (hardware per il
+resto compatibile), quindi la board del progetto sta fra le due; 4 MB flash, 520 KB SRAM,
+29.46 × 48.25 mm, 5 V con range 3.6–5.5 V; in confezione anche **adapter board e prolunga FFC**.
+
+Sul cavo del pannello, il firmware di fabbrica dei tag usa segnali che questa board non porta —
+**BS** (bus select 3/4 fili), **VPP** (linea di lettura), **HLT** (CS di una EEPROM sul pannello),
+**POWER** (alimentazione commutata): vedi [[oepl_nrf52811_tag_fw]].

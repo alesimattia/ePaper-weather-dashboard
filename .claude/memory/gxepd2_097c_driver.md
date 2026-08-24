@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_097c_960x672
-description: Dove vive il driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL, libreria Arduino), identificazione del pannello, questione 4o colore APERTA con l'etichetta sul vetro come verifica diretta, cosa deve misurare la sonda, sequenza di init di fabbrica, vincoli architetturali e costi noti
+description: Dove vive il driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL, libreria Arduino), identificazione del pannello, questione 4o colore APERTA con l'etichetta sul vetro come verifica diretta ma la UICR di fabbrica dei tag OEPL che dichiara BWR, la Table 6-4 che mappa le due RAM su LUT0..LUT3 e riduce la ricerca alla sola LUT2, cosa deve misurare la sonda, sequenza di init di fabbrica, vincoli architetturali e costi noti
 type: reference
 ---
 
@@ -62,15 +62,39 @@ Lettura corretta dello schema a 2 bit, quindi: sui pannelli BWRY riconosciuti da
 stanno in un nibble di un unico stream `0x10`, **non** in due piani separati — e questo silicio non
 è quel controller, risponde al command set SSD1677.
 
-Cosa resta da misurare, e che la documentazione non può dire:
-1. quale colore rende l'accent, cioè la combinazione (BW=1, RED=1): rosso su un film BWR, giallo su
-   un film BWY. Il firmware la usa già, quindi la risposta si legge a occhio;
-2. cosa rende la quarta combinazione (BW=0, RED=1), che il firmware non genera mai: se è un colore
-   distinto sia dal nero sia dall'accent, allora un quarto stato esiste ed è raggiungibile come
-   coppia di bit sui due piani già presenti;
-3. se `0x28` su questo modulo scriva davvero qualcosa, a dispetto della tabella comandi.
-Le combinazioni per pixel che due piani a 1 bit possono esprimere sono esattamente 4: rispondere a
-1 e 2 chiude lo spazio documentato, e 3 chiude quello non documentato.
+**Table 6-4 del datasheet dà i nomi alle quattro combinazioni**, e cambia il modo di leggere la
+sonda. "RAM bit and LUT mapping for 3-color display": `(RED 0x26, BW 0x24)` = `(0,0)` nero LUT0,
+`(0,1)` bianco LUT1, `(1,0)` rosso LUT2, `(1,1)` rosso **LUT3 = LUT2**. Tre conseguenze:
+
+1. `LUT3` è una **LUT distinta nel silicio**, che la waveform a 3 colori si limita ad aliasare su
+   `LUT2`. L'SSD1677 ha `LUT0..LUT4` (§6.7: 112 byte, 10 gruppi × 4 fasi, quattro livelli di
+   sorgente VSS/VSH1/VSH2/VSL). Cade quindi l'argomento "due piani a 1 bit, quindi 3 colori":
+   **architetturalmente il chip può fare quattro stati**, e decide l'OTP.
+2. Quella che il firmware scrive per il rosso è `LUT3`, non `LUT2`: un pixel rosso esce dalla catena
+   come `0x24 = 1`, `0x26 = 1` (verificato nel driver: `0x24` senza invert, `0x26` con `!invert`).
+   Sul pannello esce **rosso**, quindi su questa unità LUT3 guida il rosso, e un giallo su LUT3
+   l'avremmo già visto al posto del rosso.
+3. **L'unica LUT mai esercitata è LUT2**, cioè `(0x24 = 0, 0x26 = 1)` — la **banda 4** della sonda.
+   È l'unico code point dove un quarto colore può ancora nascondersi.
+
+Resta poi da misurare se `0x28` su questo modulo scriva davvero qualcosa, a dispetto della tabella
+comandi: le combinazioni dei due piani sono esattamente 4, i punti 1-3 chiudono lo spazio
+documentato e `0x28` quello non documentato.
+
+**Il piano `0x28` non sta più nel path di boot.** `writeScreenBuffer(black, color, yellow)` lo
+scrive solo se `_yellow_dirty` (un `writeImageYellow()` precedente da ripulire) oppure se
+`yellow_value != 0x00`, cioè se il chiamante lo pilota di proposito. Prima partiva a ogni primo
+write: `0x28` + 80.640 byte, ~65 ms di traffico su un comando che il datasheet dà come VCOM Sense.
+Le API del giallo (`writeImageYellow`, `preserveYellow`, `_yellow_dirty`, il ramo `FORMAT_BWRY_1BPP`
+di `showImage`) sono **tutte rimaste**: le butta la misura della sonda, non questa modifica.
+
+**Un discriminante che sembrava esserci e non c'è.** Il datasheet dell'SSD2677 è ora archiviato in
+`docs/` (Rev 1.0 2024-03 e Rev 1.1 2023-08): 960 × 680 come l'SSD1677, RAM a **2 bit/pixel**,
+licenza E Ink Spectra 3100, e preset di risoluzione `RES[1:0]` = **960 × 680 / 960 × 672 /
+960 × 640 / 880 × 528**, cioè su misura per le taglie SOLUM, la nostra 960 × 672 compresa. Verrebbe
+da concludere "il nostro parla SSD16xx, quindi è a 3 colori": **non regge**, per il punto 1 qui
+sopra — il tipo di chip non decide il numero di colori. Sul perchè i due protocolli siano comunque
+incompatibili fra loro, vedi il vincolo "SSD2677 non è un'alternativa" più sotto.
 
 - L'idempotency di `showImage` sul piano `0x28` è guardata da `showImagePageHint() == 0`, non
   da `isYellowPreserved()`: quel flag protegge anche un pre-write out-of-band su un'altra
@@ -85,6 +109,22 @@ Le combinazioni per pixel che due piani a 1 bit possono esprimere sono esattamen
   percorso: se quello non torna, dichiara inattendibili anche gli altri due invece di stampare
   numeri senza senso. Ricablare la linea avrebbe senso solo per `0x2E` e per i byte G..J di `0x37`
   (module ID / waveform version), che identificherebbero il modulo senza ambiguità.
+  **Il limite è del connettore della board, non del pannello**: il tag di fabbrica usa un pin del
+  cavo (`EPD_VPP`) come MISO e legge davvero i registri, e sullo stesso cavo seleziona una EEPROM
+  montata sul pannello (`EPD_HLT`) — vedi [[oepl_nrf52811_tag_fw]]. Quindi la linea di lettura
+  esiste sul lato pannello e su una coda cablata a mano si può ricavare; è così che `0x2E` diventa
+  raggiungibile invece di essere impossibile per costruzione.
+- La sonda non cambia le misure ma porta in testa e nella scheda di osservazione le evidenze
+  documentali: la UICR di fabbrica che dà il pannello per BWR (serve a sapere quale esito
+  sorprende, non a decidere al posto dell'occhio), il distinguo connettore/pannello sulla lettura,
+  le due vie di identificazione che costano un minuto — serigrafia sul vetro ed etichetta col part
+  number del pannello — e l'avvertenza sullo switch del booster della board, che va escluso prima
+  di attribuire alla waveform colori deboli o ghosting ([[waveshare_esp32_driver_board]]), più due
+  pin del controller che su una coda cablata a mano vanno guardati: **BS1** (L = 4 fili, H = 3 fili
+  a 9 bit: flottante può far ignorare tutto il traffico) e **M/S#**, che su un pannello a chip
+  singolo va a VDDIO. Sia lo sketch sia l'header del driver avvertono ora che il datasheet in
+  `docs/` è la Rev 1.0 e il silicio sembra più recente, quindi "non è nel datasheet" non equivale a
+  "non esiste nel chip".
 - **Sonda**: `A:\epd\GxEPD2_SOLUM_ESL\examples\097c\panel_diagnostic\panel_diagnostic.ino`, cioè
   dentro il **submodule**, non nel progetto consumer: appartiene al processo di costruzione del driver, e
   `examples/` è la posizione che la convenzione delle librerie Arduino prevede per gli sketch.
@@ -337,3 +377,91 @@ conclusioni sono riverificabili senza rifare le ricerche):
 
 Toccando il driver, aggiornare anche la tabella di confronto e i bullet di dettaglio nel suo README,
 così la doc resta allineata al codice.
+
+## Quinta evidenza sul quarto colore: la UICR di fabbrica dice BWR
+
+Da `tagtype_db.cpp` del firmware OEPL per tag nRF52811 ([[oepl_nrf52811_tag_fw]]): le due righe
+della 9.7" (`9.7 SSD` e `9.7 type 2`) dichiarano controller **0x19**, Xres 0x02A0 = **672**,
+Yres 0x03C0 = **960**, solumType 0x64 = `STYPE_SIZE_097` e **terzo colore = 0x01**. Nella stessa
+tabella il byte vale **0x02 = BWY** ("4.2 SSD Yellow") e **0x03 = BWRY** (1.6 / 2.4 / 3.0 BWRY),
+quindi 0x01 significa **BWR**.
+
+È l'evidenza più forte finora, perchè è **dato di fabbrica scritto nel tag** e non catalogo nè enum
+di terzi. Non chiude comunque il caso dell'esemplare del progetto: quelle righe sono tag M3/Core,
+il donor è un Pro F5. Restano decisive l'etichetta serigrafata sul vetro e la sonda.
+
+`STYPE_SIZE_097` imposta `drawDirectionRight = true`: OEPL usa lo stesso landscape **960×672** del
+firmware di questo progetto, senza mirror.
+
+## Il die non è un SSD1677 Rev 1.0 puro
+
+L'init di fabbrica della 9.7" scrive `0x21` con **due parametri** (`0x08 0x00`), mentre la Rev 1.0
+del datasheet SSD1677 definisce quel comando con **un solo** byte e non nomina la cascade. La forma
+a due byte è quella del **SSD1683**, dove il secondo byte porta `B[4] ckouten`. Conseguenza: il
+silicio SOLUM è della generazione estesa, e il nostro datasheet è più vecchio del chip — utile
+saperlo prima di dichiarare "non documentato" un comando che semplicemente non sta in quella
+revisione.
+
+Due conferme indipendenti. Un reference SSD1677 di terzi
+(<https://github.com/bigbag/papyrix-reader>, `docs/ssd1677-driver.md`) scrive anch'esso `0x21` a
+**due** byte, `0x40 0x00`, e commenta il secondo con **"single chip"**: è il `ckouten` dell'SSD1683.
+E il pin table della Rev 1.0 contiene già l'hardware della cascade, solo etichettato come riservato:
+`M/S#` *"reserved pin, should be connected to VDDIO"* e `CL` dichiarato **I/O**, *"left open in
+application"*, presente sia fra i VIH d'ingresso sia fra i VOH d'uscita.
+
+**Non c'è una revisione più recente da cercare**: le copie pubbliche dell'SSD1677 (cursedhardware,
+e-paper-display.com) sono la stessa Rev 1.0 del 2018, byte per byte. Il riferimento upstream più
+vicino sulla stessa geometria è `epd/GxEPD2_1160_T91` di GxEPD2 (Good Display GDEH116T91,
+960 × 640, SSD1677): init identico al nostro tranne l'ultimo byte del soft start `0x0C` (`0x40`
+invece del `0x80` di fabbrica SOLUM) e un `0x22 = 0xB1` + `0x20` in coda.
+
+**Danno da UV**: il die è a gold bump senza incapsulamento in resina, l'esposizione UV lo rovina e
+sotto sole diretto il pannello sbianca (stesso reference di terzi). Vale per il posizionamento del
+pannello e per qualunque montaggio che lasci il COF scoperto. Dallo stesso reference: alcuni
+pannelli SSD1677 non tollerano SPI sopra i 10 MHz — il 9.7" gira già a 10, il 12.2" ha il default a
+20. Vedi [[ssd1677_command_set]] e [[gxepd2_122c_driver]].
+
+## Pratica FCC 9.7" Core e part number del vetro
+
+Sotto il grantee 2AFWN le pratiche 9.7" sono **quattro**: `EL097R2WRN` (2022-09-08),
+**`EL097F5CRC`** (2023-11-28, Core), `EL097F6W4A` (2024-02-29, PRO, l'unica già archiviata),
+`EL097H2WRN` (2025-03-17, non esaminata). Le foto interne della F5CRC sono archiviate in
+`docs/097c/fcc/fcc_2AFWN-EL097F5CRC_internal_photos.pdf` (1049×787, un quarto della risoluzione
+delle pratiche Core 12.2": la serigrafia dei colori sul vetro **non è leggibile**).
+
+Se ne ricavano due cose:
+
+- scheda tag serigrafata **`NEWTON_CORE 9.7_TAG_R01, 2023/08/25`**, una sola FFC 24 pin, una sola
+  sezione boost (`097_f5crc_tag_board.jpg`);
+- sul retro del vetro un'etichetta bianca **`YMS960672-097AAH-ES-W5`**, data `20230902`
+  (`097_f5crc_etichetta_pannello_YMS960672.jpg`). È un part number **di pannello** del fornitore
+  del vetro — 960×672, 097 — non un codice SOLUM, e non ha riscontri pubblici. **Cercare la stessa
+  etichetta sul pannello del progetto**: identifica il vetro meglio del codice ESL.
+
+Nota su `unissd.cpp` upstream: il ramo 9.7" ora è condiviso con l'11.6" e scrive `0x45 = 00 00 7F
+02`, cioè finestra Y fino a **639** invece di 671, con MUX ancora a 671. La copia in
+`docs/openepaperlink/oepl_display_driver_unissd.c` viene da un'altra base di codice e non ha la
+discrepanza.
+
+
+## Conferma esterna dell'init e della numerazione delle LUT
+
+Good Display **GDEM102Z91** (10.2", 960 × 640, **BWR**, **SSD1677**, FPC 24 pin) è l'analogo
+commerciale più vicino alla 9.7": non è un rimarchio, ma il suo demo Arduino è un driver a due
+piani per lo stesso controller e conferma l'init di fabbrica SOLUM riga per riga —
+`0x0C = AE C7 C3 C0 80` **identico ultimo byte compreso** (GxEPD2 `GDEH116T91` mette `0x40`, il
+valore SOLUM è quello che usa anche Good Display), `0x01` con la stessa codifica del MUX,
+`0x18 = 0x80`, `0x22 = 0xF7` + `0x20`, piano `0x24` diretto e piano `0x26` scritto **invertito**
+(`~datasRW[i]`). Diverge solo l'entry mode (`0x11 = 0x01` contro `0x02`), cioè il verso di scan.
+
+Nello stesso sorgente `0x3C = 0x01` è commentato **"LUT1, for white"**: conferma indipendente che
+la numerazione della Table 6-4 è quella vera, quindi la mappa LUT0..LUT3 su cui è costruita la sonda
+`panel_diagnostic` non è una ricostruzione ([[ssd1677_command_set]]).
+
+**Sulla questione del quarto colore.** Su tutta la linea grande di Good Display, a parità di
+risoluzione e connettore, i 3 colori stanno su SSD1677 e i 4 colori **sempre** su SSD2677
+(GDEM102Z91 BWR / GDEM102F91 BWRY, GDEH116T91 B/N / GDEY116F91 BWRY). Il demo del 4 colori non usa
+affatto le due RAM: scrive **un solo stream `0x10` a 2 bit per pixel** (00 bianco, 01 giallo,
+10 rosso, 11 nero) — lo stesso formato del path `epdvarbwry` di OEPL per le SOLUM BWRY vere. Non
+chiude la questione in logica, perchè LUT3 esiste nel silicio e decide l'OTP, ma il quarto colore
+vive sempre su un formato che la 9.7" non parla. Dettaglio in [[pannelli_affini_commerciali]].
