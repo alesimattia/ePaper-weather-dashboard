@@ -1,7 +1,20 @@
 {
     "arduino.useArduinoCli": true,
+    "arduino.path": "/opt/homebrew/bin",
+    "arduino.commandPath": "arduino-cli",
     "arduino.sketchbookPath": "/Users/alesimattia/Documents/Arduino",
     "arduino.logLevel": "verbose",
-    "arduino.disableIntelliSenseAutoGen": true,
-    "C_Cpp.intelliSenseEngine": "Tag Parser"
+    "arduino.enableUSBDetection": true,
+    "arduino.clearOutputOnBuild": true,
+    "files.associations": {
+        "*.ino": "cpp",
+        "*.h": "cpp",
+        "*.hpp": "cpp"
+    },
+    "search.exclude": {
+        "**/.build": true
+    },
+    "files.watcherExclude": {
+        "**/.build/**": true
+    }
 }
