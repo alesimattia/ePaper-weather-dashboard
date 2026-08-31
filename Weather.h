@@ -621,182 +621,44 @@ namespace Weather
     // =======================================================================
     // @widget slider-temp-range
     //
-    // Barra giallo orizzontale con indicatore triangolo che mostra dove
-    // cade la temperatura percepita corrente fra morn ed eve (Row 3 della
-    // sub-col sun). Disegnata in 2 fasi:
-    //   1. drawTempRangeBarYellow(): barra + triangolo sul canale yellow
-    //      (cmd 0x28, out-of-band rispetto al paged loop B+R).
-    //   2. drawTempRangeBarLabels(): cifre nere e cerchietti ° nel paged.
+    // Barra orizzontale con indicatore triangolo che mostra dove cade la
+    // temperatura percepita corrente fra morn ed eve (Row 3 della sub-col
+    // sun), più le due cifre agli estremi coi cerchietti dei gradi.
     //
-    // Il canale giallo del pannello SOLUM 672w x 960h native portrait è "out-of-band" rispetto
-    // al template GxEPD2_3C (2 canali: black + red). Per disegnare giallo
-    // usiamo le API del driver custom (Layout::Panel):
-    //   - writeImageYellow(bitmap, x, y, w, h, pgm)  -> cmd 0x28
-    //   - preserveYellow(true)                        -> sopravvive al paged
-    // @since 22/04/26
+    // Tutto nero e tutto dentro il paged loop, con le primitive di
+    // Adafruit_GFX: il pannello ha due soli piani, black e accent, e il
+    // template GxEPD2_3C li copre entrambi. Una versione precedente disegnava
+    // barra e triangolo su un terzo canale (cmd 0x28) compilando a mano un
+    // buffer 1bpp fuori dal loop paged, ma su quel controller 0x28 è VCOM
+    // Sense: non dipingeva niente e teneva il pannello occupato ~10 s per
+    // frame. Vedi la nota in testa a GxEPD2_SOLUM_097c_960x672.h.
     // =======================================================================
 
-    /** Dimensioni del buffer bitmap giallo della barra: vedi Layout::TRB_*. */
-    inline constexpr size_t  TRB_BUF_BYTES = (size_t)Layout::TRB_BYTES_PER_ROW * Layout::TRB_H;
-
-    /** Buffer 1bpp MSB-first per il canale 0x28. Convenzione delle API
-     *  writeImage* del driver: bit=0 = pixel giallo, bit=1 = non giallo. */
-    inline uint8_t trbYellowBuf[TRB_BUF_BYTES];
-
-    /** Accende un pixel giallo nel buffer (no-op se fuori bounds). Azzera il
-     *  bit, perchè writeImageYellow inverte i dati prima del transfer. */
-    inline void trbSetPx(int16_t x, int16_t y)
-    {
-      if (x < 0 || x >= Layout::TRB_W || y < 0 || y >= Layout::TRB_H) return;
-      trbYellowBuf[y * Layout::TRB_BYTES_PER_ROW + (x >> 3)] &= (uint8_t)~(0x80 >> (x & 7));
-    }
-
-    /** Rettangolo pieno nel buffer giallo. */
-    inline void trbFillRect(int16_t x, int16_t y, int16_t w, int16_t h)
-    {
-      for (int16_t yy = y; yy < y + h; ++yy)
-        for (int16_t xx = x; xx < x + w; ++xx)
-          trbSetPx(xx, yy);
-    }
-
-    /** Cerchio contorno (per il simbolo °). Bresenham midpoint. */
-    inline void trbDrawCircle(int16_t cx, int16_t cy, int16_t r)
-    {
-      int16_t x = r, y = 0, err = 1 - x;
-      while (y <= x)
-      {
-        trbSetPx(cx + x, cy + y); trbSetPx(cx + y, cy + x);
-        trbSetPx(cx - x, cy + y); trbSetPx(cx - y, cy + x);
-        trbSetPx(cx + x, cy - y); trbSetPx(cx + y, cy - x);
-        trbSetPx(cx - x, cy - y); trbSetPx(cx - y, cy - x);
-        y++;
-        if (err < 0) err += 2*y + 1;
-        else         { x--; err += 2*(y - x) + 1; }
-      }
-    }
-
-    /** Triangolo isoscele punta-giu': base larga 2*halfBase in cima, vertice
-     *  a (cx, y_top + height). */
-    inline void trbFillTriangleDown(int16_t cx, int16_t y_top,
-                                    int16_t halfBase, int16_t height)
-    {
-      for (int16_t dy = 0; dy < height; ++dy)
-      {
-        int16_t hw = halfBase - (halfBase * dy) / height;
-        for (int16_t dx = -hw; dx <= hw; ++dx)
-          trbSetPx(cx + dx, y_top + dy);
-      }
-      trbSetPx(cx, y_top + height);
-    }
-
     /**
-     * Compila il buffer giallo della barra temp-range (barra + indicatore
-     * triangolo) e lo scrive sul canale 0x28 del pannello via
-     * writeImageYellow del driver custom. Setta preserveYellow(true)
-     * cosi' il canale sopravvive al loop paged B+R.
+     * Disegna la barra temp-range completa: barra orizzontale, indicatore
+     * triangolare sulla posizione della temperatura percepita corrente, e le
+     * cifre morn / eve agli estremi coi cerchietti dei gradi. Tutto in nero.
      *
-     * I cerchietti ° delle label sono disegnati in NERO dal paged
-     * (drawTempRangeBarLabels), non nel buffer giallo.
+     * Va chiamata dentro il loop paged, da renderSunColumn.
      *
-     * Va chiamata PRIMA di display.firstPage() in renderFrame().
+     * Geometria: la cella logica del widget è larga Layout::TRB_W e alta
+     * Layout::TRB_H, con origine a (centerX - bufCenterX, baselineY +
+     * Layout::TRB_CELL_Y_OFFSET). La barra sta a cellY + 7 spessa 4 px, il
+     * triangolo ha la base sul bordo alto della cella e il vertice sulla
+     * barra.
      *
-     * Layout nel buffer (TRB_W x TRB_H = 112x14):
-     *   - barra: fillRect(barLeft, 5, barWidth, 4)  [4 px spessa, giallo]
-     *   - triangolo: punta-giu' con vertice sulla barra (y=5)
-     *
-     * @param centerX centro orizzontale desiderato (in coord display) del
-     *                punto medio della barra (allineato con il centro
-     *                orizzontale della riga sunset sopra).
-     * @param cellY   y assoluto sul display del pixel (0,0) del buffer.
-     * @return true se la barra è stata disegnata; false se dati non validi
-     *         (in tal caso il canale 0x28 non viene toccato).
-     * @since 22/04/26
+     * @param centerX    centro orizzontale (display) del punto medio della
+     *                   barra, allineato col centro della riga sunset sopra.
+     * @param baselineY  baseline delle cifre (= Layout::SUN_ROW3_BASELINE).
      */
-    inline bool drawTempRangeBarYellow(int16_t centerX, int16_t cellY)
-    {
-      if (!slots[0].valid) return false;
-      const float morn = dailyFeelsLikeMorn;
-      const float eve  = dailyFeelsLikeEve;
-      const float cur  = slots[0].feelsLikeC;
-      if (isnan(morn) || isnan(eve) || isnan(cur)) return false;
-
-      memset(trbYellowBuf, 0xFF, TRB_BUF_BYTES);  // 0xFF = nessun pixel giallo
-
-      // Misura larghezza delle label in FONT_BODY (stessa logica di
-      // drawTempRangeBarLabels cosi' i due rimangono allineati).
-      // Modifica 22/04/26: font 9pt -> 12pt per le label della barra.
-      display.setFont(Layout::FONT_BODY);
-      char labL[8], labR[8];
-      snprintf(labL, sizeof(labL), "%.0f", morn);
-      snprintf(labR, sizeof(labR), "%.0f", eve);
-      int16_t  x1, y1;
-      uint16_t wL, hL, wR, hR;
-      display.getTextBounds(labL, 0, 0, &x1, &y1, &wL, &hL);
-      display.getTextBounds(labR, 0, 0, &x1, &y1, &wR, &hR);
-
-      const int16_t PAD      = 2;
-      const int16_t GAP      = 4;
-      const int16_t DEG_GAP  = 2;
-      const int16_t degR     = 2;
-      const int16_t labSlotL = (int16_t)wL + DEG_GAP + 2*degR + 1;
-      const int16_t labSlotR = (int16_t)wR + DEG_GAP + 2*degR + 1;
-
-      const int16_t barLeft  = PAD + labSlotL + GAP;
-      const int16_t barRight = Layout::TRB_W - PAD - labSlotR - GAP;
-      const int16_t barWidth = barRight - barLeft;
-
-      // Posizione assoluta: centra il punto medio della barra su centerX.
-      const int16_t bufCenterX = (barLeft + barRight) / 2;
-      const int16_t cellX      = centerX - bufCenterX;
-
-      // Barra orizzontale gialla: spessa 4 px, occupa y=7..10 (centro 8.5).
-      // Modifica 22/04/26 (v2): barY 6 -> 7 per far spazio al triangolo
-      // ancora piu' grande (vertice sulla barra a y=7).
-      const int16_t barY  = 7;
-      const int16_t barTh = 4;
-      trbFillRect(barLeft, barY, barWidth, barTh);
-
-      // Indicatore triangolare punta-giu': base alta (y=0), vertice sulla
-      // barra (y=7). Modifica 22/04/26 (v2): halfBase 4->5, height 6->7
-      // per rendere la freccia ancora piu' visibile. Base 11 px, altezza 7.
-      const float lo = fminf(morn, eve);
-      const float hi = fmaxf(morn, eve);
-      const float range = hi - lo;
-      float ratio = (range < 0.5f) ? 0.5f : (cur - lo) / range;
-      if (ratio < 0.0f) ratio = 0.0f;
-      if (ratio > 1.0f) ratio = 1.0f;
-      const int16_t cursorX = barLeft + (int16_t)(ratio * barWidth + 0.5f);
-      trbFillTriangleDown(cursorX, /*y_top*/ 0, /*halfBase*/ 5, /*height*/ barY);
-
-      // Scrive sul canale yellow e lo protegge durante paged.
-      display.epd2.writeImageYellow(trbYellowBuf, cellX, cellY,
-                                    Layout::TRB_W, Layout::TRB_H, /*pgm*/ false);
-      display.epd2.preserveYellow(true);
-      return true;
-    }
-
-    /**
-     * Disegna le cifre nere (morn a sx, eve a dx) e i cerchietti ° neri
-     * della barra temp-range. Va chiamata dentro il loop paged
-     * (renderSunColumn) al posto del placeholder Row 3.
-     *
-     * Le decorazioni gialle (barra + triangolo) sono gia' sul canale 0x28
-     * grazie a drawTempRangeBarYellow chiamata out-of-band prima di
-     * firstPage().
-     *
-     * @param centerX    centro orizzontale (display) della barra — deve
-     *                   coincidere con quello passato a drawTempRangeBarYellow.
-     * @param baselineY  baseline delle cifre (= INDOOR_ROW3_BASELINE).
-     * @since 22/04/26
-     */
-    inline void drawTempRangeBarLabels(int16_t centerX, int16_t baselineY)
+    inline void drawTempRangeBar(int16_t centerX, int16_t baselineY)
     {
       if (!slots[0].valid) return;
       const float morn = dailyFeelsLikeMorn;
       const float eve  = dailyFeelsLikeEve;
+      const float cur  = slots[0].feelsLikeC;
       if (isnan(morn) || isnan(eve)) return;
 
-      // Modifica 22/04/26: font 9pt -> 12pt per le label della barra.
       display.setFont(Layout::FONT_BODY);
       char labL[8], labR[8];
       snprintf(labL, sizeof(labL), "%.0f", morn);
@@ -813,25 +675,44 @@ namespace Weather
       const int16_t labSlotL = (int16_t)wL + DEG_GAP + 2*degR + 1;
       const int16_t labSlotR = (int16_t)wR + DEG_GAP + 2*degR + 1;
 
-      // Ricalcolo cellX (origine buffer giallo) con stessa logica di
-      // drawTempRangeBarYellow: i due devono restare allineati.
+      // Estremi della barra dentro la cella, e origine della cella sul
+      // display: un unico conto per barra, triangolo e cifre.
       const int16_t barLeft    = PAD + labSlotL + GAP;
       const int16_t barRight   = Layout::TRB_W - PAD - labSlotR - GAP;
+      const int16_t barWidth   = barRight - barLeft;
       const int16_t bufCenterX = (barLeft + barRight) / 2;
       const int16_t cellX      = centerX - bufCenterX;
+      const int16_t cellY      = baselineY + Layout::TRB_CELL_Y_OFFSET;
 
-      // Y del cerchietto ° nero: vicino all'apice del numero.
+      const int16_t barY  = 7;
+      const int16_t barTh = 4;
+      display.fillRect(cellX + barLeft, cellY + barY, barWidth, barTh, GxEPD_BLACK);
+
+      // Indicatore triangolare punta-giù: base sul bordo alto della cella,
+      // vertice sulla barra. Base 11 px, altezza barY.
+      const float lo = fminf(morn, eve);
+      const float hi = fmaxf(morn, eve);
+      const float range = hi - lo;
+      float ratio = (isnan(cur) || range < 0.5f) ? 0.5f : (cur - lo) / range;
+      if (ratio < 0.0f) ratio = 0.0f;
+      if (ratio > 1.0f) ratio = 1.0f;
+      const int16_t cursorX = cellX + barLeft + (int16_t)(ratio * barWidth + 0.5f);
+      display.fillTriangle(cursorX - 5, cellY,
+                           cursorX + 5, cellY,
+                           cursorX,     cellY + barY, GxEPD_BLACK);
+
+      // Y del cerchietto dei gradi: vicino all'apice del numero.
       const int16_t degY = baselineY - (int16_t)hL + degR + 1;
 
       display.setTextColor(GxEPD_BLACK);
 
-      // Cifra sx + cerchietto ° nero.
+      // Cifra sx + cerchietto gradi.
       display.setCursor(cellX + PAD - x1, baselineY);
       display.print(labL);
       const int16_t degXL = cellX + PAD + (int16_t)wL + DEG_GAP + degR;
       display.drawCircle(degXL, degY, degR, GxEPD_BLACK);
 
-      // Cifra dx + cerchietto ° nero.
+      // Cifra dx + cerchietto gradi.
       const int16_t rightLabX = cellX + Layout::TRB_W - PAD - labSlotR;
       display.setCursor(rightLabX - x1, baselineY);
       display.print(labR);
@@ -1172,11 +1053,9 @@ namespace Weather
       formatHHMM(sunsetEpoch, hhmm);
       drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUN_ROW2_BASELINE, GxEPD_BLACK);
 
-      /** Row 3 — @widget slider-temp-range. Cifre + cerchietti ° (nero)
-       *  della barra temp-range. Le decorazioni gialle (barra + triangolo)
-       *  sono gia' sul canale 0x28 grazie a drawTempRangeBarYellow chiamata
-       *  prima di firstPage(). */
-      drawTempRangeBarLabels(Layout::SUN_COL_CENTER_X, Layout::SUN_ROW3_BASELINE);
+      /** Row 3 — @widget slider-temp-range: barra, indicatore triangolare e
+       *  cifre coi cerchietti dei gradi, tutto nero nel paged. */
+      drawTempRangeBar(Layout::SUN_COL_CENTER_X, Layout::SUN_ROW3_BASELINE);
 
       /** Row 4 — @widget storico-temperature. Mini-chart andamento
        *  temperatura percepita esterna, centrato sullo stesso asse della
@@ -1242,19 +1121,6 @@ namespace Weather
        */
       time_t calEpoch = slots[0].valid ? slots[0].epoch : 0;
 
-      /**
-       * Pre-write del canale yellow (0x28) — @widget slider-temp-range.
-       * Deve avvenire PRIMA di firstPage() e setta preserveYellow(true)
-       * cosi' il canale sopravvive al loop paged che gestisce solo
-       * black+red. Il driver custom auto-resetta preserveYellow alla
-       * fine di refresh().
-       * @since 22/04/26
-       */
-      {
-        const int16_t trbCellY = Layout::SUN_ROW3_BASELINE + Layout::TRB_CELL_Y_OFFSET;
-        drawTempRangeBarYellow(Layout::SUN_COL_CENTER_X, trbCellY);
-      }
-
       display.firstPage();
       do
       {
@@ -1281,9 +1147,6 @@ namespace Weather
         Mail::draw();
         drawBanner();
       } while (display.nextPage());
-      // Nota: preserveYellow(false) viene gestito automaticamente dentro
-      // refresh() del driver custom (chiamato dal template alla fine del
-      // paged loop), quindi non serve resettarlo qui a mano.
     }
   } // namespace detail
 

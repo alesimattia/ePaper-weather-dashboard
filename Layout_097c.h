@@ -123,13 +123,20 @@ namespace Layout
   inline constexpr int16_t  CINEMA_H         = 300;
   inline constexpr uint16_t CINEMA_STRIDE    = (CINEMA_W + 7) / 8;             // 78
   inline constexpr uint32_t CINEMA_PLANE_SZ  = (uint32_t)CINEMA_STRIDE * CINEMA_H;  // 23400
-  inline constexpr uint32_t CINEMA_TOTAL_SZ  = CINEMA_PLANE_SZ * 3;            // 70200
+  /** Piani che il pannello sa rendere, e quindi quanti il firmware chiede al
+   *  server: due, black e accent. Il terzo piano dei formati a 4 colori qui
+   *  non esiste — vedi la nota in testa a GxEPD2_SOLUM_097c_960x672.h. Il
+   *  fetch nel .ino itera su questa costante, così la catena cinema resta
+   *  comune alle due varianti. */
+  inline constexpr uint8_t  CINEMA_PLANES    = 2;
+  inline constexpr uint32_t CINEMA_TOTAL_SZ  = CINEMA_PLANE_SZ * CINEMA_PLANES; // 46800
 
   /** URL del server cinema. width/height/colors devono corrispondere a
-   *  CINEMA_W/H/BWRY: il server pre-genera i 3 piani 1bpp packed e l'ESP32
-   *  fa solo readBytes nei buffer. */
+   *  CINEMA_W/H/PLANES: il server pre-genera i piani 1bpp packed e l'ESP32
+   *  fa solo readBytes nei buffer. L'endpoint resta generale e serve anche
+   *  bw e bwry: è il firmware a chiedere il formato che il pannello rende. */
   inline constexpr const char* CINEMA_URL =
-      "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwry&dither=floyd";
+      "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwr&dither=floyd";
 
   // Ancoraggio verticale del banner: dichiarato qui, prima della fascia mail,
   // perchè MAIL_H ne deriva. BANNER_H / BANNER_W e le baseline stanno sotto.
@@ -273,14 +280,12 @@ namespace Layout
 
   // -------------------------------------------------------------------------
   // @widget slider-temp-range
-  // Barra giallo orizzontale con indicatore triangolo che mostra dove cade
-  // la temperatura percepita corrente fra morn ed eve (sub-col sun del
-  // riquadro Weather, Row 3). Canale yellow out-of-band (codice cmd 0x28).
-  // TRB_W deve essere multiplo di 8 per byte-align senza padding.
+  // Barra orizzontale con indicatore triangolo che mostra dove cade la
+  // temperatura percepita corrente fra morn ed eve (sub-col sun del riquadro
+  // Weather, Row 3). Disegnata in nero dentro il paged loop.
   // -------------------------------------------------------------------------
   inline constexpr int16_t TRB_W             = 112;
   inline constexpr int16_t TRB_H             = 14;
-  inline constexpr int16_t TRB_BYTES_PER_ROW = TRB_W / 8;
   inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;   // cellY = SUN_ROW3_BASELINE + offset
 
   // -------------------------------------------------------------------------

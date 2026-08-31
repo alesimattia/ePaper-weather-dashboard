@@ -19,7 +19,7 @@
 /**
  * Selezione del pannello display: scommenta UNA SOLA delle due varianti
  * per scegliere driver, coordinate del layout e font.
- *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWRY)
+ *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWR)
  *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960w x 768h BWR)
  *
  * I due Layout_*.h definiscono lo stesso namespace `Layout` con gli stessi
@@ -138,7 +138,7 @@ void initDisplay()
 // Flusso:
 //   1. Boot: g_cinema_desc punta a img_apple_bwry_desc (fallback PROGMEM).
 //   2. Al primo ciclo con WiFi connesso, dopo il fetch meteo e prima di
-//      quello dei calendari, fetchCinemaImage() scarica i 3 piani BWRY
+//      quello dei calendari, fetchCinemaImage() scarica i Layout::CINEMA_PLANES piani
 //      dall'endpoint render.com e li mette in RAM (o PSRAM se disponibile).
 //   3. g_cinema_desc viene riassegnato al descrittore dinamico che punta ai
 //      buffer RAM: da qui in poi ogni refresh del display mostra l'immagine
@@ -163,15 +163,26 @@ void initDisplay()
  * bianco solo fino a Layout::BANNER_Y.
  */
 
-// Buffer dinamici dei 3 piani scaricati (nullptr finchè il fetch non riesce).
-static uint8_t *g_cinema_black = nullptr;
-static uint8_t *g_cinema_red = nullptr;
-static uint8_t *g_cinema_yellow = nullptr;
+// Buffer dinamici dei piani scaricati (nullptr finchè il fetch non riesce).
+// Quanti ne vengono davvero allocati e letti lo dice Layout::CINEMA_PLANES,
+// che vale 2 sui pannelli a tre colori: così allocazione, free e lettura
+// restano un solo pezzo di codice per entrambe le varianti di display.
+// L'array è dimensionato al massimo dei formati serviti dall'endpoint, in
+// modo che i tre campi del descrittore siano sempre indicizzabili.
+static constexpr uint8_t CINEMA_PLANES_MAX = 3;
+static uint8_t *g_cinema_planes[CINEMA_PLANES_MAX] = {};
+
+// Nomi dei piani nell'ordine in cui il server li concatena, per i log.
+static const char *const g_cinema_plane_names[CINEMA_PLANES_MAX] = {"black", "red", "yellow"};
+
+static_assert(Layout::CINEMA_PLANES >= 2 && Layout::CINEMA_PLANES <= CINEMA_PLANES_MAX,
+			  "Layout::CINEMA_PLANES fuori dai formati serviti da /cinema/arduino");
 
 // Descrittore dinamico che punta ai buffer sopra. Popolato quando il fetch
 // ha successo.
 static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
-	GxEPDImage::FORMAT_BWRY_1BPP,
+	Layout::CINEMA_PLANES >= 3 ? GxEPDImage::FORMAT_BWRY_1BPP
+							   : GxEPDImage::FORMAT_BWR_1BPP,
 	Layout::CINEMA_W,
 	Layout::CINEMA_H,
 	nullptr,
@@ -245,12 +256,11 @@ static uint8_t *allocPlaneBuffer(const char *label)
  */
 static void freeCinemaBuffers()
 {
-	free(g_cinema_black);
-	g_cinema_black = nullptr;
-	free(g_cinema_red);
-	g_cinema_red = nullptr;
-	free(g_cinema_yellow);
-	g_cinema_yellow = nullptr;
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
+	{
+		free(g_cinema_planes[p]);
+		g_cinema_planes[p] = nullptr;
+	}
 	g_cinema_dynamic_desc.data0 = nullptr;
 	g_cinema_dynamic_desc.data1 = nullptr;
 	g_cinema_dynamic_desc.data2 = nullptr;
@@ -306,10 +316,11 @@ static bool shouldFetchCinema()
  *      riuscito in un giro precedente) e riporta g_cinema_desc al fallback
  *      PROGMEM: se il fetch fallisce o il refresh avviene durante un
  *      render, il display mostra il fallback invece di un'immagine corrotta.
- *   5. Alloca 3 buffer da Layout::CINEMA_PLANE_SZ byte (PSRAM preferita,
+ *   5. Alloca Layout::CINEMA_PLANES buffer da Layout::CINEMA_PLANE_SZ byte
+ *      (PSRAM preferita,
  *      heap interno come fallback).
  *   6. HTTP GET -> verifica status 200 e Content-Length == Layout::CINEMA_TOTAL_SZ.
- *   7. Legge in stream i 3 piani in sequenza (black, red, yellow) via
+ *   7. Legge in stream i piani nell'ordine in cui il server li concatena via
  *      readBytes, direttamente nei buffer.
  *   8. Ripuntamento di g_cinema_desc al descrittore dinamico.
  *
@@ -346,14 +357,15 @@ static void fetchCinemaImage()
 				  psramFound() ? "presente" : "assente (uso heap interno)",
 				  (unsigned)ESP.getFreeHeap());
 
-	g_cinema_black = allocPlaneBuffer("black");
-	g_cinema_red = allocPlaneBuffer("red");
-	g_cinema_yellow = allocPlaneBuffer("yellow");
-	if (!g_cinema_black || !g_cinema_red || !g_cinema_yellow)
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
 	{
-		Serial.println(F("[cinema] allocazione buffer fallita, fallback PROGMEM"));
-		freeCinemaBuffers();
-		return;
+		g_cinema_planes[p] = allocPlaneBuffer(g_cinema_plane_names[p]);
+		if (!g_cinema_planes[p])
+		{
+			Serial.println(F("[cinema] allocazione buffer fallita, fallback PROGMEM"));
+			freeCinemaBuffers();
+			return;
+		}
 	}
 
 	HTTPClient http;
@@ -390,9 +402,7 @@ static void fetchCinemaImage()
 	// (controllato da setTimeout) o EOF. Niente polling manuale di available()
 	// con delay(1): readBytes lo fa gia' internamente in modo equivalente.
 	stream->setTimeout(45000);
-	uint8_t *const planes[3] = {g_cinema_black, g_cinema_red, g_cinema_yellow};
-	const char *names[3] = {"black", "red", "yellow"};
-	for (int p = 0; p < 3; ++p)
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
 	{
 		size_t read = 0;
 		uint32_t t0 = millis();
@@ -401,7 +411,7 @@ static void fetchCinemaImage()
 		// accumulare timeout >45s totali sul singolo piano.
 		while (read < Layout::CINEMA_PLANE_SZ && (millis() - t0) < 45000UL)
 		{
-			int n = stream->readBytes(planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
+			int n = stream->readBytes(g_cinema_planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
 			if (n <= 0)
 				break; // timeout interno o connessione chiusa
 			read += n;
@@ -409,7 +419,7 @@ static void fetchCinemaImage()
 		if (read != Layout::CINEMA_PLANE_SZ)
 		{
 			Serial.printf("[cinema] piano %s letto parzialmente (%u/%u)\n",
-						  names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
+						  g_cinema_plane_names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
 			http.end();
 			freeCinemaBuffers();
 			return;
@@ -417,9 +427,9 @@ static void fetchCinemaImage()
 	}
 	http.end();
 
-	g_cinema_dynamic_desc.data0 = g_cinema_black;
-	g_cinema_dynamic_desc.data1 = g_cinema_red;
-	g_cinema_dynamic_desc.data2 = g_cinema_yellow;
+	g_cinema_dynamic_desc.data0 = g_cinema_planes[0];
+	g_cinema_dynamic_desc.data1 = g_cinema_planes[1];
+	g_cinema_dynamic_desc.data2 = Layout::CINEMA_PLANES >= 3 ? g_cinema_planes[2] : nullptr;
 	g_cinema_desc = &g_cinema_dynamic_desc;
 	Weather::markDirty();
 	Serial.println(F("[cinema] download completato, immagine remappata"));

@@ -137,7 +137,12 @@ namespace Layout
   inline constexpr int16_t  CINEMA_H        = 335;
   inline constexpr uint16_t CINEMA_STRIDE   = (CINEMA_W + 7) / 8;             // 78
   inline constexpr uint32_t CINEMA_PLANE_SZ = (uint32_t)CINEMA_STRIDE * CINEMA_H;  // 26130
-  inline constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * 3;            // 78390
+  /** Piani chiesti al server cinema. Tre finchè il bring-up non dice se
+   *  questo pannello ha davvero il quarto colore: il codice modello
+   *  EL122H6W4A ha campo colore 4, il vetro dice "BWR normal". Il 9.7", che
+   *  la domanda l'ha chiusa, ne chiede due. */
+  inline constexpr uint8_t  CINEMA_PLANES   = 3;
+  inline constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * CINEMA_PLANES; // 78390
 
   inline constexpr const char* CINEMA_URL =
       "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=335&colors=bwry&dither=floyd";
@@ -272,12 +277,11 @@ namespace Layout
 
   // -------------------------------------------------------------------------
   // @widget slider-temp-range
-  // Barra temp-range: identica al 097c (W/H del buffer non dipendono dal
-  // pannello, sono dimensioni del widget).
+  // Barra temp-range: identica al 097c (W/H non dipendono dal pannello, sono
+  // dimensioni del widget).
   // -------------------------------------------------------------------------
   inline constexpr int16_t TRB_W             = 112;
   inline constexpr int16_t TRB_H             = 14;
-  inline constexpr int16_t TRB_BYTES_PER_ROW = TRB_W / 8;
   inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;
 
   // -------------------------------------------------------------------------

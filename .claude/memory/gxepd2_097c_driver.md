@@ -24,8 +24,10 @@ libreria ospita due driver: struttura, ombrello di selezione, pinout uniforme e 
   include `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h`
 - le modifiche al driver si committano e pushano nel suo repo; nel padre si aggiorna il puntatore
   del submodule. `A:\epd` va clonato con `--recursive` (submodule anche `webapp`)
-- upstream GxEPD2 sta in `A:\epd\GxEPD2-master`: clone gitignorato al tag 1.6.9 (`de82887`), copia
-  di sola lettura per consultare i sorgenti della libreria
+- upstream GxEPD2 sta in `A:\tmp\GxEPD2-master`, fuori dal progetto perchè arduino-cli copia
+  l'albero dello sketch a ogni build: clone gitignorato al tag 1.6.9 (`de82887`), copia di sola
+  lettura per consultare i sorgenti. Si sfoglia da `epd.code-workspace`, che lo monta come seconda
+  radice
 
 Doc dedicata: [A:\epd\GxEPD2_SOLUM_ESL\README.md](../../GxEPD2_SOLUM_ESL/README.md) — motivazione,
 API (`showImage`, `writeImageBlack/Red/Yellow`, `preserveYellow`), pattern "yellow out-of-band",
@@ -433,8 +435,8 @@ Se ne ricavano due cose:
 
 - scheda tag serigrafata **`NEWTON_CORE 9.7_TAG_R01, 2023/08/25`**, una sola FFC 24 pin, una sola
   sezione boost (`097_f5crc_tag_board.jpg`);
-- sul retro del vetro un'etichetta bianca **`YMS960672-097AAH-ES-W5`**, data `20230902`
-  (`097_f5crc_etichetta_pannello_YMS960672.jpg`). È un part number **di pannello** del fornitore
+- sul retro del vetro un'etichetta bianca **`YMS960672-097AAH-ES-W5`**, data `20230902`. È un
+  part number **di pannello** del fornitore
   del vetro — 960×672, 097 — non un codice SOLUM, e non ha riscontri pubblici. **Cercare la stessa
   etichetta sul pannello del progetto**: identifica il vetro meglio del codice ESL.
 

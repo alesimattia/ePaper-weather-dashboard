@@ -94,7 +94,7 @@ Evidenze, dalla più diretta:
 3. `dualssd.cpp` di OEPL indirizza il secondo chip con **opcode|0x80** e scrive `0x21` con
    **B = 0x10**, che è esattamente il bit di cascade;
 4. GxEPD2 upstream fa lo stesso per il Good Display **GDEY0579Z93** (5.79" 792x272, SSD1683, due
-   chip): `A:\epd\GxEPD2-master\src\gdey3c\GxEPD2_579c_GDEY0579Z93.cpp`.
+   chip): `A:\tmp\GxEPD2-master\src\gdey3c\GxEPD2_579c_GDEY0579Z93.cpp`.
 
 Conseguenza sul cablaggio: **non serve un secondo CS** (nè GPIO32 nè altro). Servono un solo
 CS/SCK/MOSI/DC/RST/BUSY condivisi e un **ponte passivo fra le due code** che porti CL e i rail dal

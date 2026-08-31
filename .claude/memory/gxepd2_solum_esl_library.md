@@ -84,7 +84,7 @@ libreria*):
    `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte;
 4. membro `panel`: i driver prendono in prestito un valore di `GxEPD2::Panel` upstream. **Non**
    scegliere `GDEW0154Z04` nè `GDE0213B1`: i template li trattano in modo speciale
-   (`GxEPD2_3C.h:373` e `:504`, `GxEPD2_BW.h:249` in `A:\epd\GxEPD2-master`) e il driver si
+   (`GxEPD2_3C.h:373` e `:504`, `GxEPD2_BW.h:249` in `A:\tmp\GxEPD2-master`) e il driver si
    porterebbe dietro il workaround di un altro pannello. Entrambi i driver usano
    `GDEM133Z91`, che è un pannello SSD1677 e non è nelle liste dei quirk: è un identificatore preso
    a prestito, non una dichiarazione di modello;

@@ -93,25 +93,34 @@ e serigrafie sul vetro diverse (9.7" `BWRY Normal`, 11.6" e 12.2" `BWR normal`).
 la linea — PRO nominalmente a 4 colori, Core `R` a 3 — mentre il film montato lo dice solo
 l'etichetta serigrafata sul vetro.
 
-**SOLUM Newton Pro 9.7"** (`EL097F5C4C`) — 672×960 nativi portrait, usato come **960w × 672h**
-landscape. Controller **SSD1677**, un solo COF e una sola coda FFC (24 pin). Bianco, nero e rosso
-verificati sul pannello; l'esistenza di un quarto colore è una **questione aperta** (il datasheet
-SOLUM dichiara BWRY per quella taglia, l'enum di OpenEPaperLink e il suo driver dicono di no) e la
-decide l'etichetta serigrafata sul vetro dell'unità, in subordine la sonda
-`examples/097c/panel_diagnostic`. Non scrivere nè cancellare codice sulla base di quell'ipotesi
-prima della misura.
+**SOLUM 9.7"** (`EL097R2CRN`, generazione R2) — 672×960 nativi portrait, usato come
+**960w × 672h** landscape. Controller **SSD1677**, un solo COF e una sola coda FFC (24 pin).
+**Tre colori: bianco, nero e rosso, e il quarto non esiste.** Il codice modello dell'unità, letto
+sul case, ha campo colore `R` = BWR (pratica FCC `2AFWN-EL097R2CRN`, KC `R-R-SLU-EL097R2CRN`); non
+è quindi il donor `EL097F5C4C` della linea PRO con la cifra `4`, e il datasheet SOLUM che dichiara
+BWRY per la taglia 9.7" riguarda quella linea, non questa unità.
 
-Il datasheet dice dove il quarto colore potrebbe stare, e restringe la ricerca a un solo code
-point. Table 6-4 dell'SSD1677 mappa la coppia di RAM su cinque LUT: `(0x26, 0x24)` = `(0,0)` nero
-LUT0, `(0,1)` bianco LUT1, `(1,0)` rosso LUT2, `(1,1)` **LUT3, aliasata su LUT2** dalla waveform a
-3 colori. Il firmware scrive il rosso come `(1,1)`, cioè LUT3, e sul pannello esce rosso: se un
-giallo stesse lì l'avremmo già visto. **L'unica LUT mai esercitata è LUT2**, cioè `(0x24 = 0,
-0x26 = 1)` — la banda 4 della sonda. Che un SSD16xx possa fare 4 colori non è escluso
-dall'architettura: le LUT sono `LUT0..LUT4` e i livelli di sorgente quattro (VSS, VSH1, VSH2, VSL);
-decide l'OTP.
+La misura concorda, ed è definitiva: `examples/097c/panel_diagnostic` ha stampato tutte e quattro
+le combinazioni dei due piani sotto la waveform di produzione, e la Table 6-4 dell'SSD1677 si legge
+sul vetro così — `(0x26, 0x24)` = `(0,0)` nero LUT0, `(0,1)` bianco LUT1, `(1,0)` e `(1,1)`
+**entrambe rosse**, cioè LUT3 aliasata su LUT2 come la tabella dichiara. Con due bit per pixel le
+combinazioni sono esaurite. Anche `0x28` ha risposto: alla scrittura alza il BUSY per ~10 s e non
+dipinge, quindi è VCOM Sense e non un terzo piano. Conseguenza per il codice: sotto un pixel di
+accent il valore del piano BW è **indifferente**, e scrivere l'accent non richiede di mascherare
+`0x24`.
+
+Resta un solo code point mai provato, e non è una coppia di bit: è la **tensione**. Le LUT del
+silicio sono `LUT0..LUT4` e i livelli di sorgente quattro (VSS, VSH1, VSH2, VSL), quindi che un
+SSD16xx possa fare 4 colori non è escluso dall'architettura; la Table 6-4 dice che LUT2 e LUT3 sono
+aliasate *dalla waveform*, non che il film abbia tre pigmenti. La sonda carica quindi via `0x32` una
+waveform in cui LUT2 va a VSH1 e LUT3 a VSH2 — tensioni dell'OTP, perchè quelle stanno ai byte
+105..109 della LUT e `0x32` scrive solo 0..104 — e stampa le due bande adiacenti.
 
 **SOLUM Newton PRO 12.2"** (`EL122H6W4A`) — 768×960 nativi, usato come **960w × 768h**. Bianco,
-nero e rosso, e qui il vetro lo dice esplicitamente (`Newton PRO 12.2" BWR normal`). È il caso
+nero e rosso secondo il vetro (`Newton PRO 12.2" BWR normal`), ma il codice modello ha campo colore
+`4`: a differenza del 9.7" **qui il quarto colore è ancora da determinare**, perchè il bring-up è
+fermo alla seconda coda muta e non c'è modo di misurarlo. Per questo il driver 12.2" dichiara le
+primitive del terzo piano, ancora senza corpo, mentre il 9.7" non le ha affatto. È il caso
 interessante: **due controller SSD16xx**, uno per coda FFC, ciascuno da **960 × 384** con lo split
 sull'asse corto — cioè, in coordinate driver, due **bande orizzontali** (righe 0..383 e 384..767).
 
@@ -134,19 +143,85 @@ vecchie ipotesi — ordine dei pin ribaltato, rail di boost non portati, BUSY/RS
 restano possibili ma spiegano solo il silenzio, non l'assenza sul tag di fabbrica di un secondo CS
 e di un secondo boost.
 
-Due conseguenze che si pagano se ignorate: il **read-back non esiste** su questi FPC (vedi sopra),
-e `hasFastPartialUpdate = false` non è prudenza ma struttura — il refresh differenziale
-dell'SSD1677 usa la RAM `0x26` come "frame precedente", ma su questi pannelli `0x26` è il piano
-accent, quindi i due usi si escludono.
+Due conseguenze che si pagano se ignorate. La prima: il **read-back non esiste** su questi FPC
+(vedi sopra). La seconda: `hasFastPartialUpdate = false` è un fatto misurato. Il refresh
+differenziale dell'SSD1677 usa la RAM `0x26` come "frame precedente", ma su questi pannelli `0x26`
+è il piano accent, quindi i due usi si escludono; e la sonda ha misurato che **in OTP c'è una sola
+waveform**, con `0xFC`, `0xFF`, `0xCF` e `0xC7` tutti a 24,6-24,8 s e uno scarto di 2 ms fra piani
+identici e piani opposti — il controller non li confronta.
+
+Quello che quelle misure **non** escludono sono tre strade, e la sonda le prova tutte e tre.
+
+La prima è il partial con una **LUT scritta dall'MCU**: le passate sopra hanno il bit 4 di `0x22`
+attivo, cioè ricaricano la waveform dall'OTP, oppure girano su una LUT che dall'OTP era già stata
+caricata. La sequenza mancante è quella del GDEH116T91, stesso SSD1677 con gli stessi 960 source,
+che così ottiene 700 ms: `0x3C = 0xC0` (border HiZ), `0x32` con 105 byte di waveform breve, e
+`0x22 = 0xCC` col bit 4 **spento**, in modo che l'OTP non sovrascriva la LUT custom.
+
+La seconda è la più promettente, e non richiede di inventare waveform: il §6.9 del datasheet dà
+l'OTP per capace di **34 set di waveform**, WS0..WS33, uno per range di temperatura TR0..TR33, che
+il silicio seleziona in base alla temperatura letta — scorrendo i range da TR0 a TR33 e caricando
+l'ultimo che corrisponde. Ogni misura fatta finora ha girato col sensore interno a temperatura
+ambiente, quindi ha esercitato **un solo** set. Forzando la temperatura con `0x18 = 0x48` (sensore
+esterno) e `0x1A` (12 bit, valore = gradi × 16: 25 °C = `0x190`) si chiedono gli altri, e sono
+waveform **di fabbrica** tarate su questo film. Sui pannelli a inchiostro quelle calde sono più
+corte, perchè il pigmento migra prima.
+
+La terza è geometrica: il **MUX** di `0x01` programma quante gate line il driver scandisce, che è
+diverso dalla finestra RAM — quella dice solo dove finiscono i byte, e le passate d'area
+scandivano comunque tutte e 672 le gate. Se il costo del refresh è per gate line invece che per
+frame, un MUX ridotto accorcia il refresh in proporzione e dà un partial per bande che partono
+dalla prima gate.
+
+Finchè nessuno dei tre test passa, `hasFastPartialUpdate` resta `false`. Il prezzo della prima
+strada, se passasse, è già noto: in Mode 2 la RAM `0x26` fa da frame precedente, quindi un frame
+aggiornato in partial è senza accent, e la scelta è per frame e non per pixel.
+
+Resta fuori portata una sola leva, per scelta: alzare le tensioni di sorgente con `0x04`
+accorcerebbe la migrazione del pigmento, ma è l'unica che può danneggiare il film in modo
+permanente, e senza la waveform del produttore non c'è modo di sapere quanto margine ci sia.
+
+Il refresh **d'area** invece funziona già ed è misurato: la finestra RAM di `0x44`/`0x45` confina
+davvero la zona ridipinta, in Y e in X, con bordi verticali netti e la fascia di trappola fuori
+finestra rimasta intatta. Non serve a niente per la velocità, perchè la durata non dipende
+dall'altezza della finestra — 168, 48 e 24 righe misurano tutte 24,65 s — quindi restringere la
+finestra fa guadagnare solo sul push SPI, che è lo 0,6% del ciclo.
 
 
 ## Librerie
 
-**`A:\epd\GxEPD2-master`** — clone **gitignorato** di ZinggJM/GxEPD2 al tag 1.6.9 (`de82887`),
+**`A:\tmp\GxEPD2-master`** — clone **gitignorato** di ZinggJM/GxEPD2 al tag 1.6.9 (`de82887`),
 identico a upstream a meno dei CRLF. È una **copia di sola lettura**, tenuta lì per consultare i
 sorgenti (i template `GxEPD2_3C`/`GxEPD2_BW`, i driver SSD1677 di riferimento, gli esempi
-board-specific). Alla toolchain arriva come libreria `GxEPD2` tramite junction: non modificarla e
-non trattarla come codice del progetto.
+board-specific). Non modificarla e non trattarla come codice del progetto.
+
+Sta **fuori** dalla cartella del progetto perchè arduino-cli copia l'intero albero dello sketch
+dentro la build dir a ogni build, e quei 47,8 MB venivano duplicati ogni volta. Una junction dentro
+`A:\epd` non risolve: **arduino-cli la segue**, misurato, e la copia torna identica.
+
+Per consultare i sorgenti c'è quindi **`epd.code-workspace`**, workspace multi-root che monta il
+progetto come prima radice e il clone come seconda, in sola lettura. Due vincoli, scritti anche
+dentro al file:
+
+- **la prima radice deve restare il progetto**: Claude Code identifica il progetto dalla working
+  directory, che in un workspace multi-root è la prima cartella. Con `"."` al primo posto la chiave
+  resta `A:\epd`, quindi le chat in `~\.claude\projects\a--epd` e le memorie in `.claude\memory`
+  si ritrovano esattamente come aprendo la cartella;
+- **i percorsi sono relativi al file di workspace**, quindi funziona anche su macOS purchè il clone
+  stia in una cartella `tmp` accanto al repo. Se sul Mac sta altrove, VS Code segna la radice come
+  non disponibile senza rompere niente e basta correggere quella riga.
+
+Alla toolchain **non** arriva il clone intero: `A:\tmp\arduino\user\libraries\GxEPD2` è una
+**copia potata**, che rigenera `A:\tmp\arduino\rigenera-libreria-gxepd2.ps1` e va rifatta dopo
+ogni aggiornamento del clone. Tiene `library.properties`, tutti gli header tranne `src\bitmaps\`
+(42,8 MB dei 43,6 di header, fuori dal grafo di include del firmware) e il solo
+`src\GxEPD2_EPD.cpp`. Il motivo è il tempo di build: Arduino compila **tutti** i sorgenti di una
+libreria, e dei 104 di GxEPD2 questo progetto ne usa uno — il pannello lo pilota il driver custom
+del submodule e dalla libreria arrivano solo header. Gli altri 103 venivano preprocessati per il
+rilevamento delle dipendenze, compilati e poi scartati dal linker: **misurati 696 s di build contro
+120 s dopo la potatura**. Gli header dei driver restano: `GxEPD2_3C.h` li include sotto
+`__has_include`, quindi tenerli lascia il grafo identico al clone, mentre toglierli cambierebbe
+cosa vede il compilatore.
 
 **`A:\epd\GxEPD2_SOLUM_ESL`** — submodule (branch `main`, GPL-3.0 obbligata: i driver sono copie
 modificate di sorgenti GxEPD2). È una **libreria Arduino a sè stante**, header-only,
@@ -177,11 +252,14 @@ Meccanismi da conoscere prima di toccarla:
   BUSY. Ogni pin va guardato con `>= 0` prima di `pinMode()`/`digitalWrite()`: `-1` è un valore
   legale della struct e non deve arrivare all'API Arduino.
 - **Contratto di `GxEPDImage.h`**: il template `showImage()` è unico per la libreria e pretende
-  cinque metodi pubblici da **ogni** driver — `setPaged()`, `showImagePageHint()`,
-  `writeImageYellow()`, `preserveYellow()`, `isYellowPreserved()`. Un driver a due piani dichiara
-  le tre del giallo come **no-op**: il ramo BWRY è guardato dal formato del descrittore, non dal
-  tipo del driver. È ciò che permette ai moduli applicativi scritti per il 9.7" di compilare
-  contro un pannello a 3 colori senza rami condizionali.
+  **due** metodi pubblici da ogni driver — `setPaged()` e `showImagePageHint()`. Compone i due
+  piani che `GxEPD2_3C` gestisce, black e red, e non tocca un eventuale terzo piano: di un
+  descrittore `FORMAT_BWRY_1BPP` rende `data0` e `data1` e ignora `data2`. Quindi nessun driver ha
+  no-op imposti dal contratto, e lo stesso firmware compila contro entrambi i pannelli senza rami
+  condizionali. Le primitive del terzo piano (`writeImageYellow`, `preserveYellow`,
+  `isYellowPreserved`) sono **API opzionali del singolo driver**, che il chiamante usa out-of-band
+  prima di `firstPage()`: il 12.2" le dichiara senza corpo perchè la sua domanda è aperta, il 9.7"
+  non le ha.
 - **Bus SPI sempre da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`**, mai dall'oggetto `SPI`
   globale: un default proprio si imposta chiamando `selectSPI()` nel costruttore, non cablando le
   `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte.
@@ -229,9 +307,9 @@ Vincoli da non violare:
 ## Build su questa macchina
 
 Comando unico: **`A:\tmp\arduino\build.ps1`** (`-Clean`, `-Dettagli`, `-Board <fqbn>`,
-`-Partizioni <schema>`). FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`; binari in
-`A:\tmp\arduino\out`. **Da qui non si flasha**: solo compilazione di verifica, l'upload avviene da
-un altro PC con i binari esportati.
+`-Partizioni <schema>`). FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`. Gli oggetti
+intermedi stanno in `A:\tmp\arduino-build\<sketch>` e nessun binario viene esportato: **da qui non
+si flasha**, è solo compilazione di verifica e l'upload avviene da un altro PC.
 
 - `arduino-cli` 1.5.2 in `A:\tmp\arduino`, con config **non** nel percorso di default: passare
   sempre `--config-file A:/tmp/arduino/arduino-cli.yaml`.
@@ -239,9 +317,15 @@ un altro PC con i binari esportati.
   su `A:\tmp`", perchè il core completo chiede ~3,4 GB. È installato con un **index filtrato**
   (`A:\tmp\arduino-setup\package_esp32_min_index.json`) che tiene solo i target usati:
   reinstallando o cambiando versione va rigenerato con lo stesso filtro.
-- Due **junction, non copie** (Arduino pretende che la cartella si chiami come il `.ino`):
-  `A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd` e
-  `A:\tmp\arduino\user\libraries\GxEPD2` → `A:\epd\GxEPD2-master`.
+- Una **junction, non una copia** (Arduino pretende che la cartella si chiami come il `.ino`):
+  `A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`. La libreria `GxEPD2` invece è una
+  copia potata, vedi la sezione Librerie.
+- **Le build non stanno nella codebase**: senza `--build-path` arduino-cli mette gli intermedi in
+  `C:\xz\arduino\cache\sketches\<hash>` e, quando si esportano i binari, li lascia in una
+  cartella `build\` dentro lo sketch. `build.ps1` passa `--build-path`
+  `A:\tmp\arduino-build\ePaper-weather-dashboard`; per gli examples del submodule si passa a mano
+  `--build-path A:\tmp\arduino-build\<nome-esempio>`. Quella cartella serve alla compilazione
+  incrementale e non va svuotata fra una build e l'altra.
 - **`Env.h` è gitignored ed è obbligatorio per compilare**: `build.ps1` copia `Env_template.h` se
   manca, quindi il firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
 - Gli **examples del submodule non li compila questo build**: Arduino concatena i `.ino` solo dalla
@@ -273,7 +357,3 @@ L’obiettivo è ridurre complessità, manutenzione, bug e duplicazione, mantene
 ## Memorie
 - Le memorie devono riflettere lo stato finale del codice, non stati di avanzamento nè modifiche. Descrivi cosa il codice fa nel presente e non come ci si è arrivati
 evita quindi "fasi non fatte/da fare", date di modifica, "aggiornato", "rimosso" e simili formulazioni storiche o di progresso.
-- ISSUES.md contiene problemi individuati la cui correzione è ancora da implementare.
-- FUTURES.md contiene miglioramenti e aggiunta di funzionalità utili da implementare in futuro.
-- NOTES.md è un raccoglitore di idee che vanno approfondite e  spostate in ISSUE.md o FUTURES.md 
-- Le entry in ISSUES.md, NOTES.md, FUTURES.md vanno cancellate dal file dopo essere state implementate.
