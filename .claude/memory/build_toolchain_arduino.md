@@ -31,13 +31,25 @@ Reinstallando o cambiando versione: rigenerare l'index con lo stesso filtro, alt
 L'index ufficiale Arduino contiene anch'esso il package `esp32`, ma gli `additional_urls` vincono sul
 merge (verificato con `core download`), quindi il filtro ha effetto.
 
-**Due junction, non copie** (Arduino pretende che la cartella si chiami come il `.ino`):
-- `A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`
-- `A:\tmp\arduino\user\libraries\GxEPD2` → `A:\epd\GxEPD2-master` (**1.6.9 è la head upstream**:
-  `de82887` è il merge commit del tag, e `library.properties` di master dichiara 1.6.9. Non c'è
-  niente da aggiornare finchè non esce una release nuova. Identico a upstream a meno
-  dei CRLF, verificato con diff). `GxEPD2_SOLUM_ESL` NON va installato come libreria: lo sketch lo
-  include per path relativo ed è header-only (installarlo creerebbe due path per lo stesso header).
+**Una junction, non una copia** (Arduino pretende che la cartella si chiami come il `.ino`):
+`A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`.
+
+La libreria `GxEPD2` in `A:\tmp\arduino\user\libraries\GxEPD2` è una **copia potata** del clone
+`A:\tmp\GxEPD2-master`, che rigenera `A:\tmp\arduino\rigenera-libreria-gxepd2.ps1`: tiene
+`library.properties`, tutti gli header tranne `src\bitmaps\` e il solo `src\GxEPD2_EPD.cpp`.
+Arduino compila **tutti** i sorgenti di una libreria e dei 104 di GxEPD2 qui serve uno: misurati
+696 s di build contro 345 s dopo la potatura. Gli header dei driver restano perchè `GxEPD2_3C.h` li
+include sotto `__has_include`, quindi togliendoli cambierebbe cosa vede il compilatore.
+**1.6.9 è la head upstream**: `de82887` è il merge commit del tag e `library.properties` di master
+dichiara 1.6.9, quindi non c'è niente da aggiornare finchè non esce una release nuova; il clone è
+identico a upstream a meno dei CRLF, verificato con diff. `GxEPD2_SOLUM_ESL` NON va installato come
+libreria: lo sketch lo include per path relativo ed è header-only (installarlo creerebbe due path
+per lo stesso header).
+
+Le build stanno in `A:\tmp\arduino-build\<sketch>`, passata con `--build-path`: senza quel flag
+arduino-cli mette gli intermedi in `C:\xz\arduino\cache\sketches\<hash>` e chi esporta i binari
+li lascia in una cartella `build\` dentro lo sketch. Con un build path esplicito la cache del core
+non viene usata, quindi una build da cartella vuota ricompila anche i 59 oggetti del core.
 
 **Librerie:** ArduinoJson 7.4.3, Adafruit GFX 1.12.6 + BusIO 1.17.4, bsec2 1.10.2610 (usa la
 precompilata `src\esp32`), BME68x 1.3.40408.

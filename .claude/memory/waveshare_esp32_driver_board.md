@@ -33,7 +33,7 @@ display.epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 ```
 
 È esattamente ciò che fa l'example board-specific upstream
-`A:\epd\GxEPD2-master\examples\GxEPD2_WS_ESP32_Driver\GxEPD2_WS_ESP32_Driver.ino` (righe 22, 178-190),
+`A:\tmp\GxEPD2-master\examples\GxEPD2_WS_ESP32_Driver\GxEPD2_WS_ESP32_Driver.ino` (righe 22, 178-190),
 che è la fonte autorevole per questa board e usa anche lui 4 MHz. Il firmware del progetto sta a
 10 MHz, il driver 12.2" ha 20 MHz come default in `selectSPI()`.
 

@@ -1,6 +1,6 @@
 ---
 name: Pannelli commerciali affini ai SOLUM (Good Display / Waveshare)
-description: Cosa esiste in commercio vicino ai due pannelli SOLUM - GDEM102Z91 gemello funzionale della 9.7" (SSD1677 BWR, init identico byte per byte), la regola SSD1677 = 3 colori / SSD2677 = 4 colori su tutta la linea grande Good Display, il formato a 2 bit su stream 0x10 dei BWRY, il tetto dei 680 gate confermato da GDEM133T91, la topologia reale di un pannello a due code (12.48": 4 CS, 4 BUSY, 2 boost) e cosa dice della cascade, componenti del circuito di boost, GxEPD2_1248c come modello di driver multi-controller, dove sta il materiale scaricato
+description: Cosa esiste in commercio vicino ai due pannelli SOLUM - il reverse engineering di terzi su una ESL 10.2" BWR con SSD1677 che scrive le tensioni in init e conferma la LUT (precedente, nuovo), GDEM102Z91 gemello funzionale della 9.7" (SSD1677 BWR, init identico byte per byte), la regola SSD1677 = 3 colori / SSD2677 = 4 colori su tutta la linea grande Good Display, il formato a 2 bit su stream 0x10 dei BWRY, il tetto dei 680 gate confermato da GDEM133T91, la topologia reale di un pannello a due code (12.48": 4 CS, 4 BUSY, 2 boost) e cosa dice della cascade, componenti del circuito di boost, GxEPD2_1248c come modello di driver multi-controller, dove sta il materiale scaricato
 metadata:
   type: reference
 ---
@@ -24,6 +24,33 @@ Endpoint di download Good Display (i pulsanti "Download" sono JS): la pagina
 `/companyfile/<id>.html` porta `data-url="/comp/xcompanyFile/downloadNew.do?appId=24&fid=<fid>&id=<id>"`,
 che risponde con uno `<script>window.location='https://v4.cecdn.yun300.cn/100001_1909185148/<file>'</script>`.
 Serve `-e https://www.good-display.com/` come referer.
+
+## Reverse engineering di terzi su una ESL 10.2" BWR con SSD1677
+
+<https://andelf.github.io/blog/2023/12/17/10-2-inch-3-color-esl/> — vetro `HINK-E102A01-A1`,
+controller SSD1677, full refresh BWR ~20 s contro i nostri 24. È la fonte esterna più vicina a
+questo pannello, e conferma il modello del partial da un'implementazione indipendente:
+
+- la sua LUT per il fast refresh in bianco e nero usa `LUT0 = B->B`, `LUT1 = B->W` a **VSL**,
+  `LUT2 = W->B` a **VSH1**, `LUT3 = W->W`, cioè l'indice `(precedente, nuovo)` con il precedente
+  nella RED RAM e le stesse polarità del nostro driver;
+- **scrive le tensioni esplicitamente in init**: `0x03 = 0x00` (VGH 20 V), `0x04 = 0x41, 0xA8, 0x32`
+  (i POR: VSH1 15 V, VSH2 5 V, VSL −15 V), `0x2C = 0x44` (VCOM −1,7 V). È la pratica che mancava al
+  nostro driver e la causa del nero pallido, vedi [[gxepd2_097c_driver]];
+- ottiene un fast BW usabile con **15 frame in una sola fase** (`TP[0A] = 0x0F`, frame rate `0x22`),
+  cioè meno dei nostri 18: il numero di frame non era il problema;
+- scrive anche `0x37 = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x4F, ...}`, cioè tutti i waveform set
+  dichiarati Mode 2 e `F[6] = 1` = **RAM ping-pong abilitato**, perchè lei carica dall'OTP. Sul
+  nostro non serve: con una LUT custom il bit 4 di `0x22` è spento e nessun set viene caricato.
+
+Nota di metodo su `0x37`: dichiarare tutti i set Mode 2 sarebbe rischioso qui, perchè `_Update_Full`
+usa `0xF7` che è Mode 1 e potrebbe restare senza set corrispondente.
+
+Seconda fonte, meno ricca ma utile perchè ricostruisce la stessa sequenza canonica
+(`0x32`, poi `0x03`/`0x04`/`0x2C`, poi `0x22` + `0x20`):
+<https://github.com/bigbag/papyrix-reader/blob/main/docs/ssd1677-driver.md>. E per il principio
+generale del fast BW su film a tre pigmenti, cioè togliere le fasi del rosso e tenere quelle del
+nero: <https://github.com/olikraus/u8g2/issues/1393> (UC8151D, LUT diverse, idea identica).
 
 ## Gemello funzionale della 9.7": GDEM102Z91
 

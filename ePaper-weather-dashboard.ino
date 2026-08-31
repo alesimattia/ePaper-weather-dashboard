@@ -10,16 +10,22 @@
  */
 #define ENABLE_GxEPD2_GFX 1
 /**
- * Necessaria per GxEPD2 per indicare che il display usa il bus HSPI
- * (non il VSPI di default su ESP32).
- * Obbligatorio perchè la Waveshare E-Paper ESP32 Driver Board collega SCK/MISO/MOSI ai pin HSPI (13/12/14).
+ * Il bus HSPI non lo abilita nessuna macro: GxEPD2 e i driver del submodule
+ * prendono il bus dall'oggetto passato a selectSPI(), e non leggono simboli di
+ * configurazione. Il remap sta quindi tutto in initDisplay(), in due chiamate:
+ * hspi.begin(13, 12, 14, 15) e display.epd2.selectSPI(...).
+ *
+ * Ed è obbligatorio, non stilistico: la Waveshare E-Paper ESP32 Driver Board
+ * scambia SCK e MOSI rispetto al default HSPI (SCK sul 13, MOSI sul 14), e il
+ * 12 è un MISO fittizio perchè sul FPC a 24 pin del pannello la linea dati di
+ * ritorno non esiste. È codice board-specific, quindi vive qui e non nei
+ * Layout_*.h, che descrivono il pannello.
  */
-#define USE_HSPI_FOR_EPD
 
 /**
  * Selezione del pannello display: scommenta UNA SOLA delle due varianti
  * per scegliere driver, coordinate del layout e font.
- *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWRY)
+ *   - DISPLAY_VARIANT_097C -> Layout_097c.h (SOLUM 9.7" 960w x 672h BWR)
  *   - DISPLAY_VARIANT_122C -> Layout_122c.h (SOLUM 12.2" 960w x 768h BWR)
  *
  * I due Layout_*.h definiscono lo stesso namespace `Layout` con gli stessi
@@ -29,6 +35,31 @@
  */
 #define DISPLAY_VARIANT_097C
 //#define DISPLAY_VARIANT_122C
+
+/**
+ * REFRESH PARZIALE: DISATTIVATO, ed è una scelta di questo firmware e non un
+ * limite del pannello.
+ *
+ * Il driver 097c sa fare un partial in bianco e nero da 639 ms contro i ~24 s
+ * del refresh pieno, ma sotto la sua waveform la RAM 0x26 del controller
+ * diventa il FRAME PRECEDENTE invece del piano accent. Conseguenza: un frame
+ * aggiornato in partial è per forza SENZA ROSSO, e la scelta è per frame e non
+ * per pixel, quindi non esiste il caso "aggiorno in partial una zona e tengo
+ * il rosso nel resto dello schermo". Questa dashboard il rosso lo usa (celle
+ * del calendario, riquadri, icone meteo), quindi il partial non è applicabile
+ * così come è.
+ *
+ * A 0 il firmware lavora solo in full-window e non chiama nessuna delle cinque
+ * API opt-in del driver: drawImagePartial(), refreshPartial(),
+ * writeImagePrevious(), writeScreenBufferPrevious(), setPartialLut().
+ * Lo static_assert dopo la costruzione di `display` sorveglia l'unica strada
+ * per cui il partial potrebbe attivarsi da sè, cioè il flag
+ * hasFastPartialUpdate del driver.
+ *
+ * Per riabilitarlo in futuro NON basta mettere 1: vedi il messaggio dell'#error
+ * accanto allo static_assert, che elenca cosa va implementato.
+ */
+#define DISPLAY_PARTIAL_REFRESH 0
 
 // ---------------------------------------------------------------------------
 // Cadenze operative del dispositivo. Tutti i valori sono in minuti interi
@@ -108,8 +139,56 @@ SPIClass hspi(HSPI);
  */
 GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());
 
-// Inizializza il bus HSPI e il display in orientamento landscape fisso.
-// Chiamato una sola volta in setup().
+/**
+ * Sorveglianza del refresh parziale, vedi DISPLAY_PARTIAL_REFRESH in testa.
+ *
+ * Il ramo a 0 controlla il flag del driver, che è l'unico modo per cui il
+ * partial possa attivarsi senza che nessuno lo chiami: con hasFastPartialUpdate
+ * a true il template GxEPD2_3C scrive il piano accent dentro la RAM 0x26
+ * (GxEPD2_3C.h:340), che sotto la waveform del partial è il frame precedente, e
+ * ripete anche l'intero loop paged una seconda volta (GxEPD2_3C.h:354-358). Il
+ * rosso della dashboard andrebbe perso in silenzio: meglio fermare la build.
+ *
+ * Il ramo a 1 esiste per non far passare il flag come un interruttore che non
+ * commuta niente. Riabilitare il partial vuol dire:
+ *   1. togliere questo #error;
+ *   2. scrivere un percorso di rendering dedicato per le sole zone in bianco e
+ *      nero, che chiami epd2.drawImagePartial() FUORI da firstPage()/nextPage():
+ *      il partial del driver vive fuori dal template di proposito;
+ *   3. accettare che il frame aggiornato in partial non abbia rosso, e decidere
+ *      ogni quanti partial rifare un frame pieno per rimetterlo (il driver da sè
+ *      non ne ha bisogno: undici passate consecutive non degradano il vetro).
+ * NON va alzato hasFastPartialUpdate nel driver: quella è la strada sbagliata,
+ * per il motivo scritto sopra.
+ */
+#if DISPLAY_PARTIAL_REFRESH
+#error "DISPLAY_PARTIAL_REFRESH = 1 non è implementato: il partial del driver 097c va chiamato out-of-band con epd2.drawImagePartial(), non dal loop paged, e rende un frame senza rosso. Vedi il commento qui sopra per i tre passi."
+#else
+static_assert(!Layout::Panel::hasFastPartialUpdate,
+			  "Il driver dichiara hasFastPartialUpdate = true, ma DISPLAY_PARTIAL_REFRESH è 0: "
+			  "il template GxEPD2_3C userebbe la RAM 0x26 come buffer del partial e il rosso della "
+			  "dashboard andrebbe perso. Rimettere false nel driver.");
+#endif
+
+/**
+ * Inizializza il bus HSPI e il display in orientamento landscape fisso.
+ * Chiamato una sola volta in setup().
+ *
+ * Contratto d'uso del driver per tutto il firmware, e qui è il posto giusto
+ * perchè è dove si scelgono bus e modalità:
+ *   - SOLO full-window. setFullWindow() vale per l'intera sessione, e
+ *     Weather::renderFrame() la richiama a ogni frame come difesa. In
+ *     partial-window il template chiamerebbe writeImagePart(black, color) e
+ *     poi refresh(x, y, w, h), che sul driver 097c fa comunque un refresh
+ *     pieno: nessun guadagno e una modalità in più da mantenere.
+ *   - le cinque API del partial del driver NON vanno chiamate da qui:
+ *     drawImagePartial(), refreshPartial(), writeImagePrevious(),
+ *     writeScreenBufferPrevious(), setPartialLut(). Sono opt-in, quindi basta
+ *     non chiamarle; il perchè sta in DISPLAY_PARTIAL_REFRESH in testa al file.
+ *   - il resto lo gestisce il driver da sè: init dei due piani alla prima
+ *     scrittura, ricarica della waveform dall'OTP a ogni refresh pieno, e
+ *     ripulitura della RAM al risveglio da hibernate().
+ */
 void initDisplay()
 {
 	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS (HSPI bus, board-specific)
@@ -138,7 +217,7 @@ void initDisplay()
 // Flusso:
 //   1. Boot: g_cinema_desc punta a img_apple_bwry_desc (fallback PROGMEM).
 //   2. Al primo ciclo con WiFi connesso, dopo il fetch meteo e prima di
-//      quello dei calendari, fetchCinemaImage() scarica i 3 piani BWRY
+//      quello dei calendari, fetchCinemaImage() scarica i Layout::CINEMA_PLANES piani
 //      dall'endpoint render.com e li mette in RAM (o PSRAM se disponibile).
 //   3. g_cinema_desc viene riassegnato al descrittore dinamico che punta ai
 //      buffer RAM: da qui in poi ogni refresh del display mostra l'immagine
@@ -163,15 +242,26 @@ void initDisplay()
  * bianco solo fino a Layout::BANNER_Y.
  */
 
-// Buffer dinamici dei 3 piani scaricati (nullptr finchè il fetch non riesce).
-static uint8_t *g_cinema_black = nullptr;
-static uint8_t *g_cinema_red = nullptr;
-static uint8_t *g_cinema_yellow = nullptr;
+// Buffer dinamici dei piani scaricati (nullptr finchè il fetch non riesce).
+// Quanti ne vengono davvero allocati e letti lo dice Layout::CINEMA_PLANES,
+// che vale 2 sui pannelli a tre colori: così allocazione, free e lettura
+// restano un solo pezzo di codice per entrambe le varianti di display.
+// L'array è dimensionato al massimo dei formati serviti dall'endpoint, in
+// modo che i tre campi del descrittore siano sempre indicizzabili.
+static constexpr uint8_t CINEMA_PLANES_MAX = 3;
+static uint8_t *g_cinema_planes[CINEMA_PLANES_MAX] = {};
+
+// Nomi dei piani nell'ordine in cui il server li concatena, per i log.
+static const char *const g_cinema_plane_names[CINEMA_PLANES_MAX] = {"black", "red", "yellow"};
+
+static_assert(Layout::CINEMA_PLANES >= 2 && Layout::CINEMA_PLANES <= CINEMA_PLANES_MAX,
+			  "Layout::CINEMA_PLANES fuori dai formati serviti da /cinema/arduino");
 
 // Descrittore dinamico che punta ai buffer sopra. Popolato quando il fetch
 // ha successo.
 static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
-	GxEPDImage::FORMAT_BWRY_1BPP,
+	Layout::CINEMA_PLANES >= 3 ? GxEPDImage::FORMAT_BWRY_1BPP
+							   : GxEPDImage::FORMAT_BWR_1BPP,
 	Layout::CINEMA_W,
 	Layout::CINEMA_H,
 	nullptr,
@@ -245,12 +335,11 @@ static uint8_t *allocPlaneBuffer(const char *label)
  */
 static void freeCinemaBuffers()
 {
-	free(g_cinema_black);
-	g_cinema_black = nullptr;
-	free(g_cinema_red);
-	g_cinema_red = nullptr;
-	free(g_cinema_yellow);
-	g_cinema_yellow = nullptr;
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
+	{
+		free(g_cinema_planes[p]);
+		g_cinema_planes[p] = nullptr;
+	}
 	g_cinema_dynamic_desc.data0 = nullptr;
 	g_cinema_dynamic_desc.data1 = nullptr;
 	g_cinema_dynamic_desc.data2 = nullptr;
@@ -306,10 +395,11 @@ static bool shouldFetchCinema()
  *      riuscito in un giro precedente) e riporta g_cinema_desc al fallback
  *      PROGMEM: se il fetch fallisce o il refresh avviene durante un
  *      render, il display mostra il fallback invece di un'immagine corrotta.
- *   5. Alloca 3 buffer da Layout::CINEMA_PLANE_SZ byte (PSRAM preferita,
+ *   5. Alloca Layout::CINEMA_PLANES buffer da Layout::CINEMA_PLANE_SZ byte
+ *      (PSRAM preferita,
  *      heap interno come fallback).
  *   6. HTTP GET -> verifica status 200 e Content-Length == Layout::CINEMA_TOTAL_SZ.
- *   7. Legge in stream i 3 piani in sequenza (black, red, yellow) via
+ *   7. Legge in stream i piani nell'ordine in cui il server li concatena via
  *      readBytes, direttamente nei buffer.
  *   8. Ripuntamento di g_cinema_desc al descrittore dinamico.
  *
@@ -346,14 +436,15 @@ static void fetchCinemaImage()
 				  psramFound() ? "presente" : "assente (uso heap interno)",
 				  (unsigned)ESP.getFreeHeap());
 
-	g_cinema_black = allocPlaneBuffer("black");
-	g_cinema_red = allocPlaneBuffer("red");
-	g_cinema_yellow = allocPlaneBuffer("yellow");
-	if (!g_cinema_black || !g_cinema_red || !g_cinema_yellow)
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
 	{
-		Serial.println(F("[cinema] allocazione buffer fallita, fallback PROGMEM"));
-		freeCinemaBuffers();
-		return;
+		g_cinema_planes[p] = allocPlaneBuffer(g_cinema_plane_names[p]);
+		if (!g_cinema_planes[p])
+		{
+			Serial.println(F("[cinema] allocazione buffer fallita, fallback PROGMEM"));
+			freeCinemaBuffers();
+			return;
+		}
 	}
 
 	HTTPClient http;
@@ -390,9 +481,7 @@ static void fetchCinemaImage()
 	// (controllato da setTimeout) o EOF. Niente polling manuale di available()
 	// con delay(1): readBytes lo fa gia' internamente in modo equivalente.
 	stream->setTimeout(45000);
-	uint8_t *const planes[3] = {g_cinema_black, g_cinema_red, g_cinema_yellow};
-	const char *names[3] = {"black", "red", "yellow"};
-	for (int p = 0; p < 3; ++p)
+	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
 	{
 		size_t read = 0;
 		uint32_t t0 = millis();
@@ -401,7 +490,7 @@ static void fetchCinemaImage()
 		// accumulare timeout >45s totali sul singolo piano.
 		while (read < Layout::CINEMA_PLANE_SZ && (millis() - t0) < 45000UL)
 		{
-			int n = stream->readBytes(planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
+			int n = stream->readBytes(g_cinema_planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
 			if (n <= 0)
 				break; // timeout interno o connessione chiusa
 			read += n;
@@ -409,7 +498,7 @@ static void fetchCinemaImage()
 		if (read != Layout::CINEMA_PLANE_SZ)
 		{
 			Serial.printf("[cinema] piano %s letto parzialmente (%u/%u)\n",
-						  names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
+						  g_cinema_plane_names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
 			http.end();
 			freeCinemaBuffers();
 			return;
@@ -417,9 +506,9 @@ static void fetchCinemaImage()
 	}
 	http.end();
 
-	g_cinema_dynamic_desc.data0 = g_cinema_black;
-	g_cinema_dynamic_desc.data1 = g_cinema_red;
-	g_cinema_dynamic_desc.data2 = g_cinema_yellow;
+	g_cinema_dynamic_desc.data0 = g_cinema_planes[0];
+	g_cinema_dynamic_desc.data1 = g_cinema_planes[1];
+	g_cinema_dynamic_desc.data2 = Layout::CINEMA_PLANES >= 3 ? g_cinema_planes[2] : nullptr;
 	g_cinema_desc = &g_cinema_dynamic_desc;
 	Weather::markDirty();
 	Serial.println(F("[cinema] download completato, immagine remappata"));
@@ -680,6 +769,25 @@ void loop()
 		Weather::markDirty();
 
 	Weather::render();
+
+	/**
+	 * Pannello in deep sleep prima del light sleep dell'MCU: porta il
+	 * controller da standby a 1-5 uA, ed è quasi gratis perchè il refresh
+	 * pieno chiude con 0x22 = 0xF7, che ha già disabilitato analog e clock:
+	 * il _PowerOff() interno a hibernate() è quindi un no-op e resta solo il
+	 * comando di deep sleep. Idempotente: nei giri in cui Weather::render()
+	 * non disegna niente il pannello è già addormentato e la chiamata non fa
+	 * nulla.
+	 *
+	 * Al risveglio non serve fare niente da qui: alla prima scrittura il
+	 * driver esegue reset hardware, SWRESET e init, e ripulisce i due piani
+	 * perchè il deep sleep NON ritiene la RAM del controller. Sono ~60 ms sul
+	 * primo frame utile.
+	 *
+	 * Sta solo in questo ramo: nella finestra OTA il loop gira ogni ~10 ms e
+	 * il pannello verrebbe addormentato e risvegliato in continuazione.
+	 */
+	display.hibernate();
 
 	/**
 	 * Light sleep DISPLAY_REFRESH_MIN minuti: preserva RAM e stato dei moduli

@@ -21,14 +21,29 @@
 #ifdef _GxEPDImage_H_
 extern const unsigned char img_apple_bwry_black[];
 extern const unsigned char img_apple_bwry_red[];
+#if !defined(DISPLAY_VARIANT_097C)
 extern const unsigned char img_apple_bwry_yellow[];
+#endif
 
+/* Descrittore del fallback. Il file non è stato rigenerato quando il 9.7" è
+   passato a due piani: su quella variante il terzo piano non viene
+   referenziato e il linker lo scarta, verificato a binario invariato, mentre
+   l'array resta a disposizione del 12.2", dove il quarto colore è ancora da
+   determinare. */
 const GxEPDImage::Descriptor img_apple_bwry_desc = {
+#if defined(DISPLAY_VARIANT_097C)
+	GxEPDImage::FORMAT_BWR_1BPP,
+	620, 460,
+	(const uint8_t*)img_apple_bwry_black,
+	(const uint8_t*)img_apple_bwry_red,
+	nullptr
+#else
 	GxEPDImage::FORMAT_BWRY_1BPP,
 	620, 460,
 	(const uint8_t*)img_apple_bwry_black,
 	(const uint8_t*)img_apple_bwry_red,
 	(const uint8_t*)img_apple_bwry_yellow
+#endif
 };
 #endif
 

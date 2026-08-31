@@ -1,6 +1,6 @@
 ---
 name: SSD1677 command set e registri (estratto dal datasheet Rev 1.0)
-description: Riferimento verbatim dei comandi SSD1677 che servono ai driver SOLUM 9.7" e 12.2" - polarità delle due RAM e la Table 6-4 che le mappa su LUT0..LUT3, struttura della LUT, tabella parametri di 0x22, 0x21, MUX e TB riservato, i pin M/S# e CL della cascade dati come riservati, data entry, finestre in pixel, HV Ready e VCI detection misurabili col BUSY, deep sleep, pattern hardware, registri in lettura, cosa il datasheet NON contiene, più la ricetta per riestrarre il PDF
+description: Riferimento verbatim dei comandi SSD1677 che servono ai driver SOLUM 9.7" e 12.2" - polarità delle due RAM e le Table 6-4/6-5 che le mappano su LUT0..LUT3 indicizzando sempre con (RED, BW), il waveform setting da 110 byte di cui 0x32 ne scrive 105 con le tensioni su 0x03/0x04/0x2C e i loro POR, frame rate Table 6-7, TP/RP per gruppo, tabella parametri di 0x22, 0x21, 0x37 con i bit per-WS e il ping-pong, MUX con pavimento a 300 e TB riservato, SWRESET che non tocca la RAM, deep sleep che non la ritiene, i pin M/S# e CL della cascade dati come riservati, data entry, finestre in pixel, HV Ready e VCI detection misurabili col BUSY, pattern hardware con la mappa 0x47/0x46 e l'errore del datasheet, registri in lettura, cosa il datasheet NON contiene, più la ricetta per riestrarre il PDF
 type: reference
 ---
 
@@ -74,12 +74,74 @@ bit. Conseguenza da non dimenticare: **"due RAM da 1 bit" non implica "3 colori"
 per pixel il chip li sa esprimere, e a decidere se `LUT3` guida un quarto colore o replica il rosso
 è la waveform in OTP.
 
+Il fatto che conta per il partial: **l'indice di LUT è sempre la coppia `(bit RED, bit BW)`**, in
+entrambe le tabelle, e nessun parametro di `0x22` cambia quella mappa. Fra Table 6-4 e Table 6-5
+cambia solo quale LUT è aliasata su quale, cioè cosa ci mette dentro la waveform di fabbrica. Con
+una LUT scritta dall'MCU le quattro combinazioni diventano quindi quattro transizioni distinte, ed è
+così che `0x26` può fare da **frame precedente** invece che da accent.
+
 **Nel datasheet non compaiono**: la parola "yellow", una modalità a 4 colori, un terzo piano
-immagine. Che colore renda ciascuna combinazione sul film montato, e se `0x28` su questo modulo
-scriva comunque qualcosa, lo dice solo la misura — la fa
-`GxEPD2_SOLUM_ESL\examples\097c\panel_diagnostic\panel_diagnostic.ino`, vedi
-[[gxepd2_097c_driver]]. Il firmware scrive il rosso come `(RED=1, BW=1)` = **LUT3**; l'unica LUT mai
-esercitata è **LUT2** = `(RED=1, BW=0)`.
+immagine. Sul film montato la misura ha chiuso la questione: `(1,0)` e `(1,1)` escono entrambe
+rosse, `0x28` è VCOM Sense e alza il BUSY ~10 s senza dipingere, e una waveform custom che porta
+`LUT2` a VSH1 e `LUT3` a VSH2 rende **nero** e **rosso** — il film separa i due pigmenti per soglia
+di tensione. Vedi [[gxepd2_097c_driver]].
+
+## Il waveform setting: 110 byte utili, e `0x32` ne scrive 105
+
+È il punto su cui il driver ha sbagliato una volta, e va tenuto in testa per qualunque waveform
+custom su questa famiglia.
+
+| byte | contenuto | comando |
+|---|---|---|
+| `0..49` | `VS`, dieci byte per `LUT0..LUT4`; ogni byte è un gruppo con quattro fasi da 2 bit (`[7:6]` A, `[5:4]` B, `[3:2]` C, `[1:0]` D) | `0x32` |
+| `50..99` | per gruppo `TP[nA]`, `TP[nB]`, `TP[nC]`, `TP[nD]`, `RP[n]`, un byte ciascuno | `0x32` |
+| `100..104` | frame rate, dieci nibble `FR[0..9]` | `0x32` |
+| `105` | VGH | **`0x03`** |
+| `106..108` | VSH1, VSH2, VSL | **`0x04`** |
+| `109` | VCOM | **`0x2C`** |
+| `110..111` | riservati | |
+
+- `TP[nX]` = 0..255 **frame per fase** (0 = fase saltata), `RP[n]` = 0..255 = il gruppo ripetuto da
+  1 a 256 volte. Quindi un gruppo esprime al massimo 4 × 255 = 1020 frame.
+- **`TP` e `RP` sono per GRUPPO, non per LUT**: un solo set di lunghezze di fase condiviso da tutte
+  e cinque le LUT, e a cambiare per LUT è solo la tensione applicata in ciascuna fase. Non si può
+  allungare una transizione senza allungare anche l'altra.
+- `VS[nX-LUTm]`, Table 6-6: `00` VSS, `01` VSH1, `10` VSL, **`11` VSH2**. La colonna VCOM della
+  stessa tabella dice che il code point governa anche il livello ACVCOM, quindi non è solo "quale
+  tensione di sorgente".
+- **Un load dall'OTP scrive tutti i byte `0..109`, tensioni comprese**, e il SSD1683 (stessa
+  architettura, prosa più esplicita) lo enuncia così: *"These commands (0x32, 0x3F, 0x03, 0x04 and
+  0x2C) can be overridden by the latest register setting. For example, if waveform setting A is
+  loaded from OTP first, then, MCU has written another waveform setting B into the driver IC after
+  OTP loaded. The driver IC will use the waveform setting B to drive the display."* Conseguenza:
+  chi scrive solo `0x32` gira con le **tensioni di un'altra waveform**, e per correggere basta
+  mandare `0x04` dopo. Il SWRESET invece le riporta ai POR.
+- `0x32` è dato per *"required CLKEN=1"*. In pratica non è applicato: sia il driver sia la sonda lo
+  scrivono col clock nominalmente spento e la LUT prende comunque (lo dimostra la durata). Da non
+  "sistemare" credendo di aver trovato una causa.
+- `0x31` **Load WS OTP** è il modo esplicito di ricaricare la waveform di fabbrica, alternativo al
+  bit 4 di `0x22`.
+
+**Frame rate**, Table 6-7: il SSD1677 Rev 1.0 non la riporta, il SSD1683 sì, e vale anche qui
+perchè la misura torna al millisecondo. `FR[3:0]`: `0001` 25 Hz, `0010` **50 Hz**, `0011` 75 Hz,
+`0100` 100 Hz, `0101` 125 Hz, `1001` 37,5, `1010` 62,5, `1011` 87,5, `1100` 112,5. Scrivere lo
+stesso codice in tutti e dieci i nibble rende irrilevante l'ordinamento `FR[0..9]`, che la Rev 1.0
+non documenta.
+
+**Tensioni: POR e codifica.**
+
+| reg | POR | valore | codifica |
+|---|---|---|---|
+| `0x03` VGH | `0x00` | **20 V** | A[4:0], da 12 a 20 V; `0x07` = 12 V, `0x10` = 16,5 V |
+| `0x04` A = VSH1 | `0x41` | **15 V** | A[7]=0: `0x23` = 9 V, +0,2 V per passo, fino a 17 V |
+| `0x04` B = VSH2 | `0xA8` | **5 V** | B[7]=1: da 2,4 a 8,8 V (`0x8E` = 2,4 V); con B[7]=0 usa la scala di VSH1 |
+| `0x04` C = VSL | `0x32` | **−15 V** | C[7]=0, da −9 a −17 V |
+| `0x2C` VCOM | `0x00` | fuori tabella | parte da `0x08` = −0,2 V, −0,1 V ogni 4 passi, quindi `0x44` = −1,7 V |
+
+Il POR di `0x2C` non compare nella tabella: scriverlo alla cieca è un peggioramento, e il VCOM
+dell'OTP è tarato sul film. `0x2B` serve solo a ridurre il glitch quando ACVCOM commuta, e il
+datasheet prescrive due byte fissi (nell'estrazione testuale sono illeggibili: rileggere il PDF se
+un giorno servisse).
 
 ## 0x22 Display Update Control 2 — tabella parametri completa
 
@@ -151,9 +213,10 @@ mette il chip in cascade e gli fa emettere CL. Terza fonte indipendente dopo l'i
 
 | Cmd | Significato | Note |
 |---|---|---|
-| `0x01` | Driver Output Control (MUX + direzione scan) | A[9:0] POR `2A7h` = 680 MUX, gate line = A[9:0]+1. `{0x9F,0x02,0x00}` = 671 -> 672 gate line. B[2:0]: B[2] GD (primo gate output, POR 0 = G0), B[1] SM (ordine di scansione: POR 0 = G0,G1,G2... interlacciato sinistra/destra; 1 = pari poi dispari), B[0] **TB = 1 è dichiarato Reserved**: TB=0, scan da G0 a G679, ed è l'unica opzione. **Non esiste una reverse scan hardware sull'asse gate**. Da non confondere con il verso del CONTATORE DI INDIRIZZO, che invece è configurabile: `0x11` A[1:0] = 00 Y e X decrement, 01 Y decrement X increment, 10 Y increment X decrement, 11 entrambi increment (POR). Specchiare una banda **si può fare nei registri**, ed è così che GxEPD2 tratta le due metà del GDEY0579Z93; nel 122c il ribaltamento sta nel data path per scelta di implementazione, non per assenza di alternativa — vedi [[gxepd2_122c_driver]] |
+| `0x01` | Driver Output Control (MUX + direzione scan) | A[9:0] POR `2A7h` = 680 MUX, gate line = A[9:0]+1, **con range dichiarato da 300 a 680 MUX**: sotto 300 non si scende. `{0x9F,0x02,0x00}` = 671 -> 672 gate line. Ridurre il MUX **non accorcia il refresh**: misurati 24010 / 24031 / 24033 ms a MUX 671 / 335 / 167, quindi il periodo di frame lo fissa il frame rate e la scansione non lo satura. B[2:0]: B[2] GD (primo gate output, POR 0 = G0), B[1] SM (ordine di scansione: POR 0 = G0,G1,G2... interlacciato sinistra/destra; 1 = pari poi dispari), B[0] **TB = 1 è dichiarato Reserved**: TB=0, scan da G0 a G679, ed è l'unica opzione. **Non esiste una reverse scan hardware sull'asse gate**. Da non confondere con il verso del CONTATORE DI INDIRIZZO, che invece è configurabile: `0x11` A[1:0] = 00 Y e X decrement, 01 Y decrement X increment, 10 Y increment X decrement, 11 entrambi increment (POR). Specchiare una banda **si può fare nei registri**, ed è così che GxEPD2 tratta le due metà del GDEY0579Z93; nel 122c il ribaltamento sta nel data path per scelta di implementazione, non per assenza di alternativa — vedi [[gxepd2_122c_driver]] |
 | `0x0C` | Booster soft start | 5 byte; i livelli in OTP hanno E[7:0] = `0x40` (Level 1) / `0x80` (Level 2) |
-| `0x10` | **Deep Sleep mode** | A[1:0]: `00` Normal [POR], `11` Enter Deep Sleep. In deep sleep **il BUSY resta alto**, e questo lo rende verificabile a occhio sul pin. `0x11` ha A[1:0]=01, che nella tabella non c'è; `0x03` ha A[1:0]=11 ed è quello che usa OEPL sulla stessa famiglia. Quale dei due il modulo accetti davvero lo misura la sonda |
+| `0x10` | **Deep Sleep mode** | A[1:0]: `00` Normal [POR], `11` Enter Deep Sleep, e su questo chip **è l'unico modo di deep sleep**, non due come sul SSD1683. In deep sleep il BUSY resta alto, e la tabella elettrica dice *"Cannot retain RAM data"*: **al risveglio la RAM immagine è indefinita, non azzerata**. Per uscire serve un HW reset. Il driver manda `0x03` (A[1:0]=11), come OEPL sulla stessa famiglia, e funziona end-to-end; `0x11` avrebbe A[1:0]=01, che nella tabella non c'è |
+| `0x12` | **SW RESET** | riporta comandi e parametri ai default di reset, **tranne `R10h`**, e alza il BUSY per 2 ms misurati. *"Note: RAM are unaffected by this command"*: il SWRESET **non** pulisce la RAM immagine, quindi non è lui a garantire uno stato noto dei piani. Riporta invece ai POR i registri di tensione `0x03`/`0x04`/`0x2C` |
 | `0x11` | Data Entry mode | A[1:0] = ID: `00` Y-- X--, `01` Y-- X++, `10` Y++ X--, `11` Y++ X++ [POR]. A[2] = AM, direzione di avanzamento del contatore dopo ogni byte: `0` in X [POR], `1` in Y. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0. Attenzione: il decremento cambia **dove atterrano i byte**, non l'ordine dei bit dentro il byte, quindi da solo non specchia un'immagine |
 | `0x14` | **HV Ready Detection** | A[6:4] = n, cool down `10ms x (n+1)`; A[2:0] = m, numero di cicli; durata massima `10ms x (n+1) x m`. `A[7:0] = 00h` fa una detection singola. Richiede **CLKEN=1 e ANALOGEN=1** (cioè power on via `0x22`=0xC0 prima). "BUSY pad will output high during detection", e "the detection will be completed when HV is ready": quindi **la durata del BUSY è l'esito**, leggibile anche senza SDO — molto più corta del massimo = alte tensioni salite, uguale al massimo = mai salite. L'esito esplicito sta in `0x2F` bit 5 |
 | `0x15` | **VCI Detection** | A[2:0] livello di soglia: `011` 2.2 V, `100` 2.3 V [POR], `101` 2.4 V, `110` 2.5 V, `111` 2.6 V. Richiede CLKEN=1 e ANALOGEN=1. BUSY alto durante la misura, esito in `0x2F` bit 4. Qui il datasheet **non** promette una conclusione anticipata, quindi la durata dice meno che in `0x14`: quello che conta è che il BUSY reagisca, cioè che il blocco analogico sia vivo |
@@ -188,6 +251,11 @@ Y secondo il gate), `A[2:0]` = **step width** (in X secondo il source):
 | 101 | 256 | 101 | 256 |
 | 110 | 512 | 110 | 512 |
 | **111** | **680** | **111** | **960** |
+
+**La mappa è `0x47` -> RAM B/W (`0x24`) e `0x46` -> RAM RED (`0x26`)**, come dice la tabella comandi
+e come conferma OEPL (`CMD_WRITE_PATTERN_BW 0x47`). Il testo di init del datasheet, §"Send
+Initialization Code", li dà **scambiati**: è un errore del datasheet e invita a una correzione
+sbagliata del driver.
 
 Quindi `0xF7` = primo step a 1, height 680, width 960 = un unico step su tutta la RAM nativa a 1;
 `0x77` = lo stesso a 0. "BUSY pad will output high during operation": il pattern si attende sul

@@ -1,0 +1,44 @@
+{
+  // Workspace multi-root del progetto ePaper weather dashboard.
+  //
+  // PERCHE' ESISTE. Il clone di riferimento di GxEPD2 sta FUORI dal progetto,
+  // in A:\tmp\GxEPD2-master: se stesse dentro A:\epd, arduino-cli ne
+  // copierebbe i 47,8 MB dentro la build dir a ogni compilazione (copia
+  // l'intero albero dello sketch e non ha esclusioni: copia perfino .claude e
+  // .vscode, e segue le junction, misurato). Tenendolo fuori e montandolo qui
+  // come seconda radice i sorgenti restano sfogliabili e ricercabili senza
+  // pesare sulla build.
+  //
+  // MEMORIE E CHAT DI CLAUDE. La prima radice deve restare il progetto: Claude
+  // Code identifica il progetto dalla working directory, che in un workspace
+  // multi-root e' la prima cartella. Con "." al primo posto la chiave resta
+  // A:\epd, quindi le chat in ~\.claude\projects\a--epd e le memorie in
+  // .claude\memory si ritrovano come aprendo la cartella. Non invertire
+  // l'ordine delle radici.
+  //
+  // macOS. I percorsi sono RELATIVI al file di workspace, quindi la seconda
+  // radice funziona su qualunque macchina che tenga il clone in una cartella
+  // "tmp" accanto al repo. Se sul Mac il clone sta altrove, VS Code mostra la
+  // radice come non disponibile senza rompere niente: basta correggere questa
+  // riga, oppure rimuoverla e sfogliare il clone in una finestra a parte.
+  "folders": [
+    {
+      "path": "."
+    },
+    {
+      "name": "GxEPD2 upstream (clone di sola consultazione)",
+      "path": "../tmp/GxEPD2-master"
+    }
+  ],
+  "settings": {
+    // Il clone e' materiale di riferimento: l'editor lo apre in sola lettura
+    // cosi' non lo si modifica per sbaglio.
+    "files.readonlyInclude": {
+      "**/GxEPD2-master/**": true
+    },
+    // La cartella .git del clone non serve a chi consulta i sorgenti.
+    "files.exclude": {
+      "**/GxEPD2-master/.git": true
+    }
+  }
+}

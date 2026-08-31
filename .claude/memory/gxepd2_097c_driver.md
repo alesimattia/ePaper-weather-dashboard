@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_097c_960x672
-description: Dove vive il driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL, libreria Arduino), identificazione del pannello, questione 4o colore APERTA con l'etichetta sul vetro come verifica diretta ma la UICR di fabbrica dei tag OEPL che dichiara BWR, la Table 6-4 che mappa le due RAM su LUT0..LUT3 e riduce la ricerca alla sola LUT2, cosa deve misurare la sonda, sequenza di init di fabbrica, vincoli architetturali e costi noti
+description: Driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL): tre colori chiusi dalla misura con il probe dei livelli, il PARTIAL da 639 ms e il fatto che un waveform setting è di 110 byte mentre 0x32 ne scrive 105 (le tensioni hanno comandi propri 0x03/0x04/0x2C e l'OTP le sovrascrive, da cui il nero pallido), modello durata = 20 ms x frame + 83 ms, semantica (0x26, 0x24) = (precedente, nuovo) con TP/RP condivisi fra le LUT, le due trappole di 0x26 chiuse dal flag, identificazione del pannello, init di fabbrica, vincoli e costi noti
 type: reference
 ---
 
@@ -24,20 +24,40 @@ libreria ospita due driver: struttura, ombrello di selezione, pinout uniforme e 
   include `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h`
 - le modifiche al driver si committano e pushano nel suo repo; nel padre si aggiorna il puntatore
   del submodule. `A:\epd` va clonato con `--recursive` (submodule anche `webapp`)
-- upstream GxEPD2 sta in `A:\epd\GxEPD2-master`: clone gitignorato al tag 1.6.9 (`de82887`), copia
-  di sola lettura per consultare i sorgenti della libreria
+- upstream GxEPD2 sta in `A:\tmp\GxEPD2-master`, fuori dal progetto perchè arduino-cli copia
+  l'albero dello sketch a ogni build: clone gitignorato al tag 1.6.9 (`de82887`), copia di sola
+  lettura per consultare i sorgenti. Si sfoglia da `epd.code-workspace`, che lo monta come seconda
+  radice
 
 Doc dedicata: [A:\epd\GxEPD2_SOLUM_ESL\README.md](../../GxEPD2_SOLUM_ESL/README.md) — motivazione,
-API (`showImage`, `writeImageBlack/Red/Yellow`, `preserveYellow`), pattern "yellow out-of-band",
-sistema di descrittori, tabella di confronto con la base GDEM133Z91, dettaglio delle ottimizzazioni.
+API (`showImage`, `writeImageBlack/Red`, le API del partial), sistema di descrittori, tabella di
+confronto con la base GDEM133Z91, dettaglio delle ottimizzazioni.
 
-**QUESTIONE 4° COLORE: APERTA, decide la misura.** La documentazione punta tutta nella stessa
-direzione — nessun terzo piano indirizzabile — ma non è mai stata verificata sul pannello, e una
-fonte va nel verso opposto (il datasheet SOLUM del donor dichiara `PIXEL COLORS = BWRY` per la
-9.7", vedi il blocco identificazione più sotto). Nessuna riga di codice va scritta o cancellata
-sulla base di quanto segue prima che la sonda abbia risposto: le conclusioni le tira l'utente
-guardando il pannello. Quattro riscontri documentali concordi, tutti archiviati in
-`GxEPD2_SOLUM_ESL/docs/`:
+**QUESTIONE 4° COLORE: CHIUSA, tre colori.** Il driver pilota due piani, `0x24` (BW) e `0x26`
+(accent), e un terzo non esiste: `panel_diagnostic` ha esercitato tutte e quattro le combinazioni
+dei due piani sotto la waveform di produzione e `(1,0)` e `(1,1)` escono **entrambe rosse**, cioè
+`LUT3` è aliasata su `LUT2` come la Table 6-4 dichiara. Con due bit per pixel le combinazioni sono
+esaurite. Le prove dirette che chiudono la questione:
+
+- **probe dei livelli di sorgente**, l'evidenza diretta: una waveform custom via `0x32` porta `LUT2`
+  a VSH1 e `LUT3` a VSH2, tempi identici, e sul vetro le due bande escono di colore **diverso**,
+  VSH1 nero e VSH2 rosso. Il film separa i due pigmenti per soglia di tensione, che è come lavora un
+  BWR, e nessuna delle due tensioni tira fuori un giallo;
+- **`0x28` è VCOM Sense e non un piano**: alla scrittura alza il BUSY per 9953-9968 ms misurati e non
+  dipinge niente;
+- il codice modello dell'unità letto sul case è `EL097R2CRN`, campo colore `R` = BWR (pratica FCC
+  `2AFWN-EL097R2CRN`, KC `R-R-SLU-EL097R2CRN`): non è il donor `EL097F5C4C` della linea PRO, che
+  porta la cifra `4`. Il datasheet SOLUM che dà `PIXEL COLORS = BWRY` per la taglia 9.7" riguarda
+  quella linea, non questa unità.
+
+Conseguenza pratica per chi compone immagini: **sotto un pixel di accent il valore del piano BW è
+indifferente**, perchè LUT2 = LUT3, quindi scrivere l'accent non richiede di mascherare `0x24` e
+`writeImageRed()` non lo fa. Il driver 9.7" **non ha** le API del terzo piano (`writeImageYellow`,
+`preserveYellow`, `isYellowPreserved`): esistono solo nel 12.2", dove la domanda è ancora aperta.
+`GxEPD_YELLOW` finisce sul rosso, che è l'unico accent che il film ha, e il template upstream
+`GxEPD2_3C` lo tratta già così (`GxEPD2_3C.h:196`).
+
+Riscontri documentali concordi, tutti archiviati in `GxEPD2_SOLUM_ESL/docs/`:
 
 - **Datasheet SSD1677 Rev 1.0** (`docs/SSD1677_Rev1.0_2018-11_Solomon-Systech.pdf`): le RAM
   immagine sono soltanto `0x24` (BW, 1 = white) e `0x26` (RED, 1 = red). `0x25` è Write RAM
@@ -71,22 +91,12 @@ sonda. "RAM bit and LUT mapping for 3-color display": `(RED 0x26, BW 0x24)` = `(
    sorgente VSS/VSH1/VSH2/VSL). Cade quindi l'argomento "due piani a 1 bit, quindi 3 colori":
    **architetturalmente il chip può fare quattro stati**, e decide l'OTP.
 2. Quella che il firmware scrive per il rosso è `LUT3`, non `LUT2`: un pixel rosso esce dalla catena
-   come `0x24 = 1`, `0x26 = 1` (verificato nel driver: `0x24` senza invert, `0x26` con `!invert`).
-   Sul pannello esce **rosso**, quindi su questa unità LUT3 guida il rosso, e un giallo su LUT3
-   l'avremmo già visto al posto del rosso.
-3. **L'unica LUT mai esercitata è LUT2**, cioè `(0x24 = 0, 0x26 = 1)` — la **banda 4** della sonda.
-   È l'unico code point dove un quarto colore può ancora nascondersi.
-
-Resta poi da misurare se `0x28` su questo modulo scriva davvero qualcosa, a dispetto della tabella
-comandi: le combinazioni dei due piani sono esattamente 4, i punti 1-3 chiudono lo spazio
-documentato e `0x28` quello non documentato.
-
-**Il piano `0x28` non sta più nel path di boot.** `writeScreenBuffer(black, color, yellow)` lo
-scrive solo se `_yellow_dirty` (un `writeImageYellow()` precedente da ripulire) oppure se
-`yellow_value != 0x00`, cioè se il chiamante lo pilota di proposito. Prima partiva a ogni primo
-write: `0x28` + 80.640 byte, ~65 ms di traffico su un comando che il datasheet dà come VCOM Sense.
-Le API del giallo (`writeImageYellow`, `preserveYellow`, `_yellow_dirty`, il ramo `FORMAT_BWRY_1BPP`
-di `showImage`) sono **tutte rimaste**: le butta la misura della sonda, non questa modifica.
+   come `0x24 = 1`, `0x26 = 1` (`0x24` senza invert, `0x26` con `!invert`).
+3. **L'indice di LUT è la coppia `(bit di 0x26, bit di 0x24)`, sempre**: Table 6-4 (3 colori) e
+   Table 6-5 (BW) indicizzano entrambe così, e fra le due cambia solo l'aliasing che la waveform di
+   fabbrica mette dentro le LUT. Non esiste nessun modo di `0x22` che cambi quella mappa, ed è il
+   presupposto su cui poggia tutto il partial: con una LUT custom le quattro combinazioni diventano
+   quattro transizioni distinte.
 
 **Un discriminante che sembrava esserci e non c'è.** Il datasheet dell'SSD2677 è ora archiviato in
 `docs/` (Rev 1.0 2024-03 e Rev 1.1 2023-08): 960 × 680 come l'SSD1677, RAM a **2 bit/pixel**,
@@ -96,11 +106,10 @@ da concludere "il nostro parla SSD16xx, quindi è a 3 colori": **non regge**, pe
 sopra — il tipo di chip non decide il numero di colori. Sul perchè i due protocolli siano comunque
 incompatibili fra loro, vedi il vincolo "SSD2677 non è un'alternativa" più sotto.
 
-- L'idempotency di `showImage` sul piano `0x28` è guardata da `showImagePageHint() == 0`, non
-  da `isYellowPreserved()`: quel flag protegge anche un pre-write out-of-band su un'altra
-  area di `0x28` (la barra temp-range di `Weather.h`) e come guardia sopprimerebbe il giallo
-  dell'immagine. `writeImageYellow` imposta la propria finestra RAM, quindi aree disgiunte
-  convivono.
+- Il driver 9.7" scrive **solo** `0x24` e `0x26`: `0x28` non è nel path di nessuna API, e le
+  primitive del terzo piano non esistono qui. Un descrittore `FORMAT_BWRY_1BPP` passato a
+  `GxEPDImage::showImage()` rende `data0` e `data1` e ignora `data2`, che è il contratto della
+  libreria e vale per entrambi i driver.
 - **Niente read-back**: sul FPC 24 pin non esiste una linea SDO (pin 12 = SDI e basta, confermato
   sullo schematico Waveshare V3 in `docs/E-Paper_ESP32_Driver_Board_V3.pdf`). Inutilizzabili tutti i
   comandi di lettura del controller — `0x1B` temperatura, `0x27` read RAM, `0x2E` User ID da OTP,
@@ -285,25 +294,17 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   `GDEY116F51`, 2bpp packed su `0x10`) è la strada giusta solo per un pannello davvero a 4 colori:
   i SOLUM BWY fino alla 11.6", non questa 9.7".
 
-- **Refresh differenziale, la pista per ~600 ms invece di 22 s.** Il fratello monocromatico dello
-  stesso silicio, `gdem/GxEPD2_1330_GDEM133T91` (960×680, SSD1677), dichiara
-  `partial_refresh_time = 600` e lo ottiene scrivendo il **frame precedente nella RAM `0x26`** e
-  quello corrente nella `0x24` (`_writeImage(0x26, ...) // set previous`), poi lanciando
-  `_Update_Part()` = `0x22 = 0xFC`. È codice upstream che dimostra perchè
-  `hasFastPartialUpdate = false` qui non è prudenza ma struttura: su questo pannello `0x26` è
-  l'accent, e i due usi della stessa RAM si escludono.
-  Ne resta una pista, **non verificata**: su un frame senza accent si potrebbe riusare `0x26` come
-  frame precedente e lanciare `0xFC`. Il punto aperto è se la OTP di questo modulo contenga la
-  waveform di Mode 2 — la misura la fa la sonda. Vedi [[ssd1677_command_set]] per la decodifica per
-  bit di `0x22` che produce `0xFC` e `0xF4`.
+- **Il partial esiste, 639 ms misurati sul vetro, e vive fuori dal template.** Dettaglio completo
+  nella sezione "Partial in bianco e nero" più sotto. `hasFastPartialUpdate = false` non è prudenza
+  ma struttura: in modalità partial `GxEPD2_3C` scriverebbe il piano accent dentro `0x26`
+  (`GxEPD2_3C.h:340`), che sotto la LUT custom è il frame precedente, e con il flag alzato
+  ripeterebbe anche l'intero loop paged (`GxEPD2_3C.h:354-358`).
+  Non serve invece niente dell'OTP: `0xFC`, `0xFF`, `0xCF` e `0xC7` misurano tutti 24,6-24,8 s,
+  quindi **in OTP c'è una sola waveform** e il differenziale del silicio non è una scorciatoia.
 
-- **Pittfall `GxEPD_YELLOW`**: il template upstream `GxEPD2_3C` mappa `GxEPD_YELLOW` sul piano red
-  (`0x26`) — `GxEPD2_3C.h:196`. `drawPixel(x, y, GxEPD_YELLOW)` non scrive sul piano `0x28`. Le due
-  vie previste dal driver per scrivere `0x28` sono `GxEPDImage::showImage` con descrittore
-  BWRY oppure `writeImageYellow()` + `preserveYellow(true)` PRIMA di `firstPage()`. Se `0x28` si
-  rivelasse inerte queste due strade non servono a niente, ma la mappatura di `GxEPD_YELLOW` sul
-  piano red resta comunque il punto da conoscere: su un film BWY sarebbe esattamente quella la via
-  giusta. Vedi il blocco sul 4° colore sopra.
+- **`GxEPD_YELLOW` finisce sul rosso, ed è corretto**: il template upstream `GxEPD2_3C` mappa
+  `GxEPD_YELLOW` sul piano red (`GxEPD2_3C.h:196`), e su questo film è l'unico esito possibile
+  perchè un terzo colore non c'è. Non è una trappola da aggirare.
 
 - **Page-tracking `_show_image_page_hint`**: contatore parallelo a `_current_page` (privato in
   `GxEPD2_3C`), avanzato in `writeImage(black, color, ...)` (che il template chiama da `nextPage()`
@@ -311,14 +312,15 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   senza modificare GxEPD2.
 
 - **API pubblica usata dallo sketch**: solo `GxEPDImage::showImage(display, *desc)` dentro un loop
-  `firstPage/nextPage`. Il resto (API single-channel, `preserveYellow`) è compositing avanzato.
+  `firstPage/nextPage`. Il resto (API single-channel, partial) è compositing avanzato.
 
 - **`showImage` hardcoda `pgm=true`** (`src/GxEPD2_SOLUM_097c_960x672.h:185` e `:221-223`): vale per
   immagini pre-compilate nello sketch, non per buffer scaricati via HTTP.
 
 - **Variante 122c**: il pannello SOLUM 12.2" (960w × 768h) ha il proprio driver
-  `GxEPD2_SOLUM_122c_960x768` nello stesso `src/` della libreria, ma **non** è SSD1677: assume
-  UC8179 dual-controller e non è validato su hardware — vedi [[gxepd2_122c_driver]]. Lo sketch
+  `GxEPD2_SOLUM_122c_960x768` nello stesso `src/` della libreria: due controller SSD16xx da
+  960 × 384 con lo split sull'asse gate, BUSY attivo alto, e la seconda coda muta perchè è quella
+  dello slave di una coppia in cascade — vedi [[gxepd2_122c_driver]]. Lo sketch
   sceglie il driver via `Layout::Panel` / `Layout::makePanel()` (in `Layout_097c.h` /
   `Layout_122c.h`) — vedi [[layout_separation]].
 
@@ -341,13 +343,14 @@ limite fisico del bus), non misurate a oscilloscopio: per numeri veri serve una 
   (`0x00` / `0xFF`) e solo i due piani immagine: per `0x28` e per qualsiasi altro valore
   `_writeScreenBuffer` ripiega sul transfer SPI in bulk. Il pattern ignora la finestra di
   `0x44`/`0x45` e riempie tutti i 960x680; le 8 gate line oltre la 672 non vengono mai scandite.
-- dirty flag `_color_dirty` / `_yellow_dirty`: il cleanup accent viene saltato quando non serve
-  (tipico sulle catene di frame B/N). Costa ~15 ms su `0x26`, che si pulisce col pattern hardware,
-  e ~65 ms su `0x28`, che passa dal bus.
-- `hibernate()` idempotente, azzera i dirty flag e `_preserve_yellow`: al wake il SWRESET riporta
-  comunque la RAM del controller a stato noto.
+- dirty flag `_color_dirty`: il cleanup accent viene saltato quando non serve (tipico sulle catene
+  di frame B/N). Costa 8-9 ms, perchè `0x26` si pulisce col pattern hardware.
+- `hibernate()` idempotente, azzera i due flag di `0x26` (`_color_dirty` e
+  `_previous_in_color_ram`): il deep sleep **perde** la RAM del controller, e la ragione è quella,
+  non il SWRESET, che dichiara *"RAM are unaffected by this command"*. Per lo stesso motivo
+  `_InitDisplay()` riarma `_initial_write` quando arriva da un hibernate: al risveglio i piani sono
+  indefiniti, non azzerati, e la prima scrittura deve ripulirli (18 ms col pattern hardware).
 - cleanup accent simmetrico tra `writeImage` e `writeImagePart` BW.
-- `_preserve_yellow` azzerato in `_Update_Full()`, cioè a ogni refresh.
 - row-skip di `showImage` via page-hint: il loop pixel gira una volta per refresh invece di otto
   (~24 ms invece di ~192 ms).
 - SPI in bulk con `_pSPIx->writeBytes(buf, n)` in `_writeImage` / `_writeImagePart` /
@@ -377,6 +380,94 @@ conclusioni sono riverificabili senza rifare le ricerche):
 
 Toccando il driver, aggiornare anche la tabella di confronto e i bullet di dettaglio nel suo README,
 così la doc resta allineata al codice.
+
+## Partial in bianco e nero: 639 ms, e la waveform va scritta COMPLETA
+
+**La cosa da non dimenticare mai su questo controller: un waveform setting è di 110 byte e `0x32`
+ne scrive 105.** I cinque che restano sono le tensioni, e hanno comandi propri: byte 105 VGH via
+`0x03`, 106..108 VSH1/VSH2/VSL via `0x04`, 109 VCOM via `0x2C`. Chi scrive solo `0x32` eredita le
+tensioni dall'ultima scrittura, e su questo pannello quella è quasi sempre la waveform **BWR di
+produzione tarata su 24 s**, perchè il bit 4 di `0x22` (`0xF7` di `_Update_Full`) ricarica dall'OTP
+tutti i byte `0..109`, tensioni comprese. Il SWRESET invece li riporta ai POR.
+
+È stato un bug reale del driver, e si manifestava come **nero pallido invece di nero pieno**, a
+durata identica perchè il tempo lo fissano `TP` e `RP` e non dipende dalla tensione. La diagnosi è
+venuta dal confronto fra due misure con la stessa LUT e la stessa sequenza di comandi:
+
+| chi | sequenza | tensioni durante il partial | nero |
+|---|---|---|---|
+| `panel_diagnostic` | reset HW, SWRESET, config, LUT. **Nessun load dall'OTP** | POR, VSH1 15 V | **pieno** |
+| `partial_refresh` | refresh pieno (`0xF7`), poi i partial | quelle dell'OTP | **pallido** |
+
+Il probe dei livelli, anch'esso a POR, aveva già misurato che su questo film **VSH1 dà il nero e
+VSH2 il rosso**: il nero di questo pigmento si ottiene a 15 V, il rosso a 5 V. Da qui la scelta del
+driver, che in `_Init_Part()` manda `0x32` **più `0x04` con i POR** (`0x41, 0xA8, 0x32` = VSH1 15 V,
+VSH2 5 V, VSL −15 V). VGH e VCOM restano dell'OTP di proposito: VGH pilota i transistor e non il
+pigmento, il VCOM governa il bilanciamento DC ed è tarato di fabbrica, e il suo POR `0x00` non
+compare nemmeno nella tabella del datasheet. Il ritorno alla waveform di produzione è automatico,
+perchè `0xF7` ricarica anche le tensioni.
+
+**Modello temporale, validato su due punti a 7× di distanza**: 28 frame in 641 ms e 200 frame in
+4067 ms danno pendenza **19,92 ms per frame**, cioè 50 Hz allo 0,4%, e intercetta **83 ms**, che è
+la rampa enable clock + enable analog dentro la sequenza di `0x22` (il `_PowerOn` isolato misura
+82 ms).
+
+> **durata del partial = 20,0 ms × frame + 83 ms**, più ~12 ms di push SPI per una fascia.
+
+I cinque byte di frame rate della LUT valgono `0x22` = codice `0010` = 50 Hz. Il refresh pieno
+dell'OTP a 24 s sono quindi ~1200 frame contro i 28 della LUT del partial.
+
+**Semantica della LUT del partial**, verificata pixel per pixel contro le osservazioni sul vetro:
+l'indice è `(bit di 0x26, bit di 0x24)` = `(frame precedente, frame nuovo)`, `LUT0 (0,0)` e
+`LUT3 (1,1)` a zero (pixel fermo, ed è **questa** la confinatura del partial, non la finestra RAM),
+`LUT1 (0,1)` nero→bianco a VSL, `LUT2 (1,0)` bianco→nero a VSH1. Nella fase 3 di `partial_refresh`
+la fascia aveva `(1,0)` → LUT2 → 18 frame VSH1 → nera; il resto `(1,1)` → LUT3 → zeri → intatto; il
+testimone nero `(0,0)` → LUT0 → zeri → intatto. Ogni pixel osservato torna.
+
+**`TP` e `RP` sono per GRUPPO, non per LUT**: un solo set di lunghezze di fase condiviso da
+`LUT0..LUT4`, quindi non si può allungare il drive del nero senza allungare quello del bianco, e le
+due transizioni stanno negli stessi 28 frame. L'unico modo di rompere la simmetria è la fase di
+reset, che ha polarità opposta nelle due LUT.
+
+**Quello che NON serve, ed è misurato**: una catena di partial non ha bisogno di refresh pieni
+periodici. Undici passate consecutive attraverso il driver non hanno degradato nè i testimoni nè il
+fondo, e un solo refresh pieno finale riporta il vetro netto con l'accent rosso saturo. I pixel non
+pilotati non sbiadiscono: quello che sembrava sbiadimento nella sonda a SPI diretta era pilotaggio
+non voluto, perchè lì `0x26` non era allineata e quei pixel cadevano su LUT1 o LUT2.
+
+**Le due trappole dell'API, chiuse nel driver dal flag `_previous_in_color_ram`.** Sotto la LUT
+custom `0x26` è il frame precedente in polarità BW, e un refresh pieno la rilegge come **accent**:
+`0xFF` vuol dire rosso, quindi una `refresh(false)` nuda dopo una catena dipingerebbe lo schermo di
+rosso. La seconda è più insidiosa: `writeImage(black, color, ...)` scrive `0x26` **una page alla
+volta**, quindi un frame a colori dal loop paged dopo una catena uscirebbe con sette ottavi di rosso
+spurio. Il flag lo alzano soltanto `writeScreenBufferPrevious()` e `writeImagePrevious()`, quindi
+quando è alto l'ultima scrittura in quella RAM *è* un frame precedente e un refresh pieno non ha
+nessun uso possibile per quel contenuto: cancellarlo non può mai distruggere un accent legittimo.
+`_cleanColorIfPrevious()` è agganciata a `_Update_Full()` e a **`setPaged()`**, che è l'unico punto
+in cui la pulizia è completa perchè `GxEPD2_3C::firstPage()` riempie solo il buffer locale e non ha
+ancora scritto sul controller.
+
+**Altre due cose che il driver deve fare e che si dimenticano.** `refreshPartial()` chiama
+`_InitDisplay()` se serve, altrimenti una passata come prima operazione dopo `hibernate()` girerebbe
+senza SWRESET, MUX e entry mode. `drawImagePartial()` porta la RAM a uno stato definito quando
+`_initial_write` è alto: senza, `_writeImage` chiamerebbe `writeScreenBuffer()` che azzera `0x26` a
+`0x00`, cioè **frame precedente tutto nero**, e ogni pixel bianco cadrebbe su LUT1 facendo pilotare
+tutto lo schermo.
+
+**`setPartialLut(const uint8_t* lut110)`** sostituisce la waveform, e fa scendere il booster:
+altrimenti le nuove tensioni verrebbero scritte ad analog già acceso e `_PowerOn()` salterebbe,
+lasciando girare la passata con quelle di prima. Serve a
+`examples/097c/partial_lut_tuning`, che compone waveform a runtime e le fa girare passando dal
+driver: sette bande con **nero di riferimento adiacente** all'area di lavoro (il confronto contro un
+nero dipinto dall'OTP nella stessa schermata è la misura che mancava a tutte le prove precedenti),
+sweep di VSH1 da 9 a 15 V, poi frame rate, frame e VGH/VCOM. Tutte le tensioni provate sono al
+massimo i POR, mai sopra: salire oltre è la sola cosa che può danneggiare il film in modo
+permanente.
+
+Una precisazione che vale per non riaprire un vicolo: il **Display Mode** non è dimostrato
+necessario. Le due varianti della sonda cambiavano LUT e modo insieme, quindi Mode 1 con questa LUT
+non è mai stato provato, e `0x37` spiega perchè probabilmente non conta (vedi
+[[ssd1677_command_set]]). Il driver resta su `0xCC` perchè è la configurazione misurata.
 
 ## Quinta evidenza sul quarto colore: la UICR di fabbrica dice BWR
 
@@ -433,8 +524,8 @@ Se ne ricavano due cose:
 
 - scheda tag serigrafata **`NEWTON_CORE 9.7_TAG_R01, 2023/08/25`**, una sola FFC 24 pin, una sola
   sezione boost (`097_f5crc_tag_board.jpg`);
-- sul retro del vetro un'etichetta bianca **`YMS960672-097AAH-ES-W5`**, data `20230902`
-  (`097_f5crc_etichetta_pannello_YMS960672.jpg`). È un part number **di pannello** del fornitore
+- sul retro del vetro un'etichetta bianca **`YMS960672-097AAH-ES-W5`**, data `20230902`. È un
+  part number **di pannello** del fornitore
   del vetro — 960×672, 097 — non un codice SOLUM, e non ha riscontri pubblici. **Cercare la stessa
   etichetta sul pannello del progetto**: identifica il vetro meglio del codice ESL.
 
