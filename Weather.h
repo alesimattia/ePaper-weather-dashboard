@@ -17,6 +17,7 @@
 #include "Calendar.h"
 #include "Indoor.h"
 #include "Mail.h"      // Mail::draw() invocato dentro renderFrame()
+#include "Tuya.h"      // Tuya::hasFailed() letto da drawBanner() per il badge di guasto
 
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Il tipo concreto del
@@ -1064,6 +1065,60 @@ namespace Weather
     }
 
     /**
+     * Testo del badge di guasto della telemetria Tuya. Costante e non
+     * letterale ripetuto perchè serve due volte, per misurarlo e per
+     * stamparlo.
+     */
+    inline constexpr const char* TUYA_BADGE_TEXT = "[TUYA ERR]";
+
+    /**
+     * Disegna il badge di guasto della telemetria Tuya sulla riga del titolo
+     * del riquadro Indoor, subito dopo la scritta "Indoor" e allineato alla
+     * sua stessa baseline.
+     *
+     * Il font è FONT_MICRO e non quello del titolo per una ragione di spazio
+     * misurata: la riga ha INDOOR_RR_W meno BANNER_TITLE_LEFT_OFFSET, cioè
+     * 140 px utili, di cui "Indoor" in FONT_BODY occupa 67. Il badge nello
+     * stesso FONT_BODY ne vorrebbe 121 e sforerebbe dentro il riquadro
+     * Weather, mentre in FONT_MICRO ne occupa 36. FONT_MICRO è comunque già
+     * il font che questo riquadro usa per il pedice dell'accuratezza IAQ.
+     *
+     * Non serve la striscia di sfondo che drawFieldsetRect usa per spezzare
+     * il bordo: con la baseline del titolo il testo in FONT_MICRO resta
+     * interamente sotto il bordo superiore, dentro il riquadro.
+     *
+     * Il font viene riportato a FONT_BODY in uscita, così la funzione resta
+     * innocua rispetto a quello che il chiamante disegna dopo.
+     *
+     * @param rrTop y del bordo superiore dei riquadri del banner.
+     */
+    inline void drawIndoorTuyaBadge(int16_t rrTop)
+    {
+      int16_t  x1, y1;
+      uint16_t tw, th;
+
+      /**
+       * Baseline e larghezza del titolo, misurate con lo stesso font e la
+       * stessa formula di Graphics::drawFieldsetRect, che centra il testo sul
+       * bordo superiore: così il badge resta allineato al titolo anche se il
+       * font dei titoli cambia.
+       */
+      display.setFont(Layout::FONT_BODY);
+      display.getTextBounds("Indoor", 0, 0, &x1, &y1, &tw, &th);
+      const int16_t baselineY = rrTop + (int16_t)th / 2;
+      const int16_t badgeX    = Layout::INDOOR_RR_X + Layout::BANNER_TITLE_LEFT_OFFSET
+                                + (int16_t)tw + Layout::INDOOR_TUYA_BADGE_GAP;
+
+      display.setFont(Layout::FONT_MICRO);
+      display.getTextBounds(TUYA_BADGE_TEXT, 0, 0, &x1, &y1, &tw, &th);
+      display.setCursor(badgeX - x1, baselineY);
+      display.setTextColor(GxEPD_BLACK);
+      display.print(TUYA_BADGE_TEXT);
+
+      display.setFont(Layout::FONT_BODY);
+    }
+
+    /**
      * Disegna il banner completo. Sfondo bianco + 3 riquadri arrotondati
      * in stile "fieldset" (titolo sul bordo superiore):
      *   - Indoor   : BME680 + sunrise/sunset (2 colonne x 4 righe)
@@ -1094,6 +1149,15 @@ namespace Weather
       Graphics::drawFieldsetRect(Layout::FORECAST_RR_X, rrTop, Layout::FORECAST_RR_W, rrHeight,
                                  Layout::BANNER_RR_RADIUS, "Forecast",
                                  Layout::BANNER_TITLE_LEFT_OFFSET, GxEPD_WHITE);
+
+      /**
+       * Badge di guasto della telemetria Tuya, affiancato al titolo del
+       * riquadro Indoor. Disegnato dopo tutti e tre i fieldset perchè cambia
+       * il font: inserito fra le chiamate, "Weather" e "Forecast" verrebbero
+       * disegnati in FONT_MICRO.
+       */
+      if (Tuya::hasFailed())
+        drawIndoorTuyaBadge(rrTop);
 
       // Contenuti dei riquadri. Baseline ICON_Y/DESC/TEMP/TIME invariate
       // per current e forecast.

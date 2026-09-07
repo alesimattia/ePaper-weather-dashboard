@@ -277,6 +277,14 @@ namespace Layout
   inline constexpr int16_t BANNER_RR_INSET_Y       = 5;
   inline constexpr int16_t BANNER_RR_RADIUS       = 18;
   inline constexpr int16_t BANNER_TITLE_LEFT_OFFSET = 14;
+  /**
+   * Distanza fra il titolo "Indoor" e il badge di guasto della telemetria
+   * Tuya, che gli viene affiancato sulla stessa riga quando Tuya::hasFailed().
+   * La riga del titolo ha INDOOR_RR_W - BANNER_TITLE_LEFT_OFFSET = 140 px
+   * utili, di cui "Indoor" in FONT_BODY occupa 67 e il badge in FONT_MICRO 36:
+   * il gap va tenuto entro i 37 px residui.
+   */
+  inline constexpr int16_t INDOOR_TUYA_BADGE_GAP = 6;
 
   // -------------------------------------------------------------------------
   // @widget slider-temp-range

@@ -81,6 +81,44 @@
 #define OTA_WINDOW_MIN 3
 
 /**
+ * Cadenza di pubblicazione della telemetria Tuya. Allineata al sample BSEC in
+ * ULP, che è di 5 min: portandola a 10 il publish ricade nella stessa
+ * finestra WiFi degli altri fetch e non aggiunge accensioni della radio.
+ */
+#define TUYA_PUBLISH_MIN 5
+
+/**
+ * A 1 il publish Tuya può accendere la radio anche fuori dalla finestra
+ * WIFI_ACTIVE_HOUR_*, così l'app riceve dati 24 ore su 24 mentre meteo,
+ * calendari, mail e refresh del pannello restano confinati alla finestra.
+ * A 0 di notte non si pubblica e nell'app resta visibile l'ultimo dato
+ * della sera.
+ */
+#define TUYA_IGNORE_ACTIVE_HOUR 0
+
+/**
+ * Interruttore per la conferma applicativa del cloud, da alzare durante il
+ * bring-up e da riabbassare a regime.
+ *
+ * Il PUBACK di MQTT dice che il broker ha ricevuto il messaggio, non che il
+ * cloud ne abbia accettato il contenuto: con un identifier fuori dal device
+ * model, un valore fuori dai limiti dichiarati o una scale non combaciante il
+ * publish risulta comunque riuscito e i valori non compaiono nell'app. È
+ * l'unico fallimento silenzioso che resta in questo modulo.
+ *
+ * A 1 il messaggio porta il campo sys.ack e il modulo si sottoscrive al topic
+ * di risposta, dove il cloud restituisce un codice: 0 significa accettato,
+ * qualunque altro valore viene loggato insieme al corpo della risposta, che
+ * contiene la spiegazione. Costa una sottoscrizione, il traffico della
+ * risposta e fino a TUYA_ACK_TIMEOUT_MS di attesa in più per publish, e per
+ * questo il default è 0.
+ *
+ * Forma del campo e del topic prese dall'SDK ufficiale tuya-iot-core-sdk
+ * (tuyalink_message_send), che le compone esattamente così.
+ */
+#define TUYA_REQUEST_ACK 0
+
+/**
  * Tentativi consecutivi falliti oltre i quali un fetch calendario
  * (Outlook/Google) "consuma" lo slot e attende CAL_*_FETCH_MIN prima
  * di ritentare. Evita hammering degli endpoint OAuth durante la
@@ -100,6 +138,31 @@
  * wifiOn() usato fuori finestra OTA.
  */
 #define BOOT_WIFI_TIMEOUT_MS 15000UL
+
+/**
+ * Sincronizzazione dell'orologio di sistema via SNTP.
+ *
+ * Serve un'ora assoluta a isActiveHour(), al trigger giornaliero del fetch
+ * cinema, alle query dei calendari (che filtrano gli eventi da "adesso") e
+ * all'autenticazione MQTT di Tuya, che firma un timestamp Unix. Senza SNTP
+ * time() conta dal 1970 partendo dal boot, cioè restituisce l'uptime.
+ *
+ * TIME_VALID_EPOCH_MIN è il pavimento oltre il quale l'orologio si considera
+ * sincronizzato: 1700000000 = novembre 2023.
+ *
+ * TIME_SYNC_TIMEOUT_MS non va abbassato sotto i 10 s: lwIP è compilato con
+ * SNTP_STARTUP_DELAY e un massimo di 5 s, quindi la prima richiesta parte con
+ * un ritardo casuale fra 0 e 5 s e un timeout più corto scadrebbe prima che
+ * il pacchetto sia uscito.
+ *
+ * TIME_SYNC_RETRY_MS distanzia i tentativi falliti, così il ramo OTA, che
+ * gira ogni ~10 ms, non riavvia SNTP a ogni giro.
+ */
+#define TIME_VALID_EPOCH_MIN 1700000000L
+#define TIME_SYNC_TIMEOUT_MS 12000UL
+#define TIME_SYNC_RETRY_MS 60000UL
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.google.com"
 
 /** Ora locale del fetch giornaliero immagine cinema. Pensata per cadere
  *  alla prima connessione utile della mattina, ma intenzionalmente separata
@@ -123,6 +186,9 @@
 #include "Weather.h"
 #include "Ota.h"
 #include "Mail.h"
+// Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT). Non disegna nulla:
+// il .ino la interroga solo per decidere se accendere la radio e pubblicare.
+#include "Tuya.h"
 #include "Env.h"
 
 SPIClass hspi(HSPI);
@@ -363,9 +429,9 @@ static bool shouldFetchCinema()
 {
 	if (!g_cinema_attempted)
 		return true;
+	if (!timeIsValid())
+		return false; // orologio non ancora sincronizzato
 	time_t now = time(nullptr);
-	if (now < 100000L)
-		return false; // NTP non ancora pronto
 	struct tm t;
 	localtime_r(&now, &t);
 	// Trigger daily spostato dalla sera (23:00) al mattino (CINEMA_DAILY_FETCH_HOUR):
@@ -417,9 +483,9 @@ static void fetchCinemaImage()
 	// fallisce nelle righe successive, non si ritenta nello stesso giorno.
 	g_cinema_attempted = true;
 	{
-		time_t now = time(nullptr);
-		if (now > 100000L)
+		if (timeIsValid())
 		{
+			time_t now = time(nullptr);
 			struct tm t;
 			localtime_r(&now, &t);
 			g_cinema_last_fetch_day = t.tm_yday;
@@ -542,9 +608,92 @@ void drawTestBackground()
 }
 
 /**
+ * Ritorna true se l'orologio di sistema è stato sincronizzato, cioè se time()
+ * supera TIME_VALID_EPOCH_MIN. Prima della sincronizzazione time() restituisce
+ * l'uptime contato dal 1970, che dopo 27,7 h di accensione diventa
+ * indistinguibile da un'ora reale.
+ */
+static bool timeIsValid()
+{
+	return time(nullptr) >= TIME_VALID_EPOCH_MIN;
+}
+
+/**
+ * Sincronizza l'orologio via SNTP se non lo è già. Presuppone la STA
+ * connessa: va chiamata da wifiOn() o dentro la finestra OTA, dove la radio è
+ * su. Quando l'ora è già valida costa un solo confronto.
+ *
+ * Usa configTzTime() e non configTime(): la prima applica la stringa POSIX che
+ * le viene passata, quindi ripassando CAL_POSIX_TZ riapplica lo stesso fuso di
+ * Calendar::initTimezone(); la seconda deriverebbe il TZ dagli offset e lo
+ * sovrascriverebbe, perdendo il DST automatico di Europe/Rome.
+ *
+ * Una sincronizzazione riuscita per boot basta: il light sleep mantiene la base
+ * temporale su cui poggiano time() e millis(), quindi l'ora sopravvive al
+ * sonno. Il drift dell'RTC, che su questo modulo gira sull'oscillatore RC
+ * interno perchè non c'è il cristallo da 32 kHz, viene corretto dal polling
+ * SNTP di lwIP: riprova ogni 3 h e va a buon fine appena cade in una finestra
+ * con radio accesa, per questo sntp non viene mai fermato.
+ *
+ * @param timeout_ms attesa massima della prima sincronizzazione. A 0 avvia
+ *        SNTP e ritorna subito, lasciando che il polling di lwIP allinei
+ *        l'ora entro pochi secondi: serve al ramo OTA, dove bloccare
+ *        congelerebbe AP e web server.
+ * @return true se l'ora è valida al ritorno.
+ */
+static bool ensureTimeSynced(uint32_t timeout_ms = TIME_SYNC_TIMEOUT_MS)
+{
+	static uint32_t last_attempt_ms = 0;
+	static bool attempted = false;
+
+	if (timeIsValid())
+		return true;
+	// Backoff fra tentativi falliti: senza, il ramo OTA riavvierebbe SNTP a
+	// ogni giro da 10 ms.
+	if (attempted && (int32_t)(millis() - last_attempt_ms) < (int32_t)TIME_SYNC_RETRY_MS)
+		return false;
+
+	last_attempt_ms = millis();
+	attempted = true;
+
+	configTzTime(CAL_POSIX_TZ, NTP_SERVER_1, NTP_SERVER_2);
+
+	uint32_t t0 = millis();
+	while (!timeIsValid() && (millis() - t0) < timeout_ms)
+	{
+		delay(100);
+	}
+
+	if (!timeIsValid())
+	{
+		// Con timeout_ms a 0 non è un errore: la richiesta è partita e il
+		// polling SNTP di lwIP la porta a termine senza bloccare il chiamante.
+		if (timeout_ms == 0)
+			Serial.println(F("[Time] SNTP avviato, sincronizzazione in corso"));
+		else
+			Serial.println(F("[Time] SNTP timeout"));
+		return false;
+	}
+
+	time_t now = time(nullptr);
+	struct tm t;
+	localtime_r(&now, &t);
+	Serial.printf("[Time] SNTP ok: %04d-%02d-%02d %02d:%02d:%02d locale\n",
+				  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+				  t.tm_hour, t.tm_min, t.tm_sec);
+	return true;
+}
+
+/**
  * Accende il WiFi in modalita' STA e attende la connessione con timeout di 15 s.
  * La radio resta accesa solo per la finestra di fetch: viene spenta
  * da wifiOff() subito dopo.
+ *
+ * A connessione riuscita sincronizza anche l'orologio con ensureTimeSynced(),
+ * che al primo boot può aggiungere fino a TIME_SYNC_TIMEOUT_MS di attesa. È il
+ * punto giusto per farlo: tutti i fetch del ramo normale stanno dentro il
+ * blocco che valuta questa funzione, quindi da qui in avanti vedono l'ora
+ * vera.
  * @return true se connesso entro il timeout.
  */
 static bool wifiOn()
@@ -560,6 +709,12 @@ static bool wifiOn()
 	{
 		Serial.print(F("[WiFi] connected, IP="));
 		Serial.println(WiFi.localIP());
+		/**
+		 * Orologio sincronizzato nello stesso punto in cui la radio diventa
+		 * disponibile: tutti i fetch del ramo normale stanno dentro questo
+		 * if (wifiOn()), quindi da qui in avanti vedono l'ora vera.
+		 */
+		ensureTimeSynced();
 		return true;
 	}
 	Serial.println(F("[WiFi] connection timeout"));
@@ -591,9 +746,9 @@ static void wifiOff()
  */
 static bool isActiveHour()
 {
+	if (!timeIsValid())
+		return true; // orologio non sincronizzato: lascia passare
 	time_t now = time(nullptr);
-	if (now < 100000L)
-		return true; // NTP non ancora pronto
 	struct tm t;
 	localtime_r(&now, &t);
 	return t.tm_hour >= WIFI_ACTIVE_HOUR_START && t.tm_hour <= WIFI_ACTIVE_HOUR_END;
@@ -619,6 +774,11 @@ void setup()
 	 * Lo stato del calibratore, se presente in NonVolatileStorage, viene ripristinato qui dentro.
 	 */
 	Indoor::begin();
+	/**
+	 * Telemetria Tuya: compone topic e client id dal DeviceID di Env.h e resta
+	 * disattivata se le credenziali non ci sono. Nessuna rete qui dentro.
+	 */
+	Tuya::begin();
 	/**
 	 * Apre subito la finestra OTA (OTA_WINDOW_MIN): AP per l'aggiornamento firmware +
 	 * STA in parallelo per il fetch meteo. Scaduta la finestra, loop() chiamera'
@@ -658,6 +818,18 @@ void loop()
 		 */
 		if (WiFi.status() == WL_CONNECTED)
 		{
+			/**
+			 * Sincronizzazione avviata anche in finestra OTA, dove la STA risale
+			 * da sè grazie ad AP_STA e non si passa per wifiOn(). Qui non
+			 * bloccante di proposito: attendere fino a TIME_SYNC_TIMEOUT_MS
+			 * congelerebbe AP e web server proprio mentre un upload firmware
+			 * potrebbe essere in corso. SNTP resta in polling e allinea l'ora da
+			 * sè entro pochi secondi, quindi i fetch di questa prima passata
+			 * possono ancora girare senza ora valida: il ramo normale li rifà
+			 * allineati poco dopo.
+			 */
+			ensureTimeSynced(0);
+
 			Weather::FetchKind need = Weather::pendingFetch();
 			if (need != Weather::FETCH_NONE)
 				Weather::runFetch(need);
@@ -718,7 +890,10 @@ void loop()
 	// Mail aggiunto al gate: se solo le mail sono in scadenza, accendiamo
 	// comunque WiFi per scaricarle (best-effort, non blocca gli altri fetch).
 	bool needMail = Mail::pendingFetch();
-	if (need != Weather::FETCH_NONE || needOutlook || needGoogle || needMail)
+	// Tuya nel gate: senza, la radio non si accenderebbe mai per il solo
+	// publish quando nessun altro fetch è in scadenza.
+	bool needTuya = Tuya::pendingPublish();
+	if (need != Weather::FETCH_NONE || needOutlook || needGoogle || needMail || needTuya)
 	{
 		if (isActiveHour())
 		{
@@ -757,9 +932,49 @@ void loop()
 				 */
 				Weather::forceFirstRender();
 			}
+			/**
+			 * Telemetria Tuya per ultima, e fuori dal blocco di wifiOn(): va
+			 * tentata anche quando la radio non è salita, così il tentativo viene
+			 * speso comunque e non si ritenta a ogni wake fino al prossimo
+			 * TUYA_PUBLISH_MIN. Il suo esito non condiziona niente del resto del
+			 * firmware: al massimo il pannello segnala il guasto nel titolo del
+			 * riquadro Indoor.
+			 *
+			 * markDirty solo quando la segnalazione compare o sparisce: un
+			 * refresh pieno costa ~24 s e non va speso per un esito invariato.
+			 */
+			if (needTuya)
+			{
+				const bool tuyaGuastoPrima = Tuya::hasFailed();
+				Tuya::runPublish();
+				needTuya = false; // servito: il ramo fuori fascia non deve riprovare
+				if (Tuya::hasFailed() != tuyaGuastoPrima)
+					Weather::markDirty();
+			}
 			wifiOff(); // chiamata anche su fallimento: assicura radio spenta
 		}
 	}
+
+#if TUYA_IGNORE_ACTIVE_HOUR
+	/**
+	 * Finestra radio dedicata al solo publish Tuya fuori dalla fascia
+	 * WIFI_ACTIVE_HOUR_*, così l'app riceve dati anche di notte mentre gli
+	 * altri fetch e il refresh del pannello restano confinati alla finestra.
+	 * La guardia su isActiveHour() evita un secondo wifiOn() da 15 s quando
+	 * dentro fascia la connessione era semplicemente fallita.
+	 */
+	if (needTuya && !isActiveHour())
+	{
+		const bool tuyaGuastoPrima = Tuya::hasFailed();
+		wifiOn();
+		// Chiamata anche a radio assente, per gli stessi motivi del ramo in
+		// fascia: lo slot va speso una volta sola.
+		Tuya::runPublish();
+		wifiOff();
+		if (Tuya::hasFailed() != tuyaGuastoPrima)
+			Weather::markDirty();
+	}
+#endif
 
 	// BME680: BSEC2 in ULP produce un sample ogni 5 min. Chiamato ad ogni
 	// wake, ritorna true solo al tick dovuto; quando scatta forziamo il

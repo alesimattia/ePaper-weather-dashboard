@@ -73,4 +73,29 @@
 #define GOOGLE_CLIENT_SECRET  "paste_client_secret_here"
 #define GOOGLE_REFRESH_TOKEN  "paste_refresh_token_here"
 
+/**
+ * Credenziali TuyaLink del singolo dispositivo, ricavate dalla Tuya IoT
+ * Platform. Sono per-dispositivo: due esemplari dello stesso firmware hanno
+ * valori diversi, perchè ogni device consuma una licenza a sè.
+ *
+ * Come ricavare i valori:
+ *  1. platform.tuya.com -> Create Product -> categoria sensore, scegliendo
+ *     "TuyaLink" come smart mode.
+ *  2. Function Definition: creare le properties che il firmware pubblica
+ *     (temperatura, umidità, pressione, IAQ, accuratezza IAQ) annotando
+ *     identifier e scale di ognuna: vanno riportati nei #define di Tuya.h,
+ *     e un disallineamento fra scale e moltiplicatore non dà nessun errore,
+ *     solo valori sbagliati nell'app.
+ *  3. Device Development -> richiedere l'authorization code gratuito, poi
+ *     Register Device: la console restituisce DeviceID e DeviceSecret.
+ *  4. Generare il QR code del device e scansionarlo con l'app Smart Life
+ *     per associarlo al proprio account.
+ *
+ * Broker e regione NON sono segreti: stanno in Tuya.h come TUYA_MQTT_URI.
+ * La regione deve coincidere con quella dell'account Smart Life, altrimenti
+ * l'autenticazione MQTT fallisce come se le credenziali fossero errate.
+ */
+#define TUYA_DEVICE_ID     "paste_device_id_here"
+#define TUYA_DEVICE_SECRET "paste_device_secret_here"
+
 #endif
