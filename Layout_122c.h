@@ -144,6 +144,11 @@ namespace Layout
   inline constexpr uint8_t  CINEMA_PLANES   = 3;
   inline constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * CINEMA_PLANES; // 78390
 
+  /** URL del server cinema. width/height/colors devono corrispondere a
+   *  CINEMA_W/H/PLANES: il server pre-genera i piani 1bpp packed e l'ESP32
+   *  fa solo readBytes nei buffer.
+   *  L'host deve restare uguale a quello di CINEMA_PREWARM_URL nel .ino, che
+   *  pinga /health sullo stesso servizio per svegliarlo prima del fetch. */
   inline constexpr const char* CINEMA_URL =
       "https://cinema-epd.onrender.com/cinema/arduino?width=620&height=335&colors=bwry&dither=floyd";
 

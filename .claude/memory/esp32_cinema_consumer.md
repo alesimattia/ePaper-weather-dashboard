@@ -22,6 +22,6 @@ Il puntatore `g_cinema_desc` viene swappato a `&g_cinema_dynamic_desc` solo all'
 
 **How to apply:**
 - L'URL e i parametri (`CINEMA_W`, `CINEMA_H`, `CINEMA_URL`, `CINEMA_*_SZ`) stanno in `Layout_097c.h` / `Layout_122c.h` (scelta esplicita: fuori da `Env.h`). Per cambiare display: scommentare il `#define DISPLAY_VARIANT_*` in testa al `.ino`. Nessuna modifica al `.ino` o ai moduli necessaria.
-- Render.com free tier dorme dopo 15 min: c'è un workflow GitHub Actions `webapp/.github/workflows/keep-warm.yml` che pinga `/health` alle 06:55 CET/CEST per scaldare il server prima del fetch ESP32 alle 07:00.
-- HTTP timeout = 45s (accomoda cold start render.com 10-30s).
+- Render.com free tier dorme dopo 15 min: `prewarmCinemaServer()` nel `.ino` pinga `/health` (`CINEMA_PREWARM_URL`) in apertura del giro di fetch e ne abbandona la risposta, così render fa boot mentre l'ESP32 esegue meteo, mail e calendari. Il fetch cinema è l'ultimo di `runNetworkFetches()` proprio per incassare quella copertura.
+- HTTP timeout = 45s (accomoda il cold start render.com, misurato 22,4s).
 - Se modifichi il formato del body lato webapp, aggiorna anche il parser nel `.ino`: oggi è `for (p = 0..2) readBytes(planes[p], Layout::CINEMA_PLANE_SZ)`.

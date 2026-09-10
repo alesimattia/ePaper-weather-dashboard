@@ -1063,7 +1063,7 @@ indipendentemente e fallisce indipendentemente con il proprio backoff.
 
 - **Boot → primo refresh con WiFi e tutti i fetch OK**: ~30–60 s (15–30 s di fetch HTTP sequenziali + 22 s di refresh full-window).
 - **Boot → primo refresh senza WiFi**: ~37 s (15 s timeout boot + 22 s refresh).
-- **Boot → primo refresh con cinema cold start render.com**: fino a ~75 s (45 s timeout HTTP cinema + 22 s refresh) se il keep-warm GitHub Actions non ha tenuto warm il free tier.
+- **Boot → primo refresh con cinema cold start render.com**: fino a ~75 s (45 s timeout HTTP cinema + 22 s refresh) se il pre-warm non è bastato a completare il boot dell'istanza. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
 - **Refresh successivo a regime**: ~22 s (full-window, il pannello non supporta refresh parziale).
 - **Latenza di un nuovo dato sul display**: massimo `DISPLAY_REFRESH_MIN` minuti (5 di default) tra il wake up e il render successivo.
 
@@ -1133,15 +1133,19 @@ Helper che governa il gate: `shouldFetchCinema()` in
 [ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
 primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
 
-**Cold-start mitigation via GitHub Actions.** Render.com free tier dorme
-dopo 15 min di inattività; al fetch delle 07:00 il server sarebbe
-freddo. Il workflow
-[`webapp/.github/workflows/keep-warm.yml`](webapp/.github/workflows/keep-warm.yml)
-pinga `/health` a 06:55 local (due cron UTC per coprire DST CET/CEST),
-mantenendo render warm nei 5 min prima del fetch ESP32. Setup zero:
-basta pushare il workflow insieme alla webapp su GitHub. Render free
-tier non supporta cron nativi (sono paid-only); GitHub Actions è
-gratis (~30 min/mese consumati).
+**Cold-start mitigation dal firmware.** Render.com free tier dorme dopo
+15 min di inattività, e il boot successivo costa 22,4 s misurati. Il
+pre-warm lo fa il dispositivo, che è l'unico a sapere quando serve:
+`prewarmCinemaServer()` apre il giro di fetch con una GET a `/health` e
+ne abbandona la risposta, poi `runNetworkFetches()` esegue meteo, mail e
+calendari e scarica l'immagine **per ultima**. Render fa così il proprio
+boot mentre l'ESP32 è occupato altrove, e il fetch cinema lo trova caldo
+o quasi.
+
+Pingare `/health` basta perché le cache su disco sopravvivono al suspend:
+dopo il boot `/cinema/arduino` risponde in 0,5 s, quindi a costare è il
+processo, non la pipeline di rendering. Il meccanismo non dipende da
+scheduler esterni, quindi è immune a DST e a deriva di cron.
 
 ### Dimensionamento e PSRAM
 

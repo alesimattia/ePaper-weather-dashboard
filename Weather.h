@@ -285,6 +285,11 @@ namespace Weather
      * Oltre ai campi base memorizza alcuni parametri aggiuntivi (sunrise,
      * sunset, rain.1h previsto da hourly, pop, daily.feels_like.morn/eve)
      * non ancora mostrati.
+     *
+     * Ritorna true solo con corrente e previsioni entrambe aggiornate: una
+     * risposta parziale e' un fallimento, cosi' runFetch() non resetta i
+     * timer e il giro successivo ritenta invece di lasciare in pagina dati
+     * di epoche diverse.
      */
     inline bool fetchOneCall()
     {
@@ -344,8 +349,14 @@ namespace Weather
       JsonArrayConst hourly = doc["hourly"].as<JsonArrayConst>();
       if (hourly.isNull())
       {
+        // Fallimento anche con la corrente valida: slots[0] e' gia' stato
+        // sovrascritto ma slots[1..3] contengono ancora le previsioni del
+        // fetch precedente, e dichiarare successo resetterebbe i timer
+        // lasciando in pagina un misto di corrente fresca e previsioni
+        // vecchie fino al prossimo INTERVAL_FORECAST. Ritornando false il
+        // giro successivo ritenta.
         Serial.println(F("[OWM] onecall: hourly mancante"));
-        return s0.valid;
+        return false;
       }
 
       static const uint8_t offsets[3] = { 3, 6, 9 };

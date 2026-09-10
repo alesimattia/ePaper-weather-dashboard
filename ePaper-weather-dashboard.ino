@@ -1,5 +1,6 @@
 #include <SPI.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_sleep.h>
 #include <esp_heap_caps.h>
@@ -93,11 +94,22 @@
 #define WIFI_ACTIVE_HOUR_END 23	 // 23:59
 
 /**
+ * Timeout di un singolo tentativo di connessione della STA (millisecondi),
+ * usato da wifiOn(). Oltre questo tempo il giro prosegue a radio spenta e i
+ * fetch pendenti restano tali fino al wake successivo.
+ */
+#define WIFI_CONNECT_TIMEOUT_MS 15000UL
+
+/**
  * Timeout di boot per la connessione WiFi (millisecondi). Se entro questo
  * tempo dal setup() la STA non è WL_CONNECTED, il primo refresh del display
  * viene comunque sbloccato con i soli dati gia' disponibili (BME680 indoor +
- * placeholder "--" per meteo/calendari/cinema). Coerente col timeout di
- * wifiOn() usato fuori finestra OTA.
+ * placeholder "--" per meteo/calendari/cinema).
+ *
+ * Deliberatamente uguale a WIFI_CONNECT_TIMEOUT_MS: il gate del primo refresh
+ * deve scadere insieme al tentativo di connessione, non prima. Restano due
+ * costanti perche' misurano cose diverse (un tentativo di wifiOn() contro il
+ * tempo trascorso dal boot) e possono divergere se il criterio cambia.
  */
 #define BOOT_WIFI_TIMEOUT_MS 15000UL
 
@@ -106,6 +118,26 @@
  *  da WIFI_ACTIVE_HOUR_START cosi' fetch cinema e finestra WiFi possono
  *  essere spostati indipendentemente. */
 #define CINEMA_DAILY_FETCH_HOUR 7 // 7:00
+
+/**
+ * Ping di sveglia al server cinema, che gira sul free tier di render.com:
+ * l'istanza viene sospesa dopo 15 min di inattivita' e il boot successivo
+ * costa una ventina di secondi. La GET parte prima di meteo, mail e
+ * calendari e viene abbandonata subito: conta che la richiesta arrivi al
+ * router di render, non la risposta.
+ *
+ * L'host deve restare uguale a quello di Layout::CINEMA_URL (Layout_097c.h,
+ * Layout_122c.h). La', l'URL vive nei layout perche' la query string codifica
+ * width/height/colors del pannello; /health non dipende dal pannello e sta
+ * quindi qui. Cambiando dominio vanno aggiornati tutti e tre i punti.
+ *
+ * CINEMA_PREWARM_TIMEOUT_MS e' l'attesa massima della RISPOSTA, non della
+ * connessione: l'handshake TLS ha il suo timeout separato, lasciato al
+ * default di HTTPClient, perche' senza handshake completo la richiesta non
+ * parte affatto. Va tenuto sotto 65535: setTimeout() prende un uint16_t.
+ */
+#define CINEMA_PREWARM_URL "https://cinema-epd.onrender.com/health"
+#define CINEMA_PREWARM_TIMEOUT_MS 1500
 
 #include <GxEPD2_3C.h>
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
@@ -216,9 +248,10 @@ void initDisplay()
 //
 // Flusso:
 //   1. Boot: g_cinema_desc punta a img_apple_bwry_desc (fallback PROGMEM).
-//   2. Al primo ciclo con WiFi connesso, dopo il fetch meteo e prima di
-//      quello dei calendari, fetchCinemaImage() scarica i Layout::CINEMA_PLANES piani
-//      dall'endpoint render.com e li mette in RAM (o PSRAM se disponibile).
+//   2. Al primo ciclo con WiFi connesso, come ultima chiamata di rete del
+//      giro (vedi runNetworkFetches()), fetchCinemaImage() scarica i
+//      Layout::CINEMA_PLANES piani dall'endpoint render.com e li mette in
+//      RAM (o PSRAM se disponibile).
 //   3. g_cinema_desc viene riassegnato al descrittore dinamico che punta ai
 //      buffer RAM: da qui in poi ogni refresh del display mostra l'immagine
 //      scaricata, senza ulteriori chiamate HTTP.
@@ -293,6 +326,9 @@ static const GxEPDImage::Descriptor *g_cinema_desc = &img_apple_bwry_desc;
 //   - se WiFi non si connette mai, i flag restano invariati e
 //     fetchCinemaImage() early-return sul check WiFi: appena la radio
 //     sale, il tentativo parte regolarmente.
+//   - prewarmCinemaServer() legge gli stessi flag attraverso
+//     shouldFetchCinema(): ping e fetch condividono il trigger, e il fetch
+//     lo chiude settando i flag nello stesso giro in cui il ping e' partito.
 static bool g_cinema_attempted = false;
 static int g_cinema_last_fetch_day = -1;
 
@@ -368,8 +404,9 @@ static bool shouldFetchCinema()
 		return false; // NTP non ancora pronto
 	struct tm t;
 	localtime_r(&now, &t);
-	// Trigger daily spostato dalla sera (23:00) al mattino (CINEMA_DAILY_FETCH_HOUR):
-	// pre-warm render.com allineato alla prima connessione utile della giornata.
+	// Trigger daily al mattino: la locandina dev'essere fresca dal primo
+	// accesso della giornata. Lo stesso predicato gatea prewarmCinemaServer(),
+	// cosi' ping e fetch cadono sempre nello stesso giro.
 	if (t.tm_hour != CINEMA_DAILY_FETCH_HOUR)
 		return false;
 	if (t.tm_yday == g_cinema_last_fetch_day)
@@ -378,10 +415,67 @@ static bool shouldFetchCinema()
 }
 
 /**
+ * Sveglia l'istanza render.com del server cinema con una GET a /health
+ * mandata e abbandonata.
+ *
+ * Il free tier sospende il servizio dopo 15 min di inattivita' e il boot
+ * successivo costa una ventina di secondi, che senza questo ping il fetch
+ * dell'immagine pagherebbe per intero dentro il suo timeout.
+ *
+ * Su TLS il fire-and-forget puro non esiste: la richiesta arriva al router di
+ * render solo a handshake completo, quindi la connessione va portata su per
+ * intero. Il timeout dell'handshake resta quello di default di HTTPClient e
+ * NON va accorciato, altrimenti su rete lenta la richiesta non parte nemmeno.
+ * Quello che si abbandona e' la RISPOSTA: con setTimeout() breve la GET
+ * ritorna appena scaduta l'attesa degli header, end() chiude il socket e
+ * l'istanza prosegue il boot per conto suo. Il chiamante intanto fa meteo,
+ * mail e calendari, che e' il tempo di copertura vero di questo meccanismo.
+ *
+ * Nessun valore di ritorno: l'esito non cambia niente nel resto del giro. Il
+ * codice HTTP viene solo loggato ed e' l'unica diagnostica disponibile:
+ * HTTPC_ERROR_READ_TIMEOUT (-11) e' l'esito nominale, 200 significa che il
+ * server era gia' caldo, un errore di connessione che il ping non e' partito.
+ *
+ * Stessi due gate di fetchCinemaImage(), e per lo stesso motivo: il ping ha
+ * senso solo nel giro in cui l'immagine verra' davvero scaricata. Svegliare
+ * render a ogni wake da DISPLAY_REFRESH_MIN terrebbe l'istanza sempre accesa,
+ * bruciando le ore-istanza del free tier senza servire a niente.
+ */
+static void prewarmCinemaServer()
+{
+	if (!shouldFetchCinema())
+		return;
+	if (WiFi.status() != WL_CONNECTED)
+		return;
+
+	WiFiClientSecure client;
+	client.setInsecure();
+
+	HTTPClient http;
+	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
+	// Nessun keep-alive: end() deve chiudere il socket subito invece di
+	// tenerlo aperto per un riuso che non arrivera' mai.
+	http.setReuse(false);
+	if (!http.begin(client, CINEMA_PREWARM_URL))
+	{
+		Serial.println(F("[cinema] pre-warm: http.begin fallita"));
+		return;
+	}
+	uint32_t t0 = millis();
+	int code = http.GET();
+	http.end();
+	Serial.printf("[cinema] pre-warm %s -> %d in %lu ms\n",
+				  CINEMA_PREWARM_URL, code, (unsigned long)(millis() - t0));
+}
+
+/**
  * Scarica l'immagine cinema dal server render.com. Due trigger (vedi
  * shouldFetchCinema): primo boot + daily refresh all'ora
  * CINEMA_DAILY_FETCH_HOUR local.
- * Chiamata DOPO il fetch meteo e PRIMA dei fetch calendari.
+ * Ultima chiamata di rete del giro, dopo meteo, mail e calendari: e' l'unica
+ * che puo' pagare il cold start di render.com, e il tempo speso dagli altri
+ * fetch e' il tempo che il server ha per completare il boot avviato da
+ * prewarmCinemaServer().
  *
  * Sequenza:
  *   1. Early return se shouldFetchCinema() nega (gia' tentato / non è il
@@ -448,9 +542,9 @@ static void fetchCinemaImage()
 	}
 
 	HTTPClient http;
-	// 45s: margine per cold start render.com free tier in caso il cron
-	// GitHub Actions di pre-warm non sia stato eseguito (vedi
-	// webapp/.github/workflows/keep-warm.yml). Cold start tipico 10-30s.
+	// 45s: margine per il cold start del free tier render.com (una ventina di
+	// secondi) quando il ping di prewarmCinemaServer() non e' bastato a
+	// completare il boot dell'istanza prima di arrivare qui.
 	http.setTimeout(45000);
 	if (!http.begin(Layout::CINEMA_URL))
 	{
@@ -515,6 +609,78 @@ static void fetchCinemaImage()
 }
 
 /**
+ * Esegue, in un solo giro, tutti i fetch di rete che condividono la finestra
+ * WiFi. Presuppone la radio gia' connessa: non la accende ne' la spegne.
+ *
+ * L'ordine e' il punto della funzione:
+ *   ping /health -> meteo -> mail -> Google -> Outlook -> cinema
+ * Il ping apre il giro per svegliare render.com, il cinema lo chiude perche'
+ * e' l'unico fetch che puo' pagare un cold start, e i fetch in mezzo sono la
+ * copertura di quel boot.
+ *
+ * Chiamata dai due rami di loop() - dentro la finestra OTA, dove la STA
+ * risale da se' grazie ad AP_STA, e fuori, dopo wifiOn() - che prima ne
+ * tenevano una copia a testa. L'ordine dei fetch vive quindi qui e in un
+ * posto solo, invece di poter divergere fra i due rami.
+ *
+ * Ogni chiamata e' best-effort e indipendente dalle altre: i moduli
+ * conservano la cache precedente quando un fetch fallisce, la UI disegna
+ * "--" sugli slot senza dati e il cinema ricade sul wallpaper PROGMEM.
+ * Nessun fallimento interrompe la sequenza.
+ *
+ * markDirty() dopo ogni fetch riuscito perche' il frame e' unico e
+ * monolitico: qualunque modulo con dati nuovi deve chiedere il ridisegno.
+ * Weather non compare perche' alza il proprio flag da se'.
+ */
+static void runNetworkFetches()
+{
+	/**
+	 * Ping di sveglia al server cinema prima di tutto il resto: il tempo che
+	 * meteo, mail e calendari passano in rete e' il tempo che render.com usa
+	 * per fare boot, cosi' il fetch dell'immagine lo trova caldo o quasi. Si
+	 * autolimita ai soli giri in cui l'immagine verra' davvero scaricata.
+	 */
+	prewarmCinemaServer();
+
+	/**
+	 * L'aggancio dei calendari alla finestra WiFi del meteo guarda il meteo
+	 * davvero aggiornato adesso, non il meteo "da aggiornare": pendingFetch()
+	 * resta FETCH_BOTH finche' mancano corrente e prima previsione, quindi con
+	 * OpenWeather irraggiungibile un gate sul solo need sarebbe sempre vero e
+	 * scavalcherebbe il backoff che Outlook e Google si sono appena imposti -
+	 * nel ramo OTA, che gira ogni ~10 ms, un fetch per iterazione.
+	 */
+	const Weather::FetchKind need = Weather::pendingFetch();
+	const bool meteoAggiornato = (need != Weather::FETCH_NONE) && Weather::runFetch(need);
+
+	/**
+	 * Mail PRIMA dei calendari. Best-effort: se Mail::runFetch() fallisce
+	 * (WiFi cade, batch HTTP error, budget esaurito) o se l'inbox e' vuota,
+	 * il flusso prosegue normalmente con i fetch calendario: un problema
+	 * mail NON deve impattare meteo/calendari/cinema.
+	 */
+	if (Mail::pendingFetch())
+		if (Mail::runFetch())
+			Weather::markDirty();
+
+	// Google prima di Outlook: il suo access token e' appena stato rinfrescato
+	// da Mail, che condivide la stessa cache token.
+	if (meteoAggiornato || Calendar::Google::pendingFetch())
+		if (Calendar::Google::runFetch())
+			Weather::markDirty();
+	if (meteoAggiornato || Calendar::Outlook::pendingFetch())
+		if (Calendar::Outlook::runFetch())
+			Weather::markDirty();
+
+	/**
+	 * Cinema per ultimo: e' l'unica chiamata che puo' pagare il cold start di
+	 * render.com, e i fetch qui sopra sono il tempo che il server ha avuto per
+	 * completare il boot avviato dal ping.
+	 */
+	fetchCinemaImage();
+}
+
+/**
  * Disegna il background corrente (PROGMEM fallback o dinamico scaricato)
  * dentro il paged loop di Weather::renderFrame().
  *
@@ -542,7 +708,8 @@ void drawTestBackground()
 }
 
 /**
- * Accende il WiFi in modalita' STA e attende la connessione con timeout di 15 s.
+ * Accende il WiFi in modalita' STA e attende la connessione fino a
+ * WIFI_CONNECT_TIMEOUT_MS.
  * La radio resta accesa solo per la finestra di fetch: viene spenta
  * da wifiOff() subito dopo.
  * @return true se connesso entro il timeout.
@@ -552,7 +719,7 @@ static bool wifiOn()
 	WiFi.mode(WIFI_STA);
 	WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 	uint32_t t0 = millis();
-	while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 15000UL)
+	while (WiFi.status() != WL_CONNECTED && (millis() - t0) < WIFI_CONNECT_TIMEOUT_MS)
 	{
 		delay(100);
 	}
@@ -658,30 +825,7 @@ void loop()
 		 */
 		if (WiFi.status() == WL_CONNECTED)
 		{
-			Weather::FetchKind need = Weather::pendingFetch();
-			if (need != Weather::FETCH_NONE)
-				Weather::runFetch(need);
-
-			fetchCinemaImage();
-
-			/**
-			 * Mail PRIMA dei calendari. Best-effort: se Mail::runFetch() fallisce
-			 * (WiFi cade, batch HTTP error, budget esaurito) o se l'inbox e'
-			 * vuota, il flusso prosegue normalmente con i fetch calendario:
-			 * un problema mail NON deve impattare meteo/calendari/cinema.
-			 * markDirty su successo: la UI mail (Mail::draw) va ridisegnata.
-			 */
-			if (Mail::pendingFetch())
-				if (Mail::runFetch())
-					Weather::markDirty();
-
-			// Aggancio Outlook + Google al fetch corrente del meteo (stessa finestra WiFi)
-			if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Outlook::pendingFetch())
-				if (Calendar::Outlook::runFetch())
-					Weather::markDirty();
-			if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Google::pendingFetch())
-				if (Calendar::Google::runFetch())
-					Weather::markDirty();
+			runNetworkFetches();
 			/**
 			 * Sblocca il gate del primo refresh dopo il primo tentativo di fetch:
 			 * cosi' il display viene disegnato non appena il meteo viene scaricato, anche
@@ -712,11 +856,15 @@ void loop()
 	// Finestra chiusa: garantisce che AP e WebServer siano giu' (idempotente).
 	Ota::endNow();
 
+	/**
+	 * Interrogazione dei moduli al solo scopo di decidere se accendere la
+	 * radio: i fetch veri li gatea runNetworkFetches(), che rilegge questi
+	 * stessi predicati per conto suo. Mail e' nel gate perche' se le uniche
+	 * scadenze sono le mail il WiFi va acceso comunque.
+	 */
 	Weather::FetchKind need = Weather::pendingFetch();
 	bool needOutlook = Calendar::Outlook::pendingFetch();
 	bool needGoogle = Calendar::Google::pendingFetch();
-	// Mail aggiunto al gate: se solo le mail sono in scadenza, accendiamo
-	// comunque WiFi per scaricarle (best-effort, non blocca gli altri fetch).
 	bool needMail = Mail::pendingFetch();
 	if (need != Weather::FETCH_NONE || needOutlook || needGoogle || needMail)
 	{
@@ -724,28 +872,7 @@ void loop()
 		{
 			if (wifiOn())
 			{
-				if (need != Weather::FETCH_NONE)
-					Weather::runFetch(need);
-				// Cinema: una tantum, tra meteo e calendari.
-				fetchCinemaImage();
-				/**
-				 * Mail PRIMA dei calendari. Best-effort: se Mail::runFetch()
-				 * fallisce (WiFi cade, batch HTTP error, budget esaurito) o
-				 * se l'inbox e' vuota, il flusso prosegue normalmente con i
-				 * fetch calendario: un problema mail NON deve impattare
-				 * meteo/calendari/cinema. markDirty su successo: la UI mail
-				 * (Mail::draw) va ridisegnata.
-				 */
-				if (needMail)
-					if (Mail::runFetch())
-						Weather::markDirty();
-				// Outlook + Google: stessa finestra WiFi del fetch meteo corrente
-				if ((need & Weather::FETCH_CURRENT_WEATHER) || needOutlook)
-					if (Calendar::Outlook::runFetch())
-						Weather::markDirty();
-				if ((need & Weather::FETCH_CURRENT_WEATHER) || needGoogle)
-					if (Calendar::Google::runFetch())
-						Weather::markDirty();
+				runNetworkFetches();
 			}
 			else
 			{

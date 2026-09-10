@@ -692,7 +692,8 @@ namespace Mail
    *     consecutivi il prossimo retry e' rimandato di MAIL_GOOGLE_FETCH_MIN
    *     minuti, evitando hammering del token endpoint nel loop OTA (10ms).
    *
-   * Richiamato da loop() del .ino subito prima dei fetch calendario.
+   * Richiamato da runNetworkFetches() nel .ino, subito prima dei fetch
+   * calendario.
    * Ritorna true se la cache e' stata aggiornata con successo (anche con 0 mail).
    */
   inline bool runFetch()

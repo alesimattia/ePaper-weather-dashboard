@@ -404,11 +404,11 @@ namespace Calendar
       body.reserve(512);
       body  = "client_id=";       body += clientId;
       if (clientSecret && *clientSecret)
-        body += "&client_secret="; body += clientSecret;
+        (body += "&client_secret=") += clientSecret;
       body += "&grant_type=refresh_token";
       body += "&refresh_token=";  body += refreshToken;
       if (scopeEncoded && *scopeEncoded)
-        body += "&scope=";         body += scopeEncoded;
+        (body += "&scope=") += scopeEncoded;
 
       int code = http.POST(body);
       if (code != 200)
@@ -469,7 +469,11 @@ namespace Calendar
 
     /**
      * GET /me/events con filtro `end/dateTime ge <now>`, top=MAX_EVENTS=5,
-     * ordinato per inizio. Popola `outlookEvents[]`.
+     * ordinato per inizio. Popola `outlookEvents[]` e invalida gli slot
+     * residui, quindi la cache rispecchia sempre la risposta del server.
+     * Ritorna true quando HTTP e parsing riescono, anche senza eventi:
+     * false e' riservato ai guasti, cosi' il chiamante sa che la cache
+     * precedente e' ancora quella buona.
      * @since 21/04/26 Mattia Alesi
      */
     inline bool fetchOutlookEvents()
@@ -544,7 +548,10 @@ namespace Calendar
         outlookEvents[i].valid = false;
 
       Serial.printf("[Outlook] fetched %d events (end>='%s')\n", n, nowIso);
-      return n > 0;
+      // Successo anche con n == 0: HTTP e parsing sono riusciti, quindi
+      // outlookEvents[] rispecchia il calendario e un'agenda vuota e' un
+      // risultato valido, non un errore da ritentare.
+      return true;
     }
 
     // =======================================================================
@@ -592,7 +599,8 @@ namespace Calendar
      * GET /calendar/v3/calendars/primary/events con timeMin=<now>,
      * maxResults=MAX_EVENTS=5, singleEvents=true, orderBy=startTime.
      * timeMin su Google tiene in lista anche gli eventi in corso (termine
-     * nel futuro).
+     * nel futuro). Stesso contratto di ritorno di fetchOutlookEvents():
+     * true su risposta valida, anche vuota; false solo sui guasti.
      */
     inline bool fetchGoogleEvents()
     {
@@ -678,7 +686,8 @@ namespace Calendar
       for (int i = n; i < (int)Calendar::Google::MAX_EVENTS; i++) googleEvents[i].valid = false;
 
       Serial.printf("[Google] fetched %d events (timeMin='%s')\n", n, nowIso);
-      return n > 0;
+      // Successo anche con n == 0, per gli stessi motivi di fetchOutlookEvents().
+      return true;
     }
 
     // =======================================================================
