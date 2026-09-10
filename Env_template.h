@@ -22,12 +22,26 @@
 #define LON             10.0000f
 
 /**
- * Credenziali della rete AP che il dispositivo espone al boot per la
- * finestra di aggiornamento OTA (durata OTA_WINDOW_MIN, default 3 min).
+ * Credenziali della rete AP di emergenza. La finestra di manutenzione si apre
+ * sulla rete di casa; questo access point serve solo quando la STA non sale
+ * entro MAINT_STA_TIMEOUT_S, ed e' l'unica via di recupero per un pannello a
+ * muro con credenziali WiFi sbagliate.
  * La password deve essere lunga almeno 8 caratteri perchè WPA2 lo richiede.
  */
 #define OTA_AP_SSID     "ePaper-OTA"
 #define OTA_AP_PASSWORD "epaper"
+
+/**
+ * Password della finestra di manutenzione (Basic Auth su /update, /config e
+ * /status). Commentata = nessuna autenticazione.
+ *
+ * Va definita: sulla rete di casa la pagina e' raggiungibile da chiunque sia
+ * sulla LAN per tutta la durata della finestra, e /update accetta un firmware
+ * qualunque, che conterrebbe le credenziali di questo file. MAINT_HTTP_USER
+ * e' opzionale e vale "admin" se assente.
+ */
+//#define MAINT_HTTP_USER     "admin"
+//#define MAINT_HTTP_PASSWORD "cambiami"
 
 /**
  * Credenziali Microsoft Graph per leggere il calendario Outlook.

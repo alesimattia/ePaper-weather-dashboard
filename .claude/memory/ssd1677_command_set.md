@@ -176,12 +176,22 @@ bit 3, `0xC7` vs `0xCF` lo conferma):
 | 1 `0x02` | disable analog |
 | 0 `0x01` | disable OSC |
 
-Serve a costruire i valori che la tabella non elenca. I due che contano:
+Serve a costruire i valori che la tabella non elenca, e che i driver reali usano:
 
 | Param | Sequenza | Chi lo usa |
 |---|---|---|
 | `0xFC` | come `0xFF` **senza** disable analog e disable OSC: Mode 2 lasciando alimentazione e clock accesi | `_Update_Part()` di `GxEPD2_1330_GDEM133T91`, ed è così che una catena di partial resta veloce |
 | `0xF4` | come `0xF7` senza il power down finale: Mode 1 con alimentazione accesa | il controllo che distingue "Mode 2 è veloce" da "non spegnere è ciò che fa risparmiare" |
+| `0xCC` | Mode 2 con **bit 5 e 4 spenti**: nè temperatura nè LUT ricaricate dall'OTP, e clock e analog restano accesi | `_Update_Part()` del driver custom: è quel bit 4 spento a far sopravvivere la LUT scritta via `0x32` |
+| `0xD7` | Mode 1 completo ma **senza load temperature**: carica la LUT usando la temperatura **già nel registro** | `_Update_Full()` di `GDEQ0426T82` e `GDEM0397T81` come "fast full update" |
+| `0x03` | solo disable analog + disable OSC, cioè un power off | il community SDK Xteink lo usa al posto di `0xC3` |
+
+**`0xD7` è il meccanismo del banco caldo, e vale la pena capirlo prima di copiarlo.** Il bit 5 è
+spento, quindi il controller **non campiona il sensore** e la ricerca del waveform set di §6.9 gira
+sul valore che sta nel registro di temperatura; il bit 4 è acceso, quindi il set lo carica davvero.
+Da qui il fatto che a quei driver basti scrivere `0x1A` prima del refresh, **senza toccare `0x18`**:
+la selezione del sensore è irrilevante quando la temperatura non viene ricampionata. Chi copia
+l'idioma aggiungendo `0x18 = 0x48` non riproduce la loro sequenza, ne prova un'altra.
 
 `0xF7` è quello che usa il driver e anche l'init di fabbrica SOLUM: include power on e power off
 impliciti, per questo non serve `_PowerOn()`/`_PowerOff()` attorno al refresh. `0xC0` / `0xC3` sono
@@ -215,7 +225,9 @@ mette il chip in cascade e gli fa emettere CL. Terza fonte indipendente dopo l'i
 |---|---|---|
 | `0x01` | Driver Output Control (MUX + direzione scan) | A[9:0] POR `2A7h` = 680 MUX, gate line = A[9:0]+1, **con range dichiarato da 300 a 680 MUX**: sotto 300 non si scende. `{0x9F,0x02,0x00}` = 671 -> 672 gate line. Ridurre il MUX **non accorcia il refresh**: misurati 24010 / 24031 / 24033 ms a MUX 671 / 335 / 167, quindi il periodo di frame lo fissa il frame rate e la scansione non lo satura. B[2:0]: B[2] GD (primo gate output, POR 0 = G0), B[1] SM (ordine di scansione: POR 0 = G0,G1,G2... interlacciato sinistra/destra; 1 = pari poi dispari), B[0] **TB = 1 è dichiarato Reserved**: TB=0, scan da G0 a G679, ed è l'unica opzione. **Non esiste una reverse scan hardware sull'asse gate**. Da non confondere con il verso del CONTATORE DI INDIRIZZO, che invece è configurabile: `0x11` A[1:0] = 00 Y e X decrement, 01 Y decrement X increment, 10 Y increment X decrement, 11 entrambi increment (POR). Specchiare una banda **si può fare nei registri**, ed è così che GxEPD2 tratta le due metà del GDEY0579Z93; nel 122c il ribaltamento sta nel data path per scelta di implementazione, non per assenza di alternativa — vedi [[gxepd2_122c_driver]] |
 | `0x0C` | Booster soft start | 5 byte; i livelli in OTP hanno E[7:0] = `0x40` (Level 1) / `0x80` (Level 2) |
-| `0x10` | **Deep Sleep mode** | A[1:0]: `00` Normal [POR], `11` Enter Deep Sleep, e su questo chip **è l'unico modo di deep sleep**, non due come sul SSD1683. In deep sleep il BUSY resta alto, e la tabella elettrica dice *"Cannot retain RAM data"*: **al risveglio la RAM immagine è indefinita, non azzerata**. Per uscire serve un HW reset. Il driver manda `0x03` (A[1:0]=11), come OEPL sulla stessa famiglia, e funziona end-to-end; `0x11` avrebbe A[1:0]=01, che nella tabella non c'è |
+| `0x10` | **Deep Sleep mode** | A[1:0]: `00` Normal [POR], `11` Enter Deep Sleep, e su questo chip **è l'unico modo documentato**, non due come sul SSD1683. In deep sleep il BUSY resta alto, e la tabella elettrica dice *"Cannot retain RAM data"* a 1 µA tipici / 5 max: **al risveglio la RAM immagine è indefinita, non azzerata**. Per uscire serve un HW reset. Il driver manda `0x03` (A[1:0]=11), come OEPL sulla stessa famiglia, e funziona end-to-end. **`0x11` e `0x01` chiedono la stessa cosa**, perchè hanno entrambi A[1:0]=01: sul SSD1677 quel code point non è in tabella, sul SSD1683 è il **modo 1** |
+| | | **Il SSD1683 ha due modi e li distingue la RAM**, verbatim dalla sua tabella elettrica: `Idslp_VCI1` modo 1 (A[1:0]=01) *"Retain RAM data but cannot access the RAM"*, 3 µA tipici / 5 max; `Idslp_VCI2` modo 2 (A[1:0]=11, dato `0x03` nel flusso della Figura 9-2) *"Cannot retain RAM data"*, 1 µA / 4. Se questo silicio si comportasse come l'SSD1683 — e su `0x21` a due byte e sui pin di cascade lo fa già — il modo 1 conserverebbe la RAM per ~2 µA in più, e il riarmo di `_initial_write` al risveglio nel driver custom sarebbe inutile. Misurabile: vedi [[gxepd2_097c_driver]] |
+| `0x13` | **non esiste nella Rev 1.0** | il firmware di fabbrica lo manda **prima** di `0x10` in `epdEnterSleep()` (`unissd.cpp`), aspettando poi il BUSY, e la stessa coppia compare nel driver OEPL "Universal". Un altro indizio che il silicio è più recente del datasheet, insieme a `0x21` a due byte. Se alzi il BUSY, il comando c'è |
 | `0x12` | **SW RESET** | riporta comandi e parametri ai default di reset, **tranne `R10h`**, e alza il BUSY per 2 ms misurati. *"Note: RAM are unaffected by this command"*: il SWRESET **non** pulisce la RAM immagine, quindi non è lui a garantire uno stato noto dei piani. Riporta invece ai POR i registri di tensione `0x03`/`0x04`/`0x2C` |
 | `0x11` | Data Entry mode | A[1:0] = ID: `00` Y-- X--, `01` Y-- X++, `10` Y++ X--, `11` Y++ X++ [POR]. A[2] = AM, direzione di avanzamento del contatore dopo ogni byte: `0` in X [POR], `1` in Y. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0. Attenzione: il decremento cambia **dove atterrano i byte**, non l'ordine dei bit dentro il byte, quindi da solo non specchia un'immagine |
 | `0x14` | **HV Ready Detection** | A[6:4] = n, cool down `10ms x (n+1)`; A[2:0] = m, numero di cicli; durata massima `10ms x (n+1) x m`. `A[7:0] = 00h` fa una detection singola. Richiede **CLKEN=1 e ANALOGEN=1** (cioè power on via `0x22`=0xC0 prima). "BUSY pad will output high during detection", e "the detection will be completed when HV is ready": quindi **la durata del BUSY è l'esito**, leggibile anche senza SDO — molto più corta del massimo = alte tensioni salite, uguale al massimo = mai salite. L'esito esplicito sta in `0x2F` bit 5 |

@@ -267,11 +267,24 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   (13.3" 3-colori, 960×680). In GxEPD2 1.6.9 i driver SSD1677 sono **nove**, ma i 3-colori sono
   tre, e questo è il più vicino al SOLUM. Confrontati con la sequenza di init di fabbrica:
 
-  | driver | geometria | `0x22` refresh | init |
-  |---|---|---|---|
-  | `gdem3c/GDEM133Z91` | 960×680 | `0xF7` | `0x0C{AE C7 C3 C0 80}`, `0x01`, `0x3C{01}`, `0x18{80}` |
-  | `gdey3c/GDEY116Z91` | 960×640 | `0xF7` | solo SWRESET + `0x3C{01}` |
-  | `epd3c/750c_Z90` | 880×528 | `0xC7` | `0x0C{… 40}`, MUX 527, `0x3C`, `0x18`, + `0x22{B1}`/`0x20` |
+  **Tutti e nove, letti in 1.6.9**, con quello che li distingue. `0x0C[4]` è il quinto byte del
+  soft start, `off` il parametro di `0x22` del power off, `sleep` quello di `0x10`:
+
+  | driver | geometria | col. | partial | `0x0C[4]` | init | refresh | off | sleep |
+  |---|---|---|---|---|---|---|---|---|
+  | `gdem3c/GDEM133Z91` | 960×680 | BWR | **no** | `80` | `0x0C`,`0x01`,`0x3C{01}`,`0x18{80}` | `F7` | `C3` | `11` |
+  | `epd3c/750c_Z90` | 880×528 | BWR | **no** | `40` | + `0x22{B1}`/`0x20` | `C7` | `C3` | `11` |
+  | `gdey3c/GDEY116Z91` | 960×640 | BWR | **no** | — | solo SWRESET + `0x3C{01}` | `F7` | `C3` | `11` |
+  | `epd/1160_T91` | 960×640 | B/N | `0x32`+`CC` | `40` | + `0x22{B1}`/`0x20` | `F4` con `_PowerOn` | `83` | `03` |
+  | `gdem/GDEM133T91` | 960×680 | B/N | `FC` | `80` | come Z91, `delay(15)` | `F7` | `83` | `03` |
+  | `gdem/GDEM102T91` | 960×640 | B/N | `FC` | **`FF`** | come Z91 | `F7` | `83` | `03` |
+  | `gdem/GDEM0397T81` | 800×480 | B/N | `0x21{00 00}`+`FC` | `80` | `0x18` **prima** di `0x0C`, MUX B=`02` | `F7`, fast `0x1A{6A}`+`D7` | `83` | `01` |
+  | `gdeq/GDEQ0426T82` | 800×480 | B/N | idem | `80` | idem | `F7`, fast `0x1A{5A}`+`D7` | `83` | `01` |
+  | `epd/370_TC1` | 280×480 | B/N | `CF` | `C0` | scrive `0x03`,`0x04`,`0x2C{44}`,`0x37`, LUT via `0x32` | `CF` | `83` | `03` |
+
+  **Il fatto che orienta la scelta della base: nessuno dei tre driver a 3 colori ha il partial, e
+  tutti e sei i monocromatici ce l'hanno** con `0x26` come frame precedente. È la ragione per cui il
+  partial del driver custom non viene dalla sua base ma dal `1160_T91`.
 
   GDEM133Z91 ha **quattro comandi su cinque byte-identici** al firmware SOLUM (`0x0C` col quinto
   byte `0x80`, `0x3C{01}`, `0x18{80}`, `0x22{F7}`); differiva solo il conteggio gate di `0x01`.
@@ -280,8 +293,29 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   la waveform di questo pannello è compensata. La geometria non discrimina: `HEIGHT` la definisce il
   driver custom a 672, conta solo `WIDTH = 960`, cioè righe da 120 byte.
 
-  Da qui viene anche il commento sbagliato `// Set MUX as 527`: è copiato da 750c_Z90, dove 527 è
-  giusto (`0x020F` = 527 -> 528 gate = la sua `HEIGHT`).
+  **`GDEQ0426T82` e `GDEM0397T81` sono il riferimento SSD1677 moderno della libreria**, e portano
+  quattro idiomi che il driver custom non ha: `0x21` a due byte **prima di ogni refresh** (`{40 00}`
+  bypassa la RED RAM sul pieno, `{00 00}` la lascia normale sul partial), `0x18` scritto **prima**
+  di `0x0C`, il terzo byte di `0x01` a `0x02` (bit SM, scansione interlacciata), e il banco caldo
+  chiesto con `0x1A` + `0x22 = 0xD7` invece che con `0xF7`.
+
+  **`0x0C[4] = 0xFF` di GDEM102T91 è fuori dalla tabella del datasheet**, che per il soft start
+  documenta solo `0x40` (Level 1) e `0x80` (Level 2): resta fuori dalle sequenze riprodotte.
+
+  **Convenzione del MUX, ed è una trappola quando si legge un sorgente upstream**: il valore di
+  `0x01` è il **registro**, e le gate line sono una in più. `0x9F 0x02` = 671 -> 672 linee,
+  `0xA7 0x02` = 679 -> 680. Da qui viene anche il commento sbagliato `// Set MUX as 527`, copiato da
+  750c_Z90 dove 527 è giusto (`0x020F` = 527 -> 528 gate = la sua `HEIGHT`).
+
+  **I parametri di `0x10` si dividono in due gruppi, e non è una preferenza di stile**: `0x01` e
+  `0x11` hanno entrambi A[1:0] = 01, quindi chiedono la **stessa** cosa, il deep sleep **modo 1**;
+  `0x03` ha A[1:0] = 11, cioè il **modo 2**. Sul SSD1683 il modo 1 *"Retain RAM data but cannot
+  access the RAM"* a 3 µA, il modo 2 *"Cannot retain RAM data"* a 1 µA (tabella elettrica, verbatim).
+  Il driver custom manda `0x03` e per questo `_InitDisplay()` riarma `_initial_write` al risveglio:
+  se questo silicio si comportasse come l'SSD1683, `0x01` conserverebbe la RAM al prezzo di ~2 µA, e
+  quel riarmo diventerebbe inutile. La ritenzione è una misura e non una deduzione: la sonda del
+  deep sleep di `examples/097c/panel_diagnostic` la esercita facendo, dopo il risveglio, un refresh
+  **senza riscrivere la RAM**.
 
 - **SSD2677 non è un'alternativa**: è un altro protocollo, e la scelta la determina il silicio, non
   la preferenza. Comandi scritti dai due driver: SSD1677 (`GDEM133Z91`) usa
@@ -397,7 +431,7 @@ venuta dal confronto fra due misure con la stessa LUT e la stessa sequenza di co
 | chi | sequenza | tensioni durante il partial | nero |
 |---|---|---|---|
 | `panel_diagnostic` | reset HW, SWRESET, config, LUT. **Nessun load dall'OTP** | POR, VSH1 15 V | **pieno** |
-| `partial_refresh` | refresh pieno (`0xF7`), poi i partial | quelle dell'OTP | **pallido** |
+| catena di partial | dopo un refresh pieno (`0xF7`) | quelle dell'OTP | **pallido** |
 
 Il probe dei livelli, anch'esso a POR, aveva già misurato che su questo film **VSH1 dà il nero e
 VSH2 il rosso**: il nero di questo pigmento si ottiene a 15 V, il rosso a 5 V. Da qui la scelta del
@@ -420,7 +454,7 @@ dell'OTP a 24 s sono quindi ~1200 frame contro i 28 della LUT del partial.
 **Semantica della LUT del partial**, verificata pixel per pixel contro le osservazioni sul vetro:
 l'indice è `(bit di 0x26, bit di 0x24)` = `(frame precedente, frame nuovo)`, `LUT0 (0,0)` e
 `LUT3 (1,1)` a zero (pixel fermo, ed è **questa** la confinatura del partial, non la finestra RAM),
-`LUT1 (0,1)` nero→bianco a VSL, `LUT2 (1,0)` bianco→nero a VSH1. Nella fase 3 di `partial_refresh`
+`LUT1 (0,1)` nero→bianco a VSL, `LUT2 (1,0)` bianco→nero a VSH1. Nella catena di partial
 la fascia aveva `(1,0)` → LUT2 → 18 frame VSH1 → nera; il resto `(1,1)` → LUT3 → zeri → intatto; il
 testimone nero `(0,0)` → LUT0 → zeri → intatto. Ogni pixel osservato torna.
 
@@ -456,10 +490,10 @@ tutto lo schermo.
 
 **`setPartialLut(const uint8_t* lut110)`** sostituisce la waveform, e fa scendere il booster:
 altrimenti le nuove tensioni verrebbero scritte ad analog già acceso e `_PowerOn()` salterebbe,
-lasciando girare la passata con quelle di prima. Serve a
-`examples/097c/partial_lut_tuning`, che compone waveform a runtime e le fa girare passando dal
-driver: sette bande con **nero di riferimento adiacente** all'area di lavoro (il confronto contro un
-nero dipinto dall'OTP nella stessa schermata è la misura che mancava a tutte le prove precedenti),
+lasciando girare la passata con quelle di prima. La taratura di
+`examples/097c/panel_diagnostic` rispecchia la stessa sequenza a SPI diretta: sette bande con
+**nero di riferimento adiacente** all'area di lavoro (il confronto contro un nero dipinto dall'OTP
+nella stessa schermata è la misura che regge tutta la lettura),
 sweep di VSH1 da 9 a 15 V, poi frame rate, frame e VGH/VCOM. Tutte le tensioni provate sono al
 massimo i POR, mai sopra: salire oltre è la sola cosa che può danneggiare il film in modo
 permanente.

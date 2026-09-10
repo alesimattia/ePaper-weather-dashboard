@@ -12,6 +12,8 @@
 #include "Layout.h"
 
 #include "Env.h"
+#include "Timings.h"
+#include "Log.h"
 #include "icons.h"
 #include "Graphics.h"
 #include "Calendar.h"
@@ -53,15 +55,6 @@ extern void drawTestBackground();
  */
 namespace Weather
 {
-  // Tipo di fetch pendente. Maschera di bit per poter combinare le richieste
-  enum FetchKind : uint8_t
-  {
-    FETCH_NONE     = 0,
-    FETCH_CURRENT_WEATHER  = 1 << 0,
-    FETCH_FORECAST = 1 << 1,
-    FETCH_BOTH     = FETCH_CURRENT_WEATHER | FETCH_FORECAST
-  };
-
   // -------------------------------------------------------------------------
   // Stato, costanti di layout e helper interni. `detail` tiene tutto lo
   // scope interno fuori dalla API pubblica del modulo.
@@ -70,15 +63,9 @@ namespace Weather
   {
     // -----------------------------------------------------------------------
     // Intervalli di fetch (millisecondi). I valori derivano dai #define
-    // dichiarati nello sketch .ino; i fallback qui sotto rendono l'header
-    // autonomamente compilabile. One Call 3.0 restituisce corrente + hourly
-    // + daily in un unica chiamata: un solo timer governa l'intero fetch.
+    // definiti in Timings.h. One Call 3.0 restituisce corrente + hourly +
+    // daily in un unica chiamata, quindi un solo task ne governa la cadenza.
     // -----------------------------------------------------------------------
-    #ifndef WEATHER_FORECAST_FETCH_MIN
-    #define WEATHER_FORECAST_FETCH_MIN 10
-    #endif
-    inline constexpr uint32_t INTERVAL_FORECAST =
-        (uint32_t)WEATHER_FORECAST_FETCH_MIN * 60UL * 1000UL;  // default 10 min
 
     // -----------------------------------------------------------------------
     // Layout: tutte le costanti pixel (sidebar, banner, fieldset, baseline,
@@ -131,10 +118,7 @@ namespace Weather
     inline uint8_t    tcHistHead      = 0;     // indice next-write nel ring
     inline time_t     tcHistLastEpoch = 0;     // anti-doppione fra fetch ravvicinati
 
-    inline uint32_t lastForecastMs = 0;       // timestamp ultima chiamata One Call riuscita
-    inline bool     firstRun       = true;    // forza un primo fetch appena possibile
-    inline bool     needsRefresh   = false;
-    inline bool     firstRenderDone = false;   // true dopo il primo renderFrame() riuscito
+    inline bool     needsRefresh   = false;   // c'e' qualcosa di nuovo da mostrare
 
     // =======================================================================
     // Helper interni
@@ -180,8 +164,8 @@ namespace Weather
     {
       char hhmm[6];
       formatHHMM(s.epoch, hhmm);
-      Serial.printf("[OWM] %-8s %s  %.1f C  icon=%s  \"%s\"\n",
-                    tag, hhmm, s.feelsLikeC, s.iconCode, s.description);
+      LOGV("OWM", "%-8s %s  %.1f C  icon=%s  \"%s\"",
+           tag, hhmm, s.feelsLikeC, s.iconCode, s.description);
     }
 
     /**
@@ -199,13 +183,13 @@ namespace Weather
       HTTPClient http;
       if (!http.begin(client, url))
       {
-        Serial.println(F("[OWM] http.begin() failed"));
+        LOG("OWM", "http.begin() failed");
         return false;
       }
       int code = http.GET();
       if (code != 200)
       {
-        Serial.printf("[OWM] fetch failed: http=%d\n", code);
+        LOG("OWM", "fetch failed: http=%d", code);
         http.end();
         return false;
       }
@@ -213,7 +197,7 @@ namespace Weather
       http.end();
       if (err)
       {
-        Serial.printf("[OWM] json parse error: %s\n", err.c_str());
+        LOG("OWM", "json parse error: %s", err.c_str());
         return false;
       }
       return true;
@@ -233,13 +217,13 @@ namespace Weather
       HTTPClient http;
       if (!http.begin(client, url))
       {
-        Serial.println(F("[OWM] http.begin() failed"));
+        LOG("OWM", "http.begin() failed");
         return false;
       }
       int code = http.GET();
       if (code != 200)
       {
-        Serial.printf("[OWM] fetch failed: http=%d\n", code);
+        LOG("OWM", "fetch failed: http=%d", code);
         http.end();
         return false;
       }
@@ -248,7 +232,7 @@ namespace Weather
       http.end();
       if (err)
       {
-        Serial.printf("[OWM] json parse error: %s\n", err.c_str());
+        LOG("OWM", "json parse error: %s", err.c_str());
         return false;
       }
       return true;
@@ -324,7 +308,7 @@ namespace Weather
       JsonObjectConst cur = doc["current"].as<JsonObjectConst>();
       if (cur.isNull())
       {
-        Serial.println(F("[OWM] onecall: current mancante"));
+        LOG("OWM", "onecall: current mancante");
         return false;
       }
       WeatherSlot& s0 = slots[0];
@@ -353,9 +337,9 @@ namespace Weather
         // sovrascritto ma slots[1..3] contengono ancora le previsioni del
         // fetch precedente, e dichiarare successo resetterebbe i timer
         // lasciando in pagina un misto di corrente fresca e previsioni
-        // vecchie fino al prossimo INTERVAL_FORECAST. Ritornando false il
+        // vecchie fino alla cadenza successiva. Ritornando false il
         // giro successivo ritenta.
-        Serial.println(F("[OWM] onecall: hourly mancante"));
+        LOG("OWM", "onecall: hourly mancante");
         return false;
       }
 
@@ -1196,86 +1180,59 @@ namespace Weather
     tcHistHead      = 0;
     tcHistLastEpoch = 0;
 
-    lastForecastMs = 0;
-    firstRun       = true;
-    // Primo refresh posticipato fino all'arrivo di meteo corrente + almeno
-    // una previsione futura: evita il refresh sprecato (~24 s) col banner
-    // a placeholder "--" al boot.
-    needsRefresh    = false;
-    firstRenderDone = false;
-  }
-
-  /**
-   * Ritorna FETCH_BOTH se è scaduto INTERVAL_FORECAST (pilotato da
-   * WEATHER_FORECAST_FETCH_MIN), altrimenti FETCH_NONE. Funzione pura:
-   * non modifica stato e non tocca il WiFi. Usato da loop() nel .ino
-   * per decidere se accendere il WiFi.
-   * One Call 3.0 restituisce corrente + previsioni in un unica chiamata,
-   * quindi un solo timer governa entrambi i bit di FetchKind.
-   */
-  inline FetchKind pendingFetch()
-  {
-    using namespace detail;
-    if (firstRun || elapsed(millis(), lastForecastMs, INTERVAL_FORECAST))
-      return FETCH_BOTH;
-    return FETCH_NONE;
-  }
-
-  /**
-   * Esegue il fetch indicato. Presuppone che il WiFi sia gia' connesso
-   * (WL_CONNECTED); non accende nè spegne la radio. In caso di successo
-   * aggiorna entrambi i timer (current + forecast) perchè One Call 3.0
-   * restituisce i due gruppi di dati in un'unica risposta, e marca il
-   * banner come "da ridisegnare". Ritorna true se la richiesta è andata
-   * a buon fine.
-   */
-  inline bool runFetch(FetchKind kind)
-  {
-    using namespace detail;
-    if (kind == FETCH_NONE) return false;
-
-    bool ok = fetchOneCall();
-    if (ok)
-    {
-      lastForecastMs = millis();
-      needsRefresh   = true;
-      // Registra il campione corrente nello storico del mini-chart temperatura.
-      recordHistory(slots[0].feelsLikeC, slots[0].epoch);
-    }
     /**
-     * firstRun resta true finchè NON abbiamo sia meteo corrente che almeno
-     * una previsione valida: cosi' pendingFetch() continua a ritornare
-     * FETCH_BOTH e ripete al giro successivo senza dover attendere l'intero
-     * INTERVAL_*. La retry resta comunque throttled dal timeout HTTP.
+     * Il primo frame si vuole sempre, anche a placeholder: senza questo il
+     * pannello resterebbe come lo ha lasciato display.init() finche' qualcosa
+     * non porta dati nuovi, e su un dispositivo senza rete e senza sensore
+     * non succederebbe mai. QUANDO disegnarlo lo decide lo scheduler, che
+     * attende il primo esito di rete oppure PRIMO_FRAME_ATTESA_MS.
      */
-    if (slots[0].valid && slots[1].valid) firstRun = false;
+    needsRefresh = true;
+  }
+
+  /**
+   * Vero quando la cache contiene sia il meteo corrente sia almeno la prima
+   * previsione futura. Sotto questa soglia il banner andrebbe disegnato con i
+   * placeholder "--", quindi lo scheduler ritenta invece di attendere la
+   * cadenza piena.
+   */
+  inline bool datiCompleti()
+  {
+    using namespace detail;
+    return slots[0].valid && slots[1].valid;
+  }
+
+  /**
+   * Scarica meteo corrente e previsioni. Presuppone il WiFi gia' connesso
+   * (WL_CONNECTED): non accende ne' spegne la radio, e non decide quando
+   * tocca a lui, che e' compito dello scheduler.
+   *
+   * In caso di successo registra il campione corrente nello storico del
+   * mini-chart temperatura. Il ridisegno non lo chiede da se': lo fa lo
+   * scheduler sull'esito, come per ogni altro task.
+   * @return true se la richiesta e' andata a buon fine.
+   */
+  inline bool runFetch()
+  {
+    using namespace detail;
+    const bool ok = fetchOneCall();
+    if (ok) recordHistory(slots[0].feelsLikeC, slots[0].epoch);
     return ok;
   }
 
   /**
-   * Se serve, ridisegna lo schermo (background + banner). Nessuna rete.
-   * Va chiamata ad ogni giro di loop().
+   * Ridisegna lo schermo (background + banner) e azzera il flag dei dati
+   * nuovi. Nessuna rete.
+   *
+   * Non decide se sia il momento: quello lo fa lo scheduler, che chiama
+   * questa funzione solo quando sporco() e' vero, il rate limit del pannello
+   * e' scaduto e il primo frame e' consentito.
    */
   inline void render()
   {
     using namespace detail;
-
-    if (needsRefresh)
-    {
-      /**
-       * Blocca il primo refresh finchè non arrivano meteo corrente (slots[0])
-       * e almeno la prima previsione futura (slots[1]): evita un refresh
-       * sprecato (~24 s) col banner a "--" al boot. Una volta disegnato il
-       * primo frame i refresh successivi (rotazione bg, markDirty, ecc.)
-       * proseguono anche se un dato torna transitoriamente invalido.
-       */
-      if (!firstRenderDone && (!slots[0].valid || !slots[1].valid))
-        return;
-
-      renderFrame();
-      needsRefresh    = false;
-      firstRenderDone = true;
-    }
+    renderFrame();
+    needsRefresh = false;
   }
 
   /**
@@ -1289,19 +1246,11 @@ namespace Weather
     detail::needsRefresh = true;
   }
 
-  /**
-   * Sblocca il gate del primo refresh anche se i dati meteo non sono ancora
-   * arrivati (es. timeout WiFi, API OWM irraggiungibile). Il banner verra'
-   * disegnato con i placeholder "--" al posto dei valori mancanti.
-   * No-op se il primo refresh è gia' stato eseguito: chiamate ripetute da
-   * tentativi di connessione successivi non producono refresh inutili.
-   */
-  inline void forceFirstRender()
+  /** Vero quando c'e' qualcosa di nuovo da mostrare: lo legge lo scheduler
+   *  per decidere se il refresh del pannello vale i suoi ~24 s. */
+  inline bool sporco()
   {
-    using namespace detail;
-    if (firstRenderDone) return;
-    needsRefresh    = true;
-    firstRenderDone = true;
+    return detail::needsRefresh;
   }
 }
 

@@ -65,8 +65,9 @@ Lo sketch principale compone uno schermo completo con:
   font come gli eventi calendario. Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
   impostato da `Calendar::initTimezone()` in `setup()`);
-- **finestra OTA** al boot (default 3 min, `OTA_WINDOW_MIN`) via AP WiFi
-  dedicato, per aggiornare il firmware da campo senza smontare il device.
+- **finestra di manutenzione** al boot (default 3 min): aggiornamento del
+  firmware e configurazione dei tempi da browser, sulla rete di casa, con
+  access point di riserva se la STA non sale.
 
 Il convertitore Python con GUI permette di produrre in modo rapido tutti
 i formati supportati (B/N, BWR, BWRY), con preset dimensionali per SOLUM
@@ -125,22 +126,26 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 │   ├── README.md                       # Documentazione dedicata del driver
 │   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
 │   └── drawImage_overloads_it.md       # Idem in italiano
-├── ePaper-weather-dashboard.ino    # Sketch principale: orchestra Weather/Calendar/Ota/Mail
+├── ePaper-weather-dashboard.ino    # Sketch principale: tabella dei task + adattatori verso i moduli
+├── Timings.h                       # Tutti i tempi: default, pavimenti, override runtime su NVS
+├── Scheduler.h                     # Scheduler dei flussi temporizzati + light sleep dinamico
+├── Log.h                           # Macro LOG/LOGV con tag e livello di verbosita'
 ├── Layout.h                        # Dispatcher: include Layout_097c.h o Layout_122c.h via #define DISPLAY_VARIANT_*
 ├── Layout_097c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 9.7" (960w x 672h)
 ├── Layout_122c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 12.2" (960w x 768h)
-├── Env.h                           # Segreti (WiFi, OWM, OTA, OAuth) + posizione GPS
+├── Env.h                           # Segreti (WiFi, OWM, manutenzione, OAuth) + posizione GPS
 ├── Weather.h                       # Fetch OWM + rendering banner meteo (4 blocchi)
 ├── Calendar.h                      # Mese + lista eventi Outlook+Google + TZ Europe/Rome
 ├── Mail.h                          # Lettura ultime N mail Gmail via batch endpoint + UI griglia 2×2 / 2×3
 ├── Indoor.h                        # Sensore BME680 via I2C (BSEC2 ULP, IAQ+T+RH, persistenza NVS)
-├── Ota.h                           # Finestra OTA (OTA_WINDOW_MIN, default 3 min) via AP WiFi dedicato
+├── Maintenance.h                   # Finestra di manutenzione: /update + /config, su rete di casa con AP di riserva
 ├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
 ├── icons.h                         # Bitmap icone meteo indicizzate per icon code OWM
 ├── preview_097c.html               # Anteprima statica HTML del layout SOLUM 9.7" (960w x 672h)
 ├── preview_122c.html               # Idem per il SOLUM 12.2" (960w x 768h)
 ├── preview.svg                     # Anteprima del layout 097c renderizzata da GitHub nel README
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
+├── test/                           # Test su host della logica di Timings.h e Scheduler.h (./test/esegui.sh)
 ├── wallpaper/
 │   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
 ├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
@@ -442,15 +447,11 @@ Scheduler + fetch OpenWeather One Call 3.0 + rendering del banner meteo.
   → sidebar placeholder → `Calendar::draw()` → `drawBanner()`.
 - **Gate del primo refresh** — `render()` blocca il primo refresh finchè
   `slots[0]` (meteo corrente) e `slots[1]` (prima previsione) non sono
-  entrambi validi, per evitare un refresh sprecato (~22 s) col banner
-  a `--` al boot. `Weather::forceFirstRender()` sblocca il gate
-  esplicitamente: è chiamato dal `.ino` (a) subito dopo il primo
-  tentativo di fetch durante la finestra OTA, così il display si
-  aggiorna non appena il meteo scende, e (b) su timeout `wifiOn()` nel
-  ramo normale, così il display parte comunque con placeholder `--`
-  dove mancano dati. Dopo il primo refresh la funzione è un no-op:
-  i refresh successivi tornano a essere pilotati da `needsRefresh`
-  (rotazione background, `markDirty()`, nuovi sample BME680).
+  entrambi validi. Quel gate ora è dello scheduler: il task `display` è
+  dovuto solo quando la rete ha prodotto un esito qualsiasi, anche un
+  fallimento, oppure sono passati `PRIMO_FRAME_ATTESA_MS` dal boot. Così il
+  primo frame arriva sempre, con i dati veri se ci sono e con i placeholder
+  `--` altrimenti.
 
 ### Calendar (`Calendar.h`)
 
@@ -474,9 +475,9 @@ orario sotto). Riga rossa se l'evento cade nella data odierna locale,
 nera altrimenti.
 
 **Sottosistemi di fetch** — `Calendar::Outlook` e `Calendar::Google`,
-namespace gemelli con la stessa API (`begin/pendingFetch/runFetch`),
-ognuno con cadenza configurabile via `CAL_OUTLOOK_FETCH_MIN` /
-`CAL_GOOGLE_FETCH_MIN` (default 20 min, vedi `.ino`). Entrambi usano il flusso OAuth2 **refresh
+namespace gemelli con la stessa API (`begin/runFetch`), ognuno un task
+distinto dello scheduler con la propria cadenza (`outl_min` / `goog_min`,
+default 10 min). Entrambi usano il flusso OAuth2 **refresh
 token**: le credenziali vivono in `Env.h` (`MSGRAPH_*` e `GOOGLE_*`);
 il `TENANT_ID` Microsoft è in `Calendar.h` come `CAL_MSGRAPH_TENANT_ID`
 (non è un segreto). Gli endpoint sono rispettivamente
@@ -507,8 +508,7 @@ Modulo di lettura delle ultime mail della propria casella Gmail con
 | Funzione | Effetto |
 |---|---|
 | `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
-| `Mail::pendingFetch()` | `true` al primo fetch o se sono passati `MAIL_GOOGLE_FETCH_MIN` minuti dall'ultimo. |
-| `Mail::runFetch()` | Esegue il fetch (best-effort). Ritorna `true` se la cache è aggiornata: il `.ino` la usa come gate per `Weather::markDirty()`. |
+| `Mail::runFetch()` | Esegue il fetch (best-effort). Ritorna `true` se la cache è aggiornata; lo scheduler ne fa seguire il ridisegno. Cadenza e ritenti non sono suoi. |
 | `Mail::draw()` | Disegna la griglia mail nell'area `Layout::MAIL_*`. Chiamato da `Weather::renderFrame()` nel paged loop, tra `Calendar::draw` e `drawBanner`. |
 | `Mail::count()` | Numero di mail attualmente in cache (0..`Layout::MAIL_MAX`). |
 | `Mail::at(i)` | Slot `i` della cache (`MailMessage`: `sender`, `subject`, `receivedUtc`, `unread`). |
@@ -558,8 +558,8 @@ l'ultima riga dal banner meteo sottostante.
    split sul boundary; ogni JSON sub-response viene deserializzato con
    filter (`internalDate`, `labelIds`, `payload.headers[name,value]`).
    Una sub-response 4xx/5xx singola non blocca le altre (best-effort).
-5. **Cache aggiornata**: `lastFetchMs = millis()`,
-   `failedAttempts = 0`, log seriale con riassunto delle mail.
+5. **Cache aggiornata** con un commit atomico dal buffer temporaneo, più
+   il log di riepilogo delle mail.
 
 **Cosa viene memorizzato per ogni mail** (struct `Mail::MailMessage`):
 - `sender` (max 64 char) — header `From` parsato: solo l'indirizzo email
@@ -588,25 +588,29 @@ l'ultima riga dal banner meteo sottostante.
 **Resilienza** — `Mail::runFetch()` è best-effort: se WiFi cade durante
 il fetch, se l'inbox è vuota, se il batch HTTP risponde con errore o
 se il budget scade, il flusso software del `.ino` **prosegue normalmente**
-con i fetch calendario successivi. Backoff `MAX_CALENDAR_ATTEMPTS=2` per
-evitare hammering del token endpoint durante la finestra OTA (loop a
-10 ms): dopo 2 tentativi consecutivi falliti il modulo posticipa il
+con i fetch calendario successivi. Il backoff è dello scheduler
+(`FETCH_MAX_TENTATIVI=2`, ritento a 30 s), e serve a evitare l'hammering
+del token endpoint durante la finestra di manutenzione, dove il loop gira a
+10 ms: dopo 2 tentativi consecutivi falliti si posticipa il
 prossimo retry di `MAIL_GOOGLE_FETCH_MIN` minuti.
 
 Garanzie complete di `Mail::runFetch()` per ogni scenario di failure:
 
-| Scenario | Comportamento | Cache | Backoff |
-|---|---|---|---|
-| WiFi giù all'ingresso | Return false immediato | Preservata | No (non è guasto Mail) |
-| Token refresh fallito (rete / auth) | Return false | Preservata | `failedAttempts++`, 2× → `MAIL_GOOGLE_FETCH_MIN` |
-| Budget esaurito (refresh / pre-batch) | Return false | Preservata | `failedAttempts++` → backoff |
-| `messages.list` HTTP 4xx/5xx/timeout | Return false | Preservata | `failedAttempts++` → backoff |
-| `messages.list` HTTP 401 | Return false | Preservata | Reset `cachedGoogleToken` (self-heal al prossimo ciclo) |
-| `messages.list` ritorna 0 mail (inbox vuota) | Return true | **Azzerata** (confermato dal server) | Reset |
-| `messages.batch` HTTP failure / timeout / boundary mancante | Return false | **Preservata** (tmp scartato) | `failedAttempts++` → backoff |
-| `messages.batch` HTTP 200 ma 0 parsati (API broken) | Return false | **Preservata** (sanity guard) | `failedAttempts++` → backoff |
-| `messages.batch` HTTP 200 con M<N parsati | Return true | Aggiornata con M mail | Reset |
-| Tutto OK | Return true | Aggiornata con N mail | Reset |
+Il ritento non è di Mail: `runFetch()` dice solo com'è andata, e lo
+scheduler decide (30 s, poi la cadenza piena dopo due fallimenti).
+
+| Scenario | Ritorno | Cache |
+|---|---|---|
+| WiFi giù | Non viene nemmeno chiamata: lo scheduler pre-controlla la radio e segna `saltato`, **senza spendere il tentativo** | Preservata |
+| Token refresh fallito (rete / auth) | `false` | Preservata |
+| Budget `MAIL_FETCH_BUDGET_MS` esaurito | `false` | Preservata |
+| `messages.list` HTTP 4xx/5xx/timeout | `false` | Preservata |
+| `messages.list` HTTP 401 | `false`, più il reset di `cachedGoogleToken`: il refresh si ripara da solo al ciclo dopo | Preservata |
+| `messages.list` ritorna 0 mail (inbox vuota) | `true` | **Azzerata**: è una risposta valida, non un errore |
+| `messages.batch` failure / timeout / boundary mancante | `false` | **Preservata** (tmp scartato) |
+| `messages.batch` HTTP 200 ma 0 parsati (API cambiata) | `false` | **Preservata** (guardia contro il wipe) |
+| `messages.batch` HTTP 200 con M<N parsati | `true` | Aggiornata con M mail |
+| Tutto OK | `true` | Aggiornata con N mail |
 
 Nessun percorso può propagare un'eccezione o bloccare il `.ino`:
 `runFetch()` ritorna sempre, sempre rapidamente (entro
@@ -652,45 +656,102 @@ Se il sensore non è collegato o l'indirizzo è errato `begin()` logga
 `[BME680] init failed` e il modulo si comporta come un no-op: meteo,
 calendario e display continuano a girare normalmente.
 
-### Ota (`Ota.h`)
+### Maintenance (`Maintenance.h`)
 
-Finestra di aggiornamento firmware di **default 3 minuti** al boot
-(configurabile via `OTA_WINDOW_MIN` nello sketch `.ino`): il device
-espone un AP WiFi dedicato (`OTA_AP_SSID` / `OTA_AP_PASSWORD`) con un
-`WebServer` che monta `HTTPUpdateServer` su `/update`. Il tecnico di
-campo si connette all'AP e carica il `.bin` senza smontare il device.
+Finestra di manutenzione di **default 3 minuti** al boot (durata
+configurabile, `MAINT_WINDOW_MIN`): un `WebServer` con `HTTPUpdateServer`
+su `/update` per l'aggiornamento del firmware, e una pagina `/config` per
+i tempi.
 
-Modalità `WIFI_AP_STA`: mentre l'AP è attiva, la STA si collega in
-parallelo al router di casa in modo che `Weather::runFetch()` possa
-girare anche durante la finestra OTA. Scaduta la finestra, `endNow()`
-spegne AP e WebServer e mette la radio in `WIFI_OFF`, restituendo il
-ciclo normale a light-sleep on-demand.
+**Sta sulla rete di casa, non su un access point dedicato.** A boot la STA
+sale in background; appena ha un indirizzo il server è raggiungibile
+all'IP o come `epd-dashboard.local` (mDNS), quindi ci si arriva dal proprio
+PC senza cambiare WiFi. Se la STA non sale entro `MAINT_STA_TIMEOUT_S`
+(default 15 s) si accende l'AP di emergenza (`OTA_AP_SSID` /
+`OTA_AP_PASSWORD`): è l'unica via di recupero per un pannello a muro con
+credenziali WiFi sbagliate. Il fallback usa `WIFI_AP_STA`, quindi la STA
+continua a tentare e, se sale più tardi, il dispositivo diventa
+raggiungibile su entrambe.
 
-#### Pagina `/update` nativa minimale
+Finché la finestra è aperta la radio è sua: lo scheduler esegue i task
+dovuti quando la STA è connessa, ma non la accende né la spegne. Alla
+chiusura la radio viene consegnata **spenta**.
 
-`Ota.h` serve una pagina HTML **propria** (`detail::UPDATE_PAGE_HTML` in
-`PROGMEM`, ~210 byte) sia su `GET /` che su `GET /update`, sostituendo
-la pagina default di `HTTPUpdateServer` (~600 byte di HTML con CSS
-inline non necessario per il caso d'uso "tecnico di campo, una sola
-volta per device"). I nostri handler sono registrati **prima** di
-`updater.setup()`: il `WebServer` ESP32 matcha i route in ordine FIFO
-(first-match-wins), quindi la nostra pagina vince sul default su
-`GET /update`. Il `POST /update` (logica reale di upload + flash) resta
-gestito da `HTTPUpdateServer`, intoccato — niente conflitto perchè i
-metodi HTTP differiscono.
+La scadenza parte quando il server diventa raggiungibile, non a boot, e
+ogni richiesta la prolunga di 60 s fino a un tetto del doppio della
+finestra: così una pagina aperta a ridosso della fine non porta a un
+upload rifiutato a metà.
 
-Vantaggio rispetto alla soluzione precedente con redirect 301 `/` → `/update`:
+| Route | Metodo | Cosa fa |
+|---|---|---|
+| `/` | GET | stato, indirizzo, secondi residui, collegamenti |
+| `/config` | GET | form dei tempi, con minimo e predefinito accanto a ogni campo |
+| `/config` | POST | valida i campi ricevuti e li salva su NVS |
+| `/config/reset` | POST | cancella gli override e torna ai valori compilati |
+| `/update` | GET / POST | pagina di upload (nostra, ~210 byte) e POST gestito da `HTTPUpdateServer` |
+| `/status` | GET | dump testuale dello scheduler: prossima scadenza, esiti e fallimenti per task, heap libero |
 
-| Pattern di accesso | Prima (301 + default page) | Adesso (pagina nativa) | Saving |
-|---|---|---|---|
-| Client digita `http://192.168.4.1/` | 2 round-trip TCP + ~650 byte | 1 round-trip + ~210 byte | **~10-25 ms + ~440 byte** |
-| Client digita `http://192.168.4.1/update` | 1 round-trip + ~600 byte | 1 round-trip + ~210 byte | **~1 ms + ~390 byte** |
+I parametri si gestiscono quindi su `/config`, non su `/update`, che carica
+solo il `.bin`.
 
-Il guadagno principale viene dall'eliminazione del round-trip extra del
-301 (su AP WiFi locale ~5-20 ms per RTT) e dal payload HTML 65% più
-piccolo. Costo: ~210 byte di flash aggiuntivi per la stringa PROGMEM.
-La pagina default di `HTTPUpdateServer` resta nel codice della libreria
-(non eliminabile senza forkarla) ma non viene mai servita.
+#### Modificare i tempi da riga di comando
+
+I nomi dei campi POST di `/config` sono le **chiavi NVS** elencate in
+[Cadenze configurabili](#cadenze-configurabili-timingsh-modificabili-da-config):
+
+```
+curl -u admin:PASSWORD -d "owm_min=30&mail_min=15" http://epd-dashboard.local/config
+```
+
+Quattro cose che cambiano l'uso pratico:
+
+- **Si può inviare un sottoinsieme.** Il POST itera sui campi noti cercando
+  l'argomento, non sugli argomenti ricevuti: le chiavi assenti restano al
+  valore corrente, e quelle sconosciute vengono ignorate.
+- **La validazione è in blocco.** Si costruisce un candidato completo e lo si
+  applica tutto insieme, perché i vincoli incrociati legano più campi fra
+  loro e applicarli uno alla volta rifiuterebbe combinazioni valide a seconda
+  dell'ordine. Un solo valore fuori limiti fa quindi fallire l'intera POST, e
+  la pagina di esito dice quale vincolo ha ceduto.
+- **Effetto dal giro successivo, senza riavvio.** Lo scheduler non copia le
+  cadenze nella propria tabella: le indirizza con un puntatore a membro e le
+  rilegge a ogni valutazione.
+- **Basic Auth e origine.** `-u` serve solo se `Env.h` definisce
+  `MAINT_HTTP_PASSWORD`. Il controllo CSRF confronta `Origin` con `Host`
+  quando `Origin` c'è, e una richiesta che non lo manda — come quella di curl
+  — passa. Ogni richiesta proroga la finestra di manutenzione.
+
+#### Sicurezza
+
+Sulla rete di casa la pagina è raggiungibile da **chiunque sia sulla LAN**
+per la durata della finestra, e `/update` accetta un firmware qualunque —
+che conterrebbe le credenziali di `Env.h`. Le mitigazioni sono
+proporzionate a un dispositivo domestico, non una difesa completa:
+finestra breve e solo a boot con tetto assoluto; **Basic Auth opzionale**
+(`MAINT_HTTP_USER` / `MAINT_HTTP_PASSWORD` in `Env.h`, da definire), le cui
+credenziali vengono passate anche a `updater.setup()` perché il controllo
+avvenga prima che la partizione venga scritta; controllo dell'origine sulle
+POST. Non ci sono HTTPS né token.
+
+#### Quattro vincoli da non violare
+
+Verificati sul core, ognuno rompe l'upload se ignorato:
+
+1. **Mai chiamare `server.collectHeaders()`**: la chiama `updater.setup()`
+   con `Origin` e `Host` per il controllo CSRF, e una seconda chiamata ne
+   sostituirebbe la lista.
+2. **`action` del form relativa** (`action=/update`), per lo stesso controllo.
+3. **Le credenziali vanno a `updater.setup()`**: il callback di upload
+   scrive la partizione durante il parsing della richiesta, quindi un
+   controllo a valle arriverebbe dopo `Update.end()`.
+4. **Schema di partizioni con due slot applicative** (`No FS 4MB`): con
+   `Huge APP` l'aggiornamento via web non è possibile.
+
+#### Costo
+
+mDNS pesa ~34 KB di flash misurati: si spegne con `MAINT_MDNS 0` e il
+dispositivo resta raggiungibile per indirizzo IP. Con mDNS attivo il
+firmware sta al 67% (9.7") e 69% (12.2") dello slot da 1984 KB.
 
 ---
 
@@ -714,69 +775,39 @@ void setup()
   Calendar::Google::begin();
   Mail::begin();                             // cache mail Gmail (vuota al boot)
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
-  Ota::begin();
+  Maintenance::begin();                      // finestra su rete di casa, AP di riserva
+  Scheduler::begin(TABELLA_TASK, N_TASK, wifiOn, wifiOff);
 }
 
 void loop()
 {
-  if (Ota::windowOpen())
+  if (Maintenance::finestraAperta())
   {
-    Ota::handle();                           // serve /update, non dorme
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      auto need = Weather::pendingFetch();
-      if (need != Weather::FETCH_NONE) Weather::runFetch(need);
-      fetchCinemaImage();                    // gated: 1° boot + daily CINEMA_DAILY_FETCH_HOUR
-      if (Mail::pendingFetch() && Mail::runFetch())  // best-effort, markDirty se cache cambiata
-        Weather::markDirty();
-      // Outlook + Google agganciati al FETCH_CURRENT_WEATHER del meteo
-      if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Outlook::pendingFetch())
-        Calendar::Outlook::runFetch();
-      if ((need & Weather::FETCH_CURRENT_WEATHER) || Calendar::Google::pendingFetch())
-        Calendar::Google::runFetch();
-      Weather::forceFirstRender();            // sblocca il gate dopo il primo fetch
-    }
-    if (Indoor::refresh()) Weather::markDirty();
-    Weather::render();
-    delay(10);
+    Maintenance::servi();                        // macchina a stati + handleClient()
+    Scheduler::giro(Scheduler::Radio::ESTERNA);  // la radio e' della finestra: si usa, non si tocca
+    delay(MAINTENANCE_LOOP_DELAY_MS);            // niente light sleep: il server deve rispondere
     return;
   }
 
-  Ota::endNow();                             // idempotente
-
-  auto need = Weather::pendingFetch();
-  bool needOutlook = Calendar::Outlook::pendingFetch();
-  bool needGoogle  = Calendar::Google::pendingFetch();
-  bool needMail    = Mail::pendingFetch();
-  if (need != Weather::FETCH_NONE || needOutlook || needGoogle || needMail)
-  {
-    if (isActiveHour())                      // WiFi acceso solo 07:00-23:59
-    {
-      if (wifiOn())
-      {
-        if (need != Weather::FETCH_NONE) Weather::runFetch(need);
-        fetchCinemaImage();
-        if (needMail) Mail::runFetch();
-        if ((need & Weather::FETCH_CURRENT_WEATHER) || needOutlook)
-          Calendar::Outlook::runFetch();
-        if ((need & Weather::FETCH_CURRENT_WEATHER) || needGoogle)
-          Calendar::Google::runFetch();
-      }
-      else
-      {
-        Weather::forceFirstRender();         // WiFi timeout: disegna con placeholder "--"
-      }
-      wifiOff();                             // anche su fallimento connessione
-    }
-  }
-  if (Indoor::refresh()) Weather::markDirty();
-  Weather::render();
-
-  // Light sleep DISPLAY_REFRESH_MIN minuti: RAM e stato dei moduli preservati.
-  esp_sleep_enable_timer_wakeup((uint64_t)DISPLAY_REFRESH_MIN * 60ULL * 1000ULL * 1000ULL);
-  esp_light_sleep_start();
+  Maintenance::chiudi();                         // idempotente, consegna la radio spenta
+  Scheduler::giro(Scheduler::Radio::PROPRIA);    // gate radio -> wifiOn -> fetch -> wifiOff -> task locali
+  display.hibernate();
+  Scheduler::dormi();                            // light sleep fino al prossimo evento
 }
 ```
+
+La sequenza non è più scritta in `loop()`: sta nella tabella dei task, che è
+l'unico posto dove l'ordine è definito.
+
+| Task | Radio | Cadenza | Note |
+|---|---|---|---|
+| `meteo` | sì | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta invece di attendere la cadenza piena. |
+| `mail` | sì | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
+| `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. |
+| `outlook` | sì | `outl_min` | |
+| `cinema` | sì | giornaliera, `cine_h` | Ultimo perché è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. |
+| `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
+| `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
 
 Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_097c.h`):
 
@@ -820,26 +851,10 @@ I `#define` in testa allo sketch sono:
   variante di pannello (vedi [Selezione del display](#selezione-del-display)).
   Esattamente uno deve essere definito; il dispatcher `Layout.h` emette
   `#error` altrimenti;
-- **Cadenze operative** (valori in minuti interi, default fra parentesi):
-  - `DISPLAY_REFRESH_MIN` (5) → periodo di light sleep / refresh display;
-  - `WEATHER_FORECAST_FETCH_MIN` (10) → fetch meteo One Call 3.0 (corrente + previsioni in una singola chiamata);
-  - `CAL_OUTLOOK_FETCH_MIN` (10) → fetch calendario Outlook;
-  - `CAL_GOOGLE_FETCH_MIN` (10) → fetch calendario Google;
-  - `MAIL_GOOGLE_FETCH_MIN` (10) → fetch ultime mail Gmail (cadenza separata e indipendente);
-  - `OTA_WINDOW_MIN` (3) → durata finestra OTA al boot (AP WiFi per upload firmware);
-  - `MAX_CALENDAR_ATTEMPTS` (2) → tentativi consecutivi falliti oltre i quali
-    Outlook/Google/Mail "consumano" lo slot e attendono il prossimo
-    `CAL_*_FETCH_MIN` / `MAIL_GOOGLE_FETCH_MIN`.
-- **Trigger orari**:
-  - `WIFI_ACTIVE_HOUR_START` (7) / `WIFI_ACTIVE_HOUR_END` (23) → fascia in
-    cui il WiFi viene acceso per i fetch (07:00–23:59 default). Fuori la
-    radio resta spenta;
-  - `CINEMA_DAILY_FETCH_HOUR` (7) → ora locale del refresh giornaliero del
-    wallpaper cinema (oltre al primo boot).
-- **Timeout**:
-  - `BOOT_WIFI_TIMEOUT_MS` (15000 ms) → se entro questo tempo la STA non
-    è `WL_CONNECTED` durante la finestra OTA, il primo refresh viene
-    sbloccato comunque con i soli dati locali (BME680 + placeholder `--`).
+Le cadenze non stanno più in testa allo sketch: vivono in
+[`Timings.h`](Timings.h), insieme al **pavimento** di ciascuna, e sono
+modificabili a runtime dalla pagina `/config` della finestra di
+manutenzione (persistenza NVS, effetto dal giro successivo senza riavvio).
 
 Il sampling BME680 (BSEC ULP, 5 min) NON è configurabile: è un vincolo
 del profilo BSEC2 fissato in [`Indoor.h`](Indoor.h).
@@ -855,179 +870,128 @@ flusso e i relativi timeout sono pensati per dare priorità all'esperienza
 utente sul campo (tecnici senza competenze IT) rispetto alla "purezza"
 dei dati: meglio una UI parziale subito che una UI completa dopo minuti.
 
-### Costanti configurabili (in testa allo sketch `.ino`)
+### Cadenze configurabili (`Timings.h`, modificabili da `/config`)
 
-| Define | Default | Unità | Effetto |
-|---|---|---|---|
-| `DISPLAY_REFRESH_MIN` | `5` | min | Periodo di light sleep fuori finestra OTA. Massima latenza di propagazione di un nuovo dato (Indoor / Weather / Calendar) sul display. |
-| `WEATHER_FORECAST_FETCH_MIN` | `10` | min | Cadenza chiamata One Call 3.0 (corrente + previsioni in unica request). |
-| `CAL_OUTLOOK_FETCH_MIN` | `10` | min | Cadenza fetch Microsoft Graph `/me/events`. |
-| `CAL_GOOGLE_FETCH_MIN` | `10` | min | Cadenza fetch Google Calendar API v3. |
-| `MAIL_GOOGLE_FETCH_MIN` | `10` | min | Cadenza fetch Gmail API (lettura ultime mail). Indipendente da `CAL_GOOGLE_FETCH_MIN`. |
-| `OTA_WINDOW_MIN` | `3` | min | Durata della finestra OTA al boot (AP attivo + STA in parallelo). |
-| `MAX_CALENDAR_ATTEMPTS` | `2` | tentativi | Tentativi consecutivi falliti per i fetch Outlook/Google/Mail prima di "consumare" lo slot e attendere `CAL_*_FETCH_MIN` / `MAIL_GOOGLE_FETCH_MIN`. Evita hammering OAuth durante OTA. |
-| `WIFI_ACTIVE_HOUR_START` | `7` | ora local | Inizio finestra in cui la radio può essere accesa per i fetch (post-OTA). |
-| `WIFI_ACTIVE_HOUR_END` | `23` | ora local | Fine finestra (inclusiva fino a `23:59`). Fuori da `[START..END]` la radio resta spenta. |
-| `BOOT_WIFI_TIMEOUT_MS` | `15000` | ms | Timeout di boot per la STA: scaduto questo tempo senza `WL_CONNECTED`, il primo refresh viene sbloccato comunque con i soli dati locali. |
-| `CINEMA_DAILY_FETCH_HOUR` | `7` | ora local | Ora del refresh giornaliero del wallpaper cinema. Tipicamente coincide con `WIFI_ACTIVE_HOUR_START` ma è disaccoppiata. |
+Ogni cadenza ha un **pavimento**: il valore sotto il quale interrogare più
+spesso non produce informazione nuova. Un valore fuori dai limiti viene
+rifiutato dalla pagina web e, se arriva comunque da NVS (per esempio perché
+un aggiornamento ha alzato il pavimento), viene riportato entro i limiti al
+boot e la correzione è scritta nel log.
+
+La **chiave** è insieme il nome della voce in NVS e il nome del campo POST
+di `/config`, vedi [Modificare i tempi da riga di
+comando](#modificare-i-tempi-da-riga-di-comando).
+
+| Chiave | Default | Pavimento | Unità | Effetto |
+|---|---|---|---|---|
+| `disp_min` | `5` | `1` | min | Distanza **minima** fra due ridisegni del pannello. Il refresh avviene solo se c'è qualcosa di nuovo da mostrare, mai più spesso di così. Il pavimento reale è la durata di un refresh, 24 s. |
+| `owm_min` | `10` | `10` | min | Cadenza One Call 3.0. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
+| `outl_min` | `10` | `1` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati: il costo è la radio accesa. |
+| `goog_min` | `10` | `1` | min | Cadenza Google Calendar API v3. |
+| `mail_min` | `10` | `1` | min | Cadenza Gmail API. Indipendente dalle altre. |
+| `coal_min` | `2` | `0` | min | Finestra di coalescing: a radio accesa si eseguono anche i task che scadrebbero entro questo margine, così scadenze vicine condividono un'accensione. `0` disattiva. |
+| `maint_min` | `3` | `1` | min | Durata della finestra di manutenzione. |
+| `wifi_h_ini` | `7` | `0` | ora | Inizio della fascia in cui la radio può accendersi. |
+| `wifi_h_fin` | `23` | `23` max | ora | Fine della fascia, inclusiva fino a `23:59`. |
+| `cine_h` | `7` | `0` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi. |
+
+Vincoli incrociati, verificati sia a compile-time sui default sia a runtime
+su ogni modifica: inizio fascia ≤ fine fascia; ora cinema dentro la fascia;
+coalescing minore di ogni cadenza di fetch; refresh display non più breve di
+un refresh fisico.
 
 ### Costanti interne (timeout hard-coded)
 
-| Costante | Valore | Posizione | Effetto |
-|---|---|---|---|
-| `wifiOn()` connect timeout | `15000` ms | `.ino` | Attesa massima `WL_CONNECTED` nel ramo non-OTA prima di rinunciare al fetch. |
-| HTTP cinema | `setTimeout(45000)` ms | `.ino` `fetchCinemaImage` | Timeout HTTP per gestire il cold start del free tier render.com (10–30 s tipici). |
-| Read body cinema per piano | `45000` ms | `.ino` `fetchCinemaImage` | Tempo massimo di lettura per ciascuno dei 3 piani BWRY in stream. |
-| Token margin OAuth | `60` s | `Calendar.h` | Refresh anticipato del token Outlook/Google se mancano meno di 60 s alla scadenza. |
-| BSEC2 ULP sample | `5` min | profilo BSEC fissato in `Indoor.h` | Cadenza di sampling del BME680 in modalità ultra-low-power. **Non configurabile**: vincolato al profilo BSEC. |
+Dipendono da protocollo, libreria o hardware, non da una preferenza: stanno
+in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 
-### Flusso al boot — finestra OTA aperta (primi `OTA_WINDOW_MIN` minuti)
+| Costante | Valore | Effetto |
+|---|---|---|
+| `FETCH_RITENTO_MS` | `30000` ms | Distanza minima fra due tentativi dello stesso slot. È ciò che impedisce alla finestra di manutenzione, dove il loop gira ogni ~10 ms, di ripetere cento volte al secondo un tentativo fallito. |
+| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena. `0` in tabella significa politica pessimista: lo slot è speso prima ancora di eseguire. |
+| `WIFI_CONNECT_TIMEOUT_MS` | `15000` ms | Attesa massima di `WL_CONNECTED` in `wifiOn()`. |
+| `WIFI_RITENTO_MS` | `300000` ms | Dopo un tentativo di connessione fallito nessun task di rete riprova prima di questo tempo. |
+| `PRIMO_FRAME_ATTESA_MS` | `15000` ms | Tempo massimo dal boot entro cui il primo frame viene disegnato comunque, con i placeholder `--`. |
+| `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
+| `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake TLS ha il suo timeout separato. |
+| `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
+| `SLEEP_MIN_S` / `SLEEP_MAX_S` | `30` / `300` s | Pavimento e tetto del light sleep dinamico. Il tetto è il periodo ULP del sensore. |
+| `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). |
+| `BSEC_STATE_SAVE_INTERVAL_MS` | `6` h | Persistenza dello stato di calibrazione BSEC in NVS. |
+| `MAINT_STA_TIMEOUT_S` | `15` s | Attesa della rete di casa prima di ripiegare sull'AP di emergenza. |
+| Token margin OAuth | `60` s | `Calendar.h`: refresh anticipato del token Outlook/Google. |
 
-`setup()` apre la radio in modalità `WIFI_AP_STA` (AP per upload firmware,
-STA verso il router di casa) e segna `g_boot_start_ms = millis()`. Da qui
-il `loop()` gira ogni ~10 ms (no light sleep, altrimenti il `WebServer`
-non risponderebbe).
+### Flusso al boot — finestra di manutenzione aperta
 
-I cinque casi possibili per il **primo refresh** sono:
-
-#### Caso 1 — Tutto disponibile (30s)
-
-```
-t=0       setup() → AP+STA up, OTA window aperta
-t≈2-5s    STA WL_CONNECTED
-          ├─ Weather::runFetch (One Call 3.0) → slots[0..3] valid
-          ├─ fetchCinemaImage (~5-30 s) → buffer RAM/PSRAM popolati
-          ├─ Mail::runFetch (list + batch Gmail) → cache mail valid
-          ├─ Calendar::Outlook::runFetch (1° tentativo) → outlookEvents valid
-          ├─ Calendar::Google::runFetch (1° tentativo) → googleEvents valid
-          └─ Weather::forceFirstRender() → sblocca gate
-t+~30s    Weather::render() → primo refresh display (~22 s) con tutti i dati
-```
-
-#### Caso 2 — WiFi OK, calendari non configurati / token errato
+`setup()` carica le cadenze da NVS (`Timings::begin()`), inizializza i
+moduli, avvia la STA e il server (`Maintenance::begin()`) e registra la
+tabella dei task. Da qui il `loop()` gira ogni ~10 ms, senza light sleep,
+altrimenti il `WebServer` non risponderebbe.
 
 ```
-t≈2-5s    WL_CONNECTED
-          ├─ Weather OK
-          ├─ Cinema OK (o fallback apple PROGMEM se render.com giù)
-          ├─ Mail OK (se refresh_token Google ha entrambi gli scope)
-          │   oppure FAIL se ha solo calendar.readonly → cache vuota
-          ├─ Outlook runFetch fallisce (1° tentativo)  → log seriale
-          ├─ Google runFetch fallisce (1° tentativo)  → log seriale
-          └─ forceFirstRender() → sblocca gate
-t+~30s    primo refresh: meteo OK + cinema + 5 trattini "--" calendario
-t+10ms    iterazione successiva del loop OTA:
-          ├─ Outlook 2° tentativo → fail → "consumed" (silenzio per CAL_OUTLOOK_FETCH_MIN)
-          └─ Google 2° tentativo → fail → "consumed"
+t=0       setup(): Timings da NVS, moduli, STA in risalita (non bloccante)
+t<=15s    STA connessa      -> server sulla rete di casa + mDNS
+          oppure timeout    -> access point di emergenza (la STA continua a tentare)
+ogni giro Maintenance::servi()                 // macchina a stati + handleClient()
+          Scheduler::giro(ESTERNA)             // task dovuti, se la STA e' su
+            fase rete:  ping cinema -> meteo -> mail -> google -> outlook -> cinema
+            fase locale: bsec -> display
 ```
 
-Quando le credenziali tornano valide, al prossimo trigger
-(`CAL_*_FETCH_MIN` scaduto) il counter si azzera al primo successo e
-gli eventi vengono visualizzati senza reboot.
+Il **primo frame** non aspetta più che i dati siano validi: il task
+`display` è dovuto appena c'è qualcosa da mostrare **e** la rete ha dato un
+esito qualsiasi — anche un fallimento — oppure sono passati
+`PRIMO_FRAME_ATTESA_MS` dal boot. Con la rete a posto il frame arriva in
+pochi secondi con i dati veri; senza rete arriva comunque entro 15 s con i
+placeholder `--` e il wallpaper PROGMEM.
 
-#### Caso 3 — WiFi OK, endpoint cinema non disponibile
+### Flusso a regime — finestra chiusa
 
-```
-t≈2-5s    WL_CONNECTED
-          ├─ Weather OK
-          ├─ fetchCinemaImage → HTTP status != 200 oppure timeout 45 s
-          │   → freeCinemaBuffers() + g_cinema_desc = &img_apple_bwry_desc
-          ├─ Mail OK
-          ├─ Outlook OK
-          ├─ Google OK
-          └─ forceFirstRender()
-t+~50s    primo refresh: meteo + apple PROGMEM + calendario completo + mail
-          (next retry cinema: domani alle CINEMA_DAILY_FETCH_HOUR oppure reboot)
-```
-
-#### Caso 4 — WiFi OK, server Gmail irraggiungibile / refresh_token senza scope gmail.readonly
+`Maintenance::chiudi()` consegna la radio spenta. Il `loop()` diventa:
 
 ```
-t≈2-5s    WL_CONNECTED
-          ├─ Weather OK
-          ├─ Cinema OK
-          ├─ Mail::runFetch fallisce (1° tentativo)
-          │   ├─ refresh_token KO  → log "[Mail] refresh token KO"
-          │   ├─ messages.list 401 → log + reset cachedGoogleToken
-          │   └─ messages.list 5xx / timeout → log
-          │   cache mail vuota (primo boot, nessuno snapshot precedente)
-          ├─ Outlook OK
-          ├─ Google OK
-          └─ forceFirstRender()
-t+~30s    primo refresh: meteo + cinema + calendari completi; area mail
-          mostra 4/6 celle con "--" (cache vuota); fail visibile a Serial
-t+10ms    iterazione successiva del loop OTA:
-          └─ Mail 2° tentativo → fail → "consumed" (silenzio per MAIL_GOOGLE_FETCH_MIN)
+wake      Scheduler::giro(PROPRIA)
+            serve la radio?   (scadenza STRETTA di un task di rete, e fascia oraria)
+            si -> wifiOn() -> esegue i task scaduti O in scadenza entro coal_min -> wifiOff()
+            poi sempre: fase locale (bsec, display)
+          display.hibernate()
+          Scheduler::dormi()   // fino al prossimo evento, fra SLEEP_MIN_S e SLEEP_MAX_S
 ```
 
-Il fallimento di Mail è completamente isolato dagli altri moduli: meteo,
-cinema, Outlook e Google Calendar partono lo stesso. Una volta corretto
-il refresh_token (riemesso con scope unificati), il prossimo trigger
-`MAIL_GOOGLE_FETCH_MIN` riporta Mail al primo successo senza reboot.
+Due proprietà che il tick fisso non aveva:
 
-#### Caso 5 — Nessuna connessione internet
+- **le cadenze sono indipendenti**. Con `mail_min` a 3 e `owm_min` a 10 il
+  dispositivo si sveglia a 3, 6, 9, 12… e il meteo entra al minuto 9,
+  anticipato di uno dal coalescing per condividere l'accensione con la mail.
+  Il refresh del pannello ha il suo ritmo (`disp_min`) e non è più legato al
+  periodo di sleep;
+- **di notte** (fuori dalla fascia) i task di rete non contribuiscono al
+  calcolo del risveglio: il dispositivo si sveglia solo per il campione
+  BME680 ogni 300 s, e ridisegna solo se quel campione ha cambiato qualcosa.
 
-```
-t=0       setup()
-t=0..15s  STA tentativi associazione, mai WL_CONNECTED
-t=15s     (millis() - g_boot_start_ms) >= BOOT_WIFI_TIMEOUT_MS
-          → forceFirstRender() sul ramo `else if`
-t≈37s     primo refresh display: solo dati indoor BME680 (se almeno
-          1 sample ULP è arrivato; altrimenti tutti placeholder "--")
-          + fallback apple PROGMEM + 5 trattini "--" calendario + cache mail vuota
-loop      la STA continua a tentare in background; se sale durante
-          OTA window il ramo "if WL_CONNECTED" riprende ed esegue i
-          fetch → markDirty → secondo refresh con i dati arrivati
-```
-
-### Flusso a regime — finestra OTA chiusa
-
-Scaduti `OTA_WINDOW_MIN` minuti, `Ota::endNow()` spegne AP e radio. Il
-`loop()` passa al regime energetico: light sleep `DISPLAY_REFRESH_MIN`
-minuti fra un wake e l'altro, radio accesa solo poco prima del fetch e
-spenta subito dopo.
-
-#### Wake up dentro `[WIFI_ACTIVE_HOUR_START..END]`
+Ogni esito è loggato con durata e prossima scadenza:
 
 ```
-wake      Weather/Outlook/Google/Mail::pendingFetch() valutati
-          if (almeno uno è dovuto):
-            wifiOn() (timeout 15 s)
-            ├─ se WL_CONNECTED: fetch sequenziali nell'ordine:
-            │    weather → cinema → mail → outlook → google
-            │    markDirty su successo (anche per Mail, ora che la UI esiste)
-            └─ se timeout: forceFirstRender() (no-op se già fatto)
-            wifiOff() (anche su fallimento, radio sempre spenta)
-          Indoor::refresh() → markDirty se nuovo sample ULP
-          Weather::render() (refresh display ~22 s solo se needsRefresh)
-sleep     esp_light_sleep_start() per DISPLAY_REFRESH_MIN minuti
+[sched] meteo: ok in 1240 ms, prossimo fra 600 s
+[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento fra 30 s
+[sched] outlook: saltato, radio non connessa (slot intatto)
+[sched] cinema: ok in 4230 ms, prossimo fra 23 h
+[sched] sleep 287 s (prossimo: bsec)
 ```
-
-#### Wake up fuori `[WIFI_ACTIVE_HOUR_START..END]` (notte)
-
-```
-wake      isActiveHour() == false → ramo wifiOn saltato del tutto
-          Indoor::refresh() → eventuale markDirty
-          Weather::render() (refresh ~22 s solo se markDirty)
-sleep     light sleep DISPLAY_REFRESH_MIN minuti
-```
-
-In pratica di notte il display si aggiorna solo quando arriva un nuovo
-sample BME680 (ogni 5 min). Le cache di meteo e calendari restano
-"frozen" all'ultimo fetch riuscito prima delle 23:59.
 
 ### Cosa succede se un fetch fallisce a regime
 
 | Tipo di fallimento | Comportamento | Quando si riprova |
 |---|---|---|
-| Weather (OWM 401/429/timeout) | Cache meteo invariata, banner mantiene ultimi valori validi | Prossimo wake con `WEATHER_FORECAST_FETCH_MIN` scaduto |
-| Outlook / Google (1° fail) | Counter `outlookFailedAttempts++`, log seriale, eventi cache invariati | Iterazione successiva del loop |
-| Outlook / Google (2° fail) | Slot "consumed", `lastFetchMs = millis()`, counter reset, log "soglia raggiunta" | Solo dopo `CAL_*_FETCH_MIN` (default 10 min) |
-| Mail Gmail (refresh KO / list 5xx / batch fail / boundary corrotto / 0 parsati) | `Mail::failedAttempts++`, **cache mail preservata** (commit atomico via buffer tmp), log seriale | Iterazione successiva del loop; dopo 2× fail consumo `MAIL_GOOGLE_FETCH_MIN` (default 10 min) |
-| Mail Gmail (list 401) | Reset `cachedGoogleToken` condiviso → self-heal del refresh al prossimo ciclo, cache mail preservata | Iterazione successiva del loop |
-| Mail Gmail (list ritorna 0 mail) | Cache **azzerata** (confermato dal server) | `MAIL_GOOGLE_FETCH_MIN` |
-| Mail Gmail (WiFi caduto durante runFetch) | Return false immediato, cache preservata, **nessun** incremento failedAttempts | Iterazione successiva (sarà il `.ino` a decidere se accendere WiFi) |
-| Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Domani alle `CINEMA_DAILY_FETCH_HOUR`, oppure al reboot |
+| Qualunque fetch, 1° fallimento | Cache del modulo invariata, log con durata e tentativo | Fra `FETCH_RITENTO_MS` (30 s) |
+| Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task |
+| Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame viene comunque ridisegnato | Fra 30 s |
+| Radio caduta a giro iniziato | Esito `saltato`: **lo slot resta intatto e il tentativo non viene speso**, perché è un guasto a monte | Al primo giro con la radio su |
+| `wifiOn()` fallito | Nessun task di rete riprova per `WIFI_RITENTO_MS` (5 min): evita di pagare 15 s di attesa a ogni risveglio | Fra 5 min |
+| Mail (list 401) | Reset del `cachedGoogleToken` condiviso → il refresh si ripara da solo, cache preservata | Fra 30 s |
+| Mail (list ritorna 0 mail) | Cache **azzerata**: è una risposta valida, non un errore | Alla cadenza piena |
+| Calendario senza eventi futuri | Cache azzerata e ridisegno richiesto: è un successo, non un errore | Alla cadenza piena |
+| Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
 | BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 
 ### Matrice di degradazione per scenario di connettività
@@ -1041,7 +1005,7 @@ con i dati disponibili.
 |---|---|---|---|---|---|---|
 | Tutto disponibile | OK | OK | Sfondo HTTP | Eventi visibili | Cache popolata | Tutti i campi reali, refresh ogni `DISPLAY_REFRESH_MIN` |
 | Solo Internet down (DNS / gateway down) | OK | Cache precedente o `--` | Fallback `img_apple_bwry` PROGMEM | Cache precedente o `--` | Cache preservata | Display funzionante, log seriale con i fail |
-| Solo WiFi giù (boot iniziale, mai connesso) | OK (dopo primo ULP sample 5 min) | `--` | Fallback PROGMEM | `--` | Griglia con placeholder `--` | Refresh dopo `BOOT_WIFI_TIMEOUT_MS=15s` con i soli dati locali |
+| Solo WiFi giù (boot iniziale, mai connesso) | OK (dopo primo ULP sample 5 min) | `--` | Fallback PROGMEM | `--` | Griglia con placeholder `--` | Refresh dopo `PRIMO_FRAME_ATTESA_MS=15s` con i soli dati locali |
 | WiFi OK, server **meteo OWM** down (`401`/`429`/timeout) | OK | Cache invariata (ultimo snapshot) | OK | OK | OK | Banner meteo mostra valori storici fino al prossimo successo |
 | WiFi OK, server **Microsoft Graph** down (Outlook 5xx/timeout) | OK | OK | OK | Outlook cache invariata; Google OK | OK | Lista eventi mostra solo i Google + cache Outlook precedente |
 | WiFi OK, server **Google Calendar** down (5xx/timeout) | OK | OK | OK | Outlook OK; Google cache invariata | Possibile fail (stesso refresh_token Google) → backoff | Lista eventi mostra solo Outlook + cache Google precedente |
@@ -1115,30 +1079,31 @@ La fascia tra fine wallpaper e banner meteo (y=`CINEMA_H`..`BANNER_Y`:
    ripuntato al descrittore dinamico che indica i buffer RAM. Da quel
    momento `drawTestBackground()` mostra l'immagine cinema a ogni
    refresh del display, senza ulteriori chiamate HTTP.
-6. **Flag di trigger**: `g_cinema_attempted = true` + `g_cinema_last_fetch_day`
-   vengono aggiornati subito dopo il check WiFi (anche su fallimento),
-   per evitare retry in loop.
+6. **Esito allo scheduler**: la funzione ritorna `true`/`false` e basta.
+   Quando ritentare, e quando smettere, lo decide lo scheduler.
 
-### Trigger giornaliero (refresh CINEMA_DAILY_FETCH_HOUR local, default 07:00)
+### Trigger giornaliero (`cine_h`, default 07:00)
 
-Oltre al primo boot, il fetch si ri-attiva **una volta al giorno** al
-primo ciclo WiFi dell'hour `CINEMA_DAILY_FETCH_HOUR` local (Europe/Rome,
-default `7`, allineato a `WIFI_ACTIVE_HOUR_START`): prima connessione
-utile della mattina. Al trigger i buffer vecchi vengono liberati,
+Oltre al primo boot, il fetch si ri-attiva **una volta al giorno** alla
+prima finestra radio dell'ora `cine_h` locale (Europe/Rome, default `7`,
+allineato all'inizio della fascia WiFi): prima connessione utile della
+mattina. Al trigger i buffer vecchi vengono liberati,
 `g_cinema_desc` torna temporaneamente al fallback PROGMEM durante il
 download, e se il fetch va a buon fine vengono swappati i nuovi buffer
 con la locandina del prossimo martedì.
 
-Helper che governa il gate: `shouldFetchCinema()` in
-[ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Condizioni:
-primo boot (sempre) OR `tm_hour == CINEMA_DAILY_FETCH_HOUR` AND `t.tm_yday != g_cinema_last_fetch_day`.
+Il gate è la cadenza `GIORNALIERA` del task `cinema`: primo boot (sempre),
+poi `tm_hour >= cine_h` con `tm_yday` diverso dall'ultimo giorno servito. Il
+confronto è `>=` e non `==`, così se all'ora prevista la radio era giù il
+fetch si recupera alla prima occasione utile della stessa giornata. Senza
+orologio sincronizzato la cadenza giornaliera resta sospesa.
 
 **Cold-start mitigation dal firmware.** Render.com free tier dorme dopo
 15 min di inattività, e il boot successivo costa 22,4 s misurati. Il
 pre-warm lo fa il dispositivo, che è l'unico a sapere quando serve:
 `prewarmCinemaServer()` apre il giro di fetch con una GET a `/health` e
-ne abbandona la risposta, poi `runNetworkFetches()` esegue meteo, mail e
-calendari e scarica l'immagine **per ultima**. Render fa così il proprio
+ne abbandona la risposta; il giro esegue poi meteo, mail e calendari e
+scarica l'immagine **per ultima**. Render fa così il proprio
 boot mentre l'ESP32 è occupato altrove, e il fetch cinema lo trova caldo
 o quasi.
 
@@ -1264,10 +1229,14 @@ Windows) oppure `python epd_image_converter.pyw`.
    verificare che il `#define DISPLAY_VARIANT_*` in testa allo sketch
    corrisponda al pannello collegato (vedi sezione
    [Selezione del display](#selezione-del-display)).
-3. Se la flash non basta a contenere immagini grandi in PROGMEM (es.
-   wallpaper 960w × 672h 4-colori = ~240 KB per i 3 canali), selezionare
-   uno schema partizione più grande nel menu *Tools → Partition Scheme*,
-   per esempio "Huge APP (3MB No OTA)".
+3. Schema partizione: **"No FS 4MB (2MB APP x2)"** nel menu *Tools →
+   Partition Scheme*. Su flash da 4 MB è quello che lascia più spazio
+   all'applicazione (1984 KB) fra gli schemi con **due slot OTA**, che
+   servono all'aggiornamento firmware via web. Il firmware sta oggi a
+   ~1,3 MB, quindi il margine è di circa 650 KB.
+
+   Non usare "Huge APP (3MB No OTA)": ha una sola slot applicativa e
+   l'aggiornamento via web fallisce.
 4. Compilare e flashare. Serial monitor a `115200 baud`.
 
 ---

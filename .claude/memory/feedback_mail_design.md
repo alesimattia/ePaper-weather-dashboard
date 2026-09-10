@@ -14,11 +14,12 @@ connessione wifi il flusso del software deve continuare regolarmente
 senza interruzioni". Le mail sono utili ma secondarie rispetto a
 meteo/calendario.
 
-**How to apply:** nel `.ino`, il return value di `Mail::runFetch()` va
-usato SOLO per decidere `Weather::markDirty()` (la UI mail va ridisegnata
-solo se la cache è cambiata). NON propagare l'errore al flusso:
-nessun `return`/`goto` su fail. Mail::runFetch() può fallire silenziosamente:
-la cache resta com'era e i fetch calendario partono comunque.
+**How to apply:** il return value di `Mail::runFetch()` serve SOLO allo
+scheduler per decidere il ridisegno (`dopo = marcaSuOk`) e per contare il
+tentativo. NON propagare l'errore al flusso: il runner non interrompe mai
+il ciclo, quindi la garanzia è strutturale e non va reintrodotta a mano.
+`Mail::runFetch()` può fallire silenziosamente: la cache resta com'era e i
+task successivi partono comunque.
 
 **UPDATE (2026-05): La UI mail ora ESISTE.** Originariamente l'utente disse
 "per ora non voglio modificare l'interfaccia grafica ma devo solo scaricare
@@ -35,10 +36,11 @@ dopo un `Mail::runFetch()` riuscito.
 fatto subito prima dei calendari"). Le mail vengono percepite come
 informazione a più alta priorità del calendario.
 
-**How to apply:** in entrambi i rami del `loop()` (OTA aperta + on-demand),
-`Mail::pendingFetch()` / `Mail::runFetch()` va piazzato dopo
-`fetchCinemaImage()` e PRIMA dei due `Calendar::*::runFetch()`. Se si
-inverte l'ordine va validato con l'utente.
+**How to apply:** l'ordine è quello delle righe di `TABELLA_TASK` nel
+`.ino`: `mail` sta prima di `google` e `outlook`. C'è anche una ragione
+tecnica oltre alla preferenza dell'utente — mail e Google condividono la
+cache del token OAuth, e chi gira per primo paga il refresh. Se si inverte
+va validato con l'utente.
 
 **3. Subject delle mail cap a 60 caratteri (`MAIL_SUBJECT_LEN = 60`).**
 
@@ -56,8 +58,11 @@ MAIL_GOOGLE_FETCH_MIN sia configurabile separatamente rispetto al tempo
 di refresh del calendario". Anche se nel `.ino` il valore corrente è
 identico (10), il knob deve restare indipendente per future regolazioni.
 
-**How to apply:** non collassare i due `#define` in un alias, anche se
-sembra DRY. L'indipendenza concettuale è un requisito.
+**How to apply:** oggi sono due campi distinti di `Timings::Valori`
+(`mail_min` e `goog_min`), entrambi regolabili da `/config`. Non
+collassarli in un alias, anche se sembra DRY: l'indipendenza concettuale è
+un requisito, e con lo sleep dinamico è anche realizzabile davvero (prima
+il tick fisso da 5 min rendeva impossibile una cadenza di 3).
 
 **5. Numero minimo di secret in `Env_template.h`.**
 

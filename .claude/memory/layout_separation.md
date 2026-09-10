@@ -34,6 +34,6 @@ Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960w x 672h e SOLUM 12.2" 9
 
 **Cosa NON sta nei Layout_*.h:**
 - `hspi.begin(13,12,14,15)` e `selectSPI(hspi, SPISettings(10MHz))`: board-level (Waveshare ESP32 Driver Board), restano nel `.ino`. Eccezione: `Layout_122c.h` passa 13/12/14 anche dentro `makePanel()`, perchè quel driver apre il bus da sè in `init()`.
-- Cadenze fetch (`WEATHER_FORECAST_FETCH_MIN`, `CAL_*_FETCH_MIN`, `MAIL_GOOGLE_FETCH_MIN`, `OTA_WINDOW_MIN`, `BOOT_WIFI_TIMEOUT_MS`, `WIFI_ACTIVE_HOUR_*`, `CINEMA_DAILY_FETCH_HOUR`): timing/orchestrazione, non layout.
-- `Indoor.h`/`Mail.h`/`Ota.h`: solo logica, nessuna coord — invariati dal refactor.
+- Cadenze e timeout: stanno tutti in `Timings.h`, non nei layout e non più in testa al `.ino`. Sono timing/orchestrazione, non layout — vedi [[timings_nvs_config]].
+- `Indoor.h`/`Mail.h`/`Maintenance.h`: solo logica, nessuna coordinata.
 - `Graphics::drawFieldsetRect`: già parametrico, layout-agnostic.

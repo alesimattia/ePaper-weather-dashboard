@@ -72,7 +72,7 @@ La RAM globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_cons
 - `Env.h` è gitignored e obbligatorio per compilare; quello attuale ha solo placeholder, quindi il
   firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
 
-**Entrambe le varianti compilano** (FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`):
+**Entrambe le varianti compilano** (FQBN `esp32:esp32:esp32`, `PartitionScheme=no_fs`). Lo schema **deve** essere `no_fs`: è quello con la slot applicativa più grande (1984 KB) fra quelli con **due** slot OTA, e le due slot servono all'aggiornamento via web. `huge_app` ne ha una sola e lo romperebbe:
 
 | variante | flash | RAM globali |
 |---|---|---|

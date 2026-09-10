@@ -1,38 +1,33 @@
 ---
-name: Catena di timeout fetch (WiFi → HTTP → OTA window)
-description: Timeout incrociati firmware ↔ render.com, pre-warm dal firmware, budget worst-case del fetch cinema
+name: Catena dei tempi (scheduler, sleep dinamico, pavimenti)
+description: Chi possiede il timing, come si calcola il risveglio, quali sono i limiti inferiori di ogni flusso e i timeout incrociati del fetch cinema
 type: project
 ---
 
-I timeout sono distribuiti tra firmware e infra; vanno ragionati insieme:
+Tutti i tempi stanno in `Timings.h`; il **quando** lo decide `Scheduler.h`, mai i moduli. Vedi [[scheduler_task_table]] per la struttura della tabella e [[timings_nvs_config]] per gli override a runtime.
 
-**Firmware (`ePaper-weather-dashboard.ino`):**
-- `WIFI_CONNECT_TIMEOUT_MS` = 15s, usato dal loop di attesa di `wifiOn()`. `BOOT_WIFI_TIMEOUT_MS` vale lo stesso ma misura il tempo dal boot per sbloccare il primo refresh: due costanti, valore uguale di proposito.
-- `http.setTimeout(45000)` per il fetch cinema (45s).
-- `CINEMA_PREWARM_TIMEOUT_MS` = 1500 ms: attesa della RISPOSTA del ping `/health`. Il timeout di connessione resta il default di HTTPClient (5s) e copre TCP + handshake TLS, senza il quale la richiesta non parte.
-- `OTA_WINDOW_MIN = 3` → finestra OTA da 180s al boot.
+**Pavimenti — sotto questi valori interrogare non produce informazione nuova:**
 
-**Render.com free tier:**
-- Sleep dopo 15 min idle.
-- Cold start **misurato 22,4s**, quasi tutto negli import di numpy/Pillow/lxml/FastAPI.
-- Dopo il boot `/cinema/arduino` risponde in **0,5s**: le cache su disco (`/tmp/movieland_scraper`, `/tmp/posters`) sopravvivono al suspend, quindi a costare è il boot del processo, non la pipeline di scraping e rendering. È il motivo per cui pingare `/health` basta e non serve pingare l'endpoint reale.
+| Flusso | Pavimento | Natura |
+|---|---|---|
+| BME680 | 300 s (`BSEC_SAMPLE_RATE_ULP`) | hard: è un *modo* della libreria, non un intervallo. Gli altri sono LP 3 s e CONT 1 s |
+| Meteo OWM | 10 min (cadenza dei dati); quota 1000/giorno = 1,44 min | soft sui dati, hard sulla quota |
+| Mail, Google, Outlook | nessuno sui dati | il costo è la radio: 5-10 s per fetch |
+| Cinema | `CACHE_TTL_SECONDS=3600` in produzione; render dorme a 15 min; ETag/304 | hard lato server. Il palinsesto cambia a giorni ⇒ cadenza **giornaliera**, non periodica |
+| Display | 24 s (refresh pieno) | hard fisico |
+| Radio | 2-15 s per accensione | costo |
 
-**Pre-warm dal firmware (`prewarmCinemaServer()`):**
-- Manda una GET a `CINEMA_PREWARM_URL` (`/health`) e ne abbandona la risposta: su TLS l'handshake va completato perché la richiesta raggiunga il router di render, ma i 22s di boot no. Esito nominale `HTTPC_ERROR_READ_TIMEOUT` (-11); un 200 rapido significa server già caldo.
-- Costo ~2-3s, gatato dagli stessi predicati di `fetchCinemaImage()`: parte solo nei giri in cui l'immagine viene davvero scaricata. Senza quel gate render resterebbe sempre sveglio e brucerebbe le 750 h/mese di ore-istanza.
-- Ordine di `runNetworkFetches()`: ping → meteo → mail → Google → Outlook → cinema. I fetch intermedi valgono 8-20s (tipico ~12s) e sono la copertura del boot; il cinema, ultimo, trova il server caldo o quasi.
+**Sleep dinamico:** `Scheduler::dormi()` dorme fino al minimo delle scadenze effettive, clampato in `[SLEEP_MIN_S 30, SLEEP_MAX_S 300]`. Il tetto **è** il periodo ULP: più alto perderebbe campioni, più basso sveglierebbe a vuoto. Il pavimento impedisce che un errore di calcolo produca un ciclo di risvegli.
 
-**Worst case dedotto:**
-- Attesa residua al fetch cinema: da ~0s (copertura sufficiente) a ~15s se il boot è lento e i fetch intermedi rapidi, contro i 22s pieni senza pre-warm.
-- Boot freddo con pre-warm inefficace: 15s (WiFi) + fino a 22s (cold start HTTP) + ~2-3s (download 69 KB sul 097c, ~77 KB sul 122c) ≈ 40s di wall-clock.
-- `http.setTimeout(45000)` copre solo la fase HTTP, non i 15s di WiFi: il margine regge il cold start misurato, e il pre-warm serve a ridurre l'attesa, non a rientrare nel timeout.
-- OTA window 180s contiene anche il caso freddo (fetch cinema + meteo + 2 calendari + mail).
+**Timeout del fetch cinema, che è il percorso più lungo:**
+- `WIFI_CONNECT_TIMEOUT_MS` 15 s (attesa di `WL_CONNECTED` in `wifiOn()`).
+- `CINEMA_HTTP_TIMEOUT_MS` 45 s, sia sul GET sia sulla lettura per piano.
+- `CINEMA_PREWARM_TIMEOUT_MS` 1500 ms: è l'attesa della **risposta** al ping `/health`, non della connessione. L'handshake TLS ha il suo timeout separato (default HTTPClient, 5 s) e **non va accorciato**, altrimenti su rete lenta la richiesta non parte affatto.
+- Cold start render.com **misurato 22,4 s**; dopo il boot `/cinema/arduino` risponde in **0,54 s**, perché le cache su disco sopravvivono al suspend. È il motivo per cui pingare `/health` basta: a costare è il boot del processo, non la pipeline di rendering.
+- Ordine del giro: ping → meteo → mail → Google → Outlook → cinema. I fetch intermedi valgono 8-20 s e sono la copertura di quel boot.
 
-**Budget durante OTA:**
-- `loop()` gira con `delay(10)` durante OTA window per `WebServer::handleClient()`. Un fetch cinema bloccante da 45s congela l'AP per 45s: utenti che provano `/update` durante quel periodo vedono timeout dal browser. Accettato perchè la finestra OTA è rara e l'utente se ne accorge. Il ping aggiunge ~2-3s allo stesso blocco.
+**Worst case:** 15 s (WiFi) + fino a 22 s (cold start) + 2-3 s (download) ≈ 40 s, dentro i 45 s del timeout. Il pre-warm riduce l'attesa, non elimina il bisogno di margine.
 
-**Conseguenza per modifiche future:**
-- Spostare il daily fetch da 07:00 ad altra ora richiede aggiornamento sincrono di:
-  1. `CINEMA_DAILY_FETCH_HOUR` nel firmware (`shouldFetchCinema()` confronta `tm_hour` con questa costante, e lo stesso predicato gatea il ping).
-  2. `WIFI_ACTIVE_HOUR_START`/`_END` (la nuova ora deve cadere dentro la finestra WiFi).
-- Non c'è più nessun scheduler esterno da tenere allineato: il pre-warm parte dal consumatore, quindi è immune a DST e a deriva di cron.
+**Durante la finestra di manutenzione** `loop()` gira con `delay(10)` per `WebServer::handleClient()`: un fetch cinema bloccante congela il server per la sua durata. Accettato, ma è il motivo per cui esiste `FETCH_RITENTO_MS` (30 s), che impedisce a un tentativo appena fallito di ripetersi cento volte al secondo.
+
+**Se sposti il fetch giornaliero del cinema** basta cambiare `cine_h` (da `/config` o in `Timings.h`): una `static_assert` e il controllo a runtime impongono che resti dentro la fascia `wifi_h_ini..wifi_h_fin`. Non c'è più nessuno scheduler esterno da tenere allineato — vedi [[github_cron_inaffidabile]].

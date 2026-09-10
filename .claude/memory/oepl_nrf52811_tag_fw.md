@@ -84,3 +84,14 @@ nessuna variante BWRY per la 9.7").
 `case 0x19` è ora condiviso con `case 0x0A` (11.6") e scrive `0x45 = 00 00 7F 02`, cioè finestra Y
 fino a **639** invece di 671, mentre il MUX resta `0x01 = 9F 02` (671). Il resto coincide con la
 sequenza di init di fabbrica già documentata in [[gxepd2_097c_driver]], `0x21 = 08 00` compreso.
+
+Tre dettagli della sequenza che si perdono se si legge solo la lista dei comandi:
+
+- **il reset non è un impulso, è un ciclo di ritentativi**. `epdReset()` in `epd_spi.cpp` parte con
+  impulsi da **10 ms** (`for (attempt = 10;; attempt += 20)`) e li allunga finchè il BUSY non
+  scende entro `50 + attempt` ms. Chi riproduce la sequenza al primo giro usa 10, non 20;
+- **il sonno è una coppia**: `epdEnterSleep()` fa reset, poi `0x13`, poi attende il BUSY, poi
+  `0x10 = 0x03`. `0x13` **non è nella Rev 1.0 del datasheet SSD1677** — vedi
+  [[ssd1677_command_set]] — ed è un altro indizio che il silicio è più recente della carta;
+- **`0x22 = 0xF7` viene armato in init senza `0x20`**, e la master activation arriva solo al draw.
+  Riprodurlo vuol dire scrivere `0x22` due volte, non spostare quella scrittura.

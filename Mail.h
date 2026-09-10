@@ -10,6 +10,8 @@
 #include <stdint.h>
 
 #include "Env.h"
+#include "Timings.h"
+#include "Log.h"
 #include "Calendar.h" // riusa Calendar::detail::refreshGoogleToken / cachedGoogleToken
                       // e include transitivamente Layout.h + display globale
 #include "icons.h"    // INDOOR_ICON_MAIL (busta 20x20)
@@ -17,14 +19,6 @@
 // ===========================================================================
 // Configurazione (override-abili dal .ino prima di #include "Mail.h")
 // ===========================================================================
-
-/**
- * Cadenza fetch in minuti, INDIPENDENTE da CAL_GOOGLE_FETCH_MIN del calendario.
- * Tipicamente >= CAL_GOOGLE_FETCH_MIN per non moltiplicare i risvegli WiFi.
- */
-#ifndef MAIL_GOOGLE_FETCH_MIN
-  #define MAIL_GOOGLE_FETCH_MIN 15
-#endif
 
 /**
  * Numero massimo di mail da scaricare/cachare. Il default e' allineato al
@@ -76,21 +70,6 @@
   #define MAIL_SUBJECT_LEN 60
 #endif
 
-/**
- * Tempo massimo (ms) end-to-end di Mail::runFetch(). Evita che un fetch mail
- * lento consumi la finestra WiFi a danno dei fetch calendario successivi:
- * oltre la soglia interrompe la fase metadata e lascia in cache le mail
- * gia' parseate (cache parziale, NON e' un errore).
- */
-#ifndef MAIL_FETCH_BUDGET_MS
-  #define MAIL_FETCH_BUDGET_MS 10000UL
-#endif
-
-/** Stesso budget di tentativi consecutivi falliti di Calendar. */
-#ifndef MAX_CALENDAR_ATTEMPTS
-  #define MAX_CALENDAR_ATTEMPTS 2
-#endif
-
 namespace Mail
 {
   /**
@@ -118,10 +97,6 @@ namespace Mail
      * NB: niente cache token locale. Mail riusa Calendar::detail::cachedGoogleToken
      * (un solo refresh per ciclo, backoff condiviso).
      */
-    inline uint32_t lastFetchMs    = 0;
-    inline bool     firstFetch     = true;
-    /** Conta solo errori di rete sulle GET list/batch (non sul refresh). */
-    inline uint8_t  failedAttempts = 0;
 
     /** Lookup non firmato del Bearer condiviso con Calendar::Google. */
     inline const String &bearer()
@@ -220,7 +195,7 @@ namespace Mail
           deserializeJson(doc, json, DeserializationOption::Filter(filter));
       if (err)
       {
-        Serial.printf("[Mail] sub-response json parse: %s\n", err.c_str());
+        LOG("Mail", "sub-response json parse: %s", err.c_str());
         return false;
       }
 
@@ -319,7 +294,7 @@ namespace Mail
 
       if (!http.begin(client, url))
       {
-        Serial.println(F("[Mail] list http.begin failed"));
+        LOG("Mail", "list http.begin failed");
         return false;
       }
       http.addHeader("Authorization", String("Bearer ") + bearer());
@@ -327,7 +302,7 @@ namespace Mail
       int code = http.GET();
       if (code != 200)
       {
-        Serial.printf("[Mail] list fetch failed: http=%d\n", code);
+        LOG("Mail", "list fetch failed: http=%d", code);
         http.end();
         // 401: invalida il token condiviso cosi' Calendar lo rinegozia
         if (code == 401)
@@ -347,7 +322,7 @@ namespace Mail
       http.end();
       if (err)
       {
-        Serial.printf("[Mail] list json parse: %s\n", err.c_str());
+        LOG("Mail", "list json parse: %s", err.c_str());
         return false;
       }
 
@@ -355,7 +330,7 @@ namespace Mail
       if (arr.isNull())
       {
         // inbox vuota o nessun match: non e' un errore
-        Serial.println(F("[Mail] list vuota (nessuna mail)"));
+        LOG("Mail", "list vuota (nessuna mail)");
         return true;
       }
       for (JsonVariantConst m : arr)
@@ -365,7 +340,7 @@ namespace Mail
         if (!id[0]) continue;
         ids[outCount++] = id;
       }
-      Serial.printf("[Mail] fetched %u message ids\n", (unsigned)outCount);
+      LOG("Mail", "fetched %u message ids", (unsigned)outCount);
       return true;
     }
 
@@ -386,7 +361,7 @@ namespace Mail
       HTTPClient http;
       if (!http.begin(client, MAIL_GMAIL_BATCH_URL))
       {
-        Serial.println(F("[Mail] batch http.begin failed"));
+        LOG("Mail", "batch http.begin failed");
         return false;
       }
 
@@ -405,7 +380,7 @@ namespace Mail
       int code = http.POST(body);
       if (code != 200)
       {
-        Serial.printf("[Mail] batch fetch failed: http=%d\n", code);
+        LOG("Mail", "batch fetch failed: http=%d", code);
         http.end();
         if (code == 401)
         {
@@ -419,7 +394,7 @@ namespace Mail
       String respBoundary = extractBoundary(respCT);
       if (respBoundary.length() == 0)
       {
-        Serial.println(F("[Mail] batch: boundary mancante in Content-Type"));
+        LOG("Mail", "batch: boundary mancante in Content-Type");
         http.end();
         return false;
       }
@@ -429,7 +404,7 @@ namespace Mail
       http.end();
       if (resp.length() == 0)
       {
-        Serial.println(F("[Mail] batch: response vuota"));
+        LOG("Mail", "batch: response vuota");
         return false;
       }
 
@@ -440,7 +415,7 @@ namespace Mail
       int firstBoundary = resp.indexOf(sep);
       if (firstBoundary < 0)
       {
-        Serial.println(F("[Mail] batch: nessun boundary nel body"));
+        LOG("Mail", "batch: nessun boundary nel body");
         return false;
       }
       searchFrom = firstBoundary + sep.length();
@@ -463,8 +438,8 @@ namespace Mail
         searchFrom = nextBoundary + sep.length();
       }
 
-      Serial.printf("[Mail] batch parsed %u/%u messaggi\n",
-                    (unsigned)outCount, (unsigned)n);
+      LOG("Mail", "batch parsed %u/%u messaggi",
+          (unsigned)outCount, (unsigned)n);
       return true;
     }
   } // namespace detail
@@ -474,10 +449,7 @@ namespace Mail
   {
     using namespace detail;
     for (size_t i = 0; i < MAX_MESSAGES; ++i) messages[i].valid = false;
-    messagesCount  = 0;
-    lastFetchMs    = 0;
-    firstFetch     = true;
-    failedAttempts = 0;
+    messagesCount = 0;
   }
 
   /** Numero di mail attualmente in cache (0..MAX_MESSAGES). */
@@ -663,18 +635,6 @@ namespace Mail
   }
 
   /**
-   * true al primo fetch oppure se sono passati MAIL_GOOGLE_FETCH_MIN minuti
-   * dall'ultimo. Stesso pattern di Calendar::Google::pendingFetch().
-   */
-  inline bool pendingFetch()
-  {
-    using namespace detail;
-    if (firstFetch) return true;
-    uint32_t elapsed = millis() - lastFetchMs;
-    return elapsed >= ((uint32_t)MAIL_GOOGLE_FETCH_MIN * 60UL * 1000UL);
-  }
-
-  /**
    * Scarica le ultime MAIL_MAX_MESSAGES mail (1 GET list + 1 POST batch).
    *
    * GARANZIE DI RESILIENZA (richieste utente):
@@ -688,12 +648,10 @@ namespace Mail
    *     precedente resta intatta.
    *   - Mai chiamate ricorsive, mai blocchi senza timeout: HTTPClient ha il
    *     suo timeout interno e MAIL_FETCH_BUDGET_MS limita il wall-clock end-to-end.
-   *   - Backoff esponenziale soft: dopo MAX_CALENDAR_ATTEMPTS fallimenti
-   *     consecutivi il prossimo retry e' rimandato di MAIL_GOOGLE_FETCH_MIN
-   *     minuti, evitando hammering del token endpoint nel loop OTA (10ms).
    *
-   * Richiamato da runNetworkFetches() nel .ino, subito prima dei fetch
-   * calendario.
+   * Presuppone il WiFi gia' connesso e non decide quando tocca a lui: cadenza,
+   * ritenti e backoff sono dello scheduler, che chiama questa funzione solo
+   * quando lo slot e' aperto.
    * Ritorna true se la cache e' stata aggiornata con successo (anche con 0 mail).
    */
   inline bool runFetch()
@@ -702,49 +660,16 @@ namespace Mail
 
     uint32_t t0 = millis();
 
-    /**
-     * Guard rapido: se il WiFi e' caduto dopo che il .ino ha chiamato
-     * runFetch(), evitiamo di partire del tutto (HTTPClient fallirebbe lo
-     * stesso, ma con piu' overhead). Non incrementiamo failedAttempts:
-     * non e' un guasto del modulo Mail, e' un guasto upstream.
-     */
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      Serial.println(F("[Mail] WiFi non connesso, skip fetch"));
-      return false;
-    }
-
     if (!refreshToken())
     {
-      Serial.println(F("[Mail] refresh token KO, skip fetch"));
-      /**
-       * Anche su refresh fallito incrementiamo failedAttempts: durante la
-       * finestra OTA il loop() gira ogni ~10ms e senza questo backoff
-       * Mail martellerebbe il token endpoint. La cache token e' condivisa
-       * con Calendar::Google, ma il loro backoff e' a livello del rispettivo
-       * runFetch(): ognuno deve gestire il proprio.
-       */
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis();
-        firstFetch = false;
-      }
+      LOG("Mail", "refresh token KO, skip fetch");
       return false;
     }
     if ((millis() - t0) >= MAIL_FETCH_BUDGET_MS)
     {
       // Budget scaduto: applichiamo lo stesso backoff degli errori di rete
       // altrimenti il loop OTA (10ms) rifa subito il refresh ad ogni iter.
-      Serial.println(F("[Mail] budget esaurito sul refresh, skip"));
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis();
-        firstFetch = false;
-      }
+      LOG("Mail", "budget esaurito sul refresh, skip");
       return false;
     }
 
@@ -754,13 +679,6 @@ namespace Mail
     {
       // Cache NON toccata: lo stato precedente viene preservato finche'
       // un fetch successivo non ha successo.
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis(); // posticipa retry di MAIL_GOOGLE_FETCH_MIN
-        firstFetch = false;
-      }
       return false;
     }
 
@@ -769,10 +687,7 @@ namespace Mail
       // Inbox vuota: cache azzerata, NON e' un errore. Confermato dal server.
       for (size_t i = 0; i < MAX_MESSAGES; ++i) messages[i].valid = false;
       messagesCount = 0;
-      lastFetchMs   = millis();
-      firstFetch    = false;
-      failedAttempts = 0;
-      Serial.println(F("[Mail] cache azzerata (inbox vuota)"));
+      LOG("Mail", "cache azzerata (inbox vuota)");
       return true;
     }
 
@@ -780,14 +695,7 @@ namespace Mail
     {
       // Budget scaduto dopo la list: stesso backoff per evitare re-list
       // continuo nel loop OTA (10ms).
-      Serial.println(F("[Mail] budget esaurito prima del batch, skip"));
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis();
-        firstFetch = false;
-      }
+      LOG("Mail", "budget esaurito prima del batch, skip");
       return false;
     }
 
@@ -803,14 +711,7 @@ namespace Mail
     if (!fetchMessagesBatch(ids, n, tmp, tmpCount))
     {
       // Batch fallito: cache esistente NON sovrascritta, resta valido
-      // l'ultimo snapshot. failedAttempts++ con backoff.
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis();
-        firstFetch = false;
-      }
+      // l'ultimo snapshot.
       return false;
     }
 
@@ -824,14 +725,7 @@ namespace Mail
      */
     if (tmpCount == 0)
     {
-      Serial.println(F("[Mail] batch: 0 parsati su lista non vuota, cache preservata"));
-      failedAttempts++;
-      if (failedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        failedAttempts = 0;
-        lastFetchMs = millis();
-        firstFetch = false;
-      }
+      LOG("Mail", "batch: 0 parsati su lista non vuota, cache preservata");
       return false;
     }
 
@@ -841,18 +735,15 @@ namespace Mail
      */
     for (size_t i = 0; i < MAX_MESSAGES; ++i)
       messages[i] = (i < tmpCount) ? tmp[i] : MailMessage{};
-    messagesCount  = tmpCount;
-    lastFetchMs    = millis();
-    firstFetch     = false;
-    failedAttempts = 0;
+    messagesCount = tmpCount;
 
     // Log riassuntivo per diagnosi (i campi rispettano i cap MAIL_*_LEN)
     for (size_t i = 0; i < messagesCount; ++i)
     {
       const MailMessage &m = messages[i];
-      Serial.printf("[Mail] %u%s From=%s Subject=%s ts=%lld\n",
-                    (unsigned)i, m.unread ? " *" : "  ",
-                    m.sender, m.subject, (long long)m.receivedUtc);
+      LOGV("Mail", "%u%s From=%s Subject=%s ts=%lld",
+           (unsigned)i, m.unread ? " *" : "  ",
+           m.sender, m.subject, (long long)m.receivedUtc);
     }
     return true;
   }

@@ -12,6 +12,8 @@
 #include "Layout.h"
 
 #include "Env.h"
+#include "Timings.h"
+#include "Log.h"
 #include "Graphics.h"
 
 // ---------------------------------------------------------------------------
@@ -108,33 +110,11 @@ namespace Calendar
       (Layout::EVT_H / 7 >= MIN_EVT_ROW_H) ? 7 :
       (Layout::EVT_H / 6 >= MIN_EVT_ROW_H) ? 6 : 5;
 
-  /**
-   * Soglia di tentativi consecutivi falliti per i fetch calendario
-   * (Outlook/Google) oltre la quale si interrompe il retry immediato e si
-   * aspetta INTERVAL_FETCH_MS come un ciclo normale. 
-   * Evita hammering degli endpoint OAuth in caso di credenziali errate o server irraggiungibile,
-   * sopratutto durante la finestra OTA (loop ogni ~10ms). 
-   * Dichiarato in .ino; Fallback here. 
-   */
-  #ifndef MAX_CALENDAR_ATTEMPTS
-    #define MAX_CALENDAR_ATTEMPTS 2
-  #endif
-
   namespace Outlook
   {
     /** Numero di eventi cacheati da questa sorgente. */
     static constexpr uint8_t MAX_EVENTS = 5;
 
-    /**
-     * Intervallo minimo fra due fetch consecutivi (ms). Deriva da
-     * CAL_OUTLOOK_FETCH_MIN dichiarato nello sketch .ino; il fallback
-     * rende l'header autonomamente compilabile.
-     */
-    #ifndef CAL_OUTLOOK_FETCH_MIN
-      #define CAL_OUTLOOK_FETCH_MIN 20
-    #endif
-    static constexpr uint32_t INTERVAL_FETCH_MS =
-        (uint32_t)CAL_OUTLOOK_FETCH_MIN * 60UL * 1000UL;  // default 20 min
   }
 
   namespace Google
@@ -142,15 +122,6 @@ namespace Calendar
     /** Numero di eventi cacheati da questa sorgente. */
     static constexpr uint8_t MAX_EVENTS = 5;
 
-    /**
-     * Intervallo minimo fra due fetch consecutivi (ms)
-     * Dichiarato in .ino; Fallback here. 
-     */
-    #ifndef CAL_GOOGLE_FETCH_MIN
-      #define CAL_GOOGLE_FETCH_MIN 20
-    #endif
-    static constexpr uint32_t INTERVAL_FETCH_MS =
-        (uint32_t)CAL_GOOGLE_FETCH_MIN * 60UL * 1000UL;   // default 20 min
   }
 
   // -------------------------------------------------------------------------
@@ -200,18 +171,10 @@ namespace Calendar
     inline CalEvent  outlookEvents[Calendar::Outlook::MAX_EVENTS];
     inline String    cachedOutlookToken;
     inline uint32_t  outlookTokenExpiresAtMs = 0;
-    inline uint32_t  lastOutlookFetchMs      = 0;
-    inline bool      outlookFirstFetch       = true;
-    // Tentativi consecutivi falliti: al raggiungimento di MAX_CALENDAR_ATTEMPTS
-    // il counter viene azzerato e lastOutlookFetchMs posticipato di INTERVAL_FETCH_MS.
-    inline uint8_t   outlookFailedAttempts   = 0;
 
     inline CalEvent  googleEvents[Calendar::Google::MAX_EVENTS];
     inline String    cachedGoogleToken;
     inline uint32_t  googleTokenExpiresAtMs  = 0;
-    inline uint32_t  lastGoogleFetchMs       = 0;
-    inline bool      googleFirstFetch        = true;
-    inline uint8_t   googleFailedAttempts    = 0;
 
     // =======================================================================
     // Helpers generici
@@ -395,7 +358,7 @@ namespace Calendar
       HTTPClient http;
       if (!http.begin(client, tokenUrl))
       {
-        Serial.println(F("[OAuth] http.begin failed"));
+        LOG("OAuth", "http.begin failed");
         return false;
       }
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -414,8 +377,8 @@ namespace Calendar
       if (code != 200)
       {
         String resp = http.getString();
-        Serial.printf("[OAuth] token refresh failed: http=%d body=%s\n",
-                      code, resp.c_str());
+        LOG("OAuth", "token refresh failed: http=%d body=%s",
+            code, resp.c_str());
         http.end();
         return false;
       }
@@ -424,13 +387,13 @@ namespace Calendar
       DeserializationError err = deserializeJson(doc, http.getStream());
       http.end();
       if (err){ 
-        Serial.printf("[OAuth] token json parse: %s\n", err.c_str()); 
+        LOG("OAuth", "token json parse: %s", err.c_str()); 
         return false; 
       }
 
       const char* tok = doc["access_token"] | "";
       if (!tok[0]){ 
-        Serial.println(F("[OAuth] access_token mancante")); 
+        LOG("OAuth", "access_token mancante"); 
         return false; 
       }
       outToken     = tok;
@@ -463,7 +426,7 @@ namespace Calendar
         return false;
 
       outlookTokenExpiresAtMs = millis() + (expiresIn > 60 ? expiresIn - 60 : expiresIn) * 1000UL;
-      Serial.printf("[Outlook] token OK, expires in %lus\n", (unsigned long)expiresIn);
+      LOG("Outlook", "token OK, expires in %lus", (unsigned long)expiresIn);
       return true;
     }
 
@@ -496,14 +459,14 @@ namespace Calendar
       url += nowIso;
       url += "'";
 
-      if (!http.begin(client, url)) { Serial.println(F("[Outlook] events http.begin failed")); return false; }
+      if (!http.begin(client, url)) { LOG("Outlook", "events http.begin failed"); return false; }
       http.addHeader("Authorization", String("Bearer ") + cachedOutlookToken);
       http.addHeader("Prefer", "outlook.timezone=\"UTC\"");
 
       int code = http.GET();
       if (code != 200)
       {
-        Serial.printf("[Outlook] events fetch failed: http=%d\n", code);
+        LOG("Outlook", "events fetch failed: http=%d", code);
         http.end();
         if (code == 401) { 
           cachedOutlookToken = ""; 
@@ -515,10 +478,10 @@ namespace Calendar
       JsonDocument doc;
       DeserializationError err = deserializeJson(doc, http.getStream());
       http.end();
-      if (err) { Serial.printf("[Outlook] events json parse: %s\n", err.c_str()); return false; }
+      if (err) { LOG("Outlook", "events json parse: %s", err.c_str()); return false; }
 
       JsonArrayConst value = doc["value"].as<JsonArrayConst>();
-      if (value.isNull()) { Serial.println(F("[Outlook] value mancante")); return false; }
+      if (value.isNull()) { LOG("Outlook", "value mancante"); return false; }
 
       int n = 0;
       for (JsonVariantConst item : value)
@@ -547,7 +510,7 @@ namespace Calendar
       for (int i = n; i < (int)Calendar::Outlook::MAX_EVENTS; i++) 
         outlookEvents[i].valid = false;
 
-      Serial.printf("[Outlook] fetched %d events (end>='%s')\n", n, nowIso);
+      LOG("Outlook", "fetched %d events (end>='%s')", n, nowIso);
       // Successo anche con n == 0: HTTP e parsing sono riusciti, quindi
       // outlookEvents[] rispecchia il calendario e un'agenda vuota e' un
       // risultato valido, non un errore da ritentare.
@@ -591,7 +554,7 @@ namespace Calendar
         return false;
 
       googleTokenExpiresAtMs = millis() + (expiresIn > 60 ? expiresIn - 60 : expiresIn) * 1000UL;
-      Serial.printf("[Google] token OK, expires in %lus\n", (unsigned long)expiresIn);
+      LOG("Google", "token OK, expires in %lus", (unsigned long)expiresIn);
       return true;
     }
 
@@ -622,13 +585,13 @@ namespace Calendar
       // Percent-encode dei ':' nel timeMin (buona pratica verso proxy).
       url.replace(":", "%3A");
 
-      if (!http.begin(client, url)) { Serial.println(F("[Google] events http.begin failed")); return false; }
+      if (!http.begin(client, url)) { LOG("Google", "events http.begin failed"); return false; }
       http.addHeader("Authorization", String("Bearer ") + cachedGoogleToken);
 
       int code = http.GET();
       if (code != 200)
       {
-        Serial.printf("[Google] events fetch failed: http=%d\n", code);
+        LOG("Google", "events fetch failed: http=%d", code);
         http.end();
         if (code == 401) { cachedGoogleToken = ""; googleTokenExpiresAtMs = 0; }
         return false;
@@ -637,10 +600,10 @@ namespace Calendar
       JsonDocument doc;
       DeserializationError err = deserializeJson(doc, http.getStream());
       http.end();
-      if (err) { Serial.printf("[Google] events json parse: %s\n", err.c_str()); return false; }
+      if (err) { LOG("Google", "events json parse: %s", err.c_str()); return false; }
 
       JsonArrayConst items = doc["items"].as<JsonArrayConst>();
-      if (items.isNull()) { Serial.println(F("[Google] items mancante")); return false; }
+      if (items.isNull()) { LOG("Google", "items mancante"); return false; }
 
       int n = 0;
       for (JsonVariantConst item : items)
@@ -685,7 +648,7 @@ namespace Calendar
       }
       for (int i = n; i < (int)Calendar::Google::MAX_EVENTS; i++) googleEvents[i].valid = false;
 
-      Serial.printf("[Google] fetched %d events (timeMin='%s')\n", n, nowIso);
+      LOG("Google", "fetched %d events (timeMin='%s')", n, nowIso);
       // Successo anche con n == 0, per gli stessi motivi di fetchOutlookEvents().
       return true;
     }
@@ -989,54 +952,18 @@ namespace Calendar
       for (auto& e : outlookEvents) { e.valid = false; e.title[0] = 0; e.startUtc = 0; e.endUtc = 0; e.allDay = false; }
       cachedOutlookToken      = "";
       outlookTokenExpiresAtMs = 0;
-      lastOutlookFetchMs      = 0;
-      outlookFirstFetch       = true;
-      outlookFailedAttempts   = 0;
-    }
-
-    /** True se la cache è scaduta o mai valorizzata: serve un nuovo fetch. */
-    inline bool pendingFetch()
-    {
-      using namespace detail;
-      if (outlookFirstFetch) return true;
-      uint32_t now = millis();
-      return (int32_t)(now - lastOutlookFetchMs) >= (int32_t)INTERVAL_FETCH_MS;
     }
 
     /**
      * Refresh del token + GET degli eventi. Presuppone STA connessa.
      * Le credenziali arrivano da Env.h (MSGRAPH_* define).
      *
-     * Su fallimento incrementa un counter di tentativi consecutivi: dopo
-     * MAX_CALENDAR_ATTEMPTS (2) "consuma" lo slot fissando lastOutlookFetchMs
-     * al now e disattivando outlookFirstFetch, cosi' pendingFetch() tornera'
-     * true solo dopo INTERVAL_FETCH_MS (evita hammering durante OTA).
-     *
-     * @return true se almeno un evento valido è entrato in cache.
+     * Cadenza, ritenti e backoff sono dello scheduler: qui si esegue e basta.
+     * @return true se la risposta e' stata acquisita, anche senza eventi.
      */
     inline bool runFetch()
     {
-      using namespace detail;
-      bool ok = refreshOutlookToken() && fetchOutlookEvents();
-      if (ok)
-      {
-        lastOutlookFetchMs    = millis();
-        outlookFirstFetch     = false;
-        outlookFailedAttempts = 0;
-        return true;
-      }
-      ++outlookFailedAttempts;
-      Serial.printf("[Outlook] runFetch fallito (tentativo %u/%u)\n",
-                    (unsigned)outlookFailedAttempts, (unsigned)MAX_CALENDAR_ATTEMPTS);
-      if (outlookFailedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        Serial.printf("[Outlook] soglia tentativi raggiunta, prossimo retry tra %u min\n",
-                      (unsigned)(INTERVAL_FETCH_MS / 60000UL));
-        lastOutlookFetchMs    = millis();
-        outlookFirstFetch     = false;
-        outlookFailedAttempts = 0;
-      }
-      return false;
+      return detail::refreshOutlookToken() && detail::fetchOutlookEvents();
     }
   }
 
@@ -1053,11 +980,11 @@ namespace Calendar
    * INTERAZIONE CON MAIL: Calendar::Google e Mail::* condividono lo stesso
    * GOOGLE_REFRESH_TOKEN e lo stesso access_token cached
    * (Calendar::detail::cachedGoogleToken). Le cadenze di fetch sono pero'
-   * INDIPENDENTI: CAL_GOOGLE_FETCH_MIN regola il fetch eventi calendario,
-   * MAIL_GOOGLE_FETCH_MIN regola il fetch metadati mail. I contatori
-   * failedAttempts sono separati per le GET di dominio (events vs
-   * messages), mentre il backoff sul refresh_token e' implicitamente
-   * condiviso perche' ricade su una sola cache.
+   * INDIPENDENTI: sono due task distinti dello scheduler, con la propria
+   * cadenza e i propri tentativi. Il refresh del token e' invece
+   * implicitamente condiviso, perche' ricade su una sola cache: chi dei due
+   * gira per primo lo paga, e per questo la tabella mette mail prima di
+   * Google.
    */
   namespace Google
   {
@@ -1068,49 +995,17 @@ namespace Calendar
       for (auto& e : googleEvents) { e.valid = false; e.title[0] = 0; e.startUtc = 0; e.endUtc = 0; e.allDay = false; }
       cachedGoogleToken      = "";
       googleTokenExpiresAtMs = 0;
-      lastGoogleFetchMs      = 0;
-      googleFirstFetch       = true;
-      googleFailedAttempts   = 0;
-    }
-
-    /** True se la cache è scaduta o mai valorizzata: serve un nuovo fetch. */
-    inline bool pendingFetch()
-    {
-      using namespace detail;
-      if (googleFirstFetch) return true;
-      uint32_t now = millis();
-      return (int32_t)(now - lastGoogleFetchMs) >= (int32_t)INTERVAL_FETCH_MS;
     }
 
     /**
      * Refresh del token + GET degli eventi. Presuppone STA connessa.
-     * Su fallimento: stesso meccanismo di Outlook::runFetch() (MAX_CALENDAR_ATTEMPTS
-     * tentativi consecutivi, poi attesa di INTERVAL_FETCH_MS).
-     * @return true se almeno un evento valido è entrato in cache.
+     * Stesso contratto di Outlook::runFetch(): esegue e basta, il quando lo
+     * decide lo scheduler.
+     * @return true se la risposta e' stata acquisita, anche senza eventi.
      */
     inline bool runFetch()
     {
-      using namespace detail;
-      bool ok = refreshGoogleToken() && fetchGoogleEvents();
-      if (ok)
-      {
-        lastGoogleFetchMs    = millis();
-        googleFirstFetch     = false;
-        googleFailedAttempts = 0;
-        return true;
-      }
-      ++googleFailedAttempts;
-      Serial.printf("[Google] runFetch fallito (tentativo %u/%u)\n",
-                    (unsigned)googleFailedAttempts, (unsigned)MAX_CALENDAR_ATTEMPTS);
-      if (googleFailedAttempts >= MAX_CALENDAR_ATTEMPTS)
-      {
-        Serial.printf("[Google] soglia tentativi raggiunta, prossimo retry tra %u min\n",
-                      (unsigned)(INTERVAL_FETCH_MS / 60000UL));
-        lastGoogleFetchMs    = millis();
-        googleFirstFetch     = false;
-        googleFailedAttempts = 0;
-      }
-      return false;
+      return detail::refreshGoogleToken() && detail::fetchGoogleEvents();
     }
   }
 }

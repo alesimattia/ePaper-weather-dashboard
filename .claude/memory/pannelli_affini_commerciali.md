@@ -1,6 +1,6 @@
 ---
 name: Pannelli commerciali affini ai SOLUM (Good Display / Waveshare)
-description: Cosa esiste in commercio vicino ai due pannelli SOLUM - il reverse engineering di terzi su una ESL 10.2" BWR con SSD1677 che scrive le tensioni in init e conferma la LUT (precedente, nuovo), GDEM102Z91 gemello funzionale della 9.7" (SSD1677 BWR, init identico byte per byte), la regola SSD1677 = 3 colori / SSD2677 = 4 colori su tutta la linea grande Good Display, il formato a 2 bit su stream 0x10 dei BWRY, il tetto dei 680 gate confermato da GDEM133T91, la topologia reale di un pannello a due code (12.48": 4 CS, 4 BUSY, 2 boost) e cosa dice della cascade, componenti del circuito di boost, GxEPD2_1248c come modello di driver multi-controller, dove sta il materiale scaricato
+description: Cosa esiste in commercio vicino ai due pannelli SOLUM - il reverse engineering di terzi su una ESL 10.2" BWR con SSD1677 che scrive le tensioni in init e conferma la LUT (precedente, nuovo), GDEM102Z91 gemello funzionale della 9.7" (SSD1677 BWR, init identico byte per byte), la regola SSD1677 = 3 colori / SSD2677 = 4 colori su tutta la linea grande Good Display, il formato a 2 bit su stream 0x10 dei BWRY, il tetto dei 680 gate confermato da GDEM133T91, la topologia reale di un pannello a due code (12.48": 4 CS, 4 BUSY, 2 boost) e cosa dice della cascade, componenti del circuito di boost, GxEPD2_1248c come modello di driver multi-controller, il filone Xteink X4 / GDEQ0426T82 su SSD1677 con LUT custom completa di VCOM e grayscale a due piani (e perche' la loro LUT grigia e' pericolosa su un film BWR), dove sta il materiale scaricato
 metadata:
   type: reference
 ---
@@ -55,8 +55,8 @@ nero: <https://github.com/olikraus/u8g2/issues/1393> (UC8151D, LUT diverse, idea
 ## Gemello funzionale della 9.7": GDEM102Z91
 
 10.2", **960 × 640**, **BWR**, **SSD1677**, FPC **24 pin 0,5 mm**, un solo COF, pitch 0,2245 mm,
-full refresh 20 s, 0~40 °C. Non è il nostro pannello (noi 960 × 672, pitch 0,210) e **non è un
-rimarchio**: è l'analogo commerciale più vicino che esista. Il datasheet scrive
+full refresh 20 s **a 25 °C**, 0~40 °C. Non è il nostro pannello (noi 960 × 672, pitch 0,210) e
+**non è un rimarchio**: è l'analogo commerciale più vicino che esista. Il datasheet scrive
 `DRIVER IC: SSD1677`, `RESOLUTION 640gate X 960source` — stessa notazione gate/source del conto sui
 gate.
 
@@ -77,6 +77,36 @@ ma un pannello BWR di Good Display usa `0x80` come il tag SOLUM. E il commento `
 LUT1, for white` è **conferma indipendente della numerazione della Table 6-4**
 ([[ssd1677_command_set]]): la mappa LUT0..LUT3 su cui è costruita la sonda `panel_diagnostic` è
 quella vera, non una ricostruzione.
+
+## Secondo filone di terzi: gli e-reader Xteink su SSD1677
+
+Il **GDEQ0426T82** (4.26", 800 × 480, B/N, SSD1677) monta gli e-reader **Xteink X4**, e ha attorno
+due basi di codice indipendenti da GxEPD2 che quel controller lo pilotano per intero:
+`open-x4-epaper/community-sdk` (`libs/display/EInkDisplay/`, più `doc/SSD1677_GUIDE.md`) e
+`bigbag/papyrix-reader` (`docs/ssd1677-driver.md`). GxEPD2 lo supporta a sua volta come
+`gdeq/GxEPD2_426_GDEQ0426T82`, quindi lo stesso pannello si può confrontare in tre implementazioni.
+
+Cosa fanno che GxEPD2 non fa, e che vale come precedente per il driver SOLUM:
+
+- **la LUT custom la mandano completa**: `0x32` per i 105 byte, poi `0x03` VGH, `0x04` VSH1/VSH2/VSL
+  e **anche `0x2C` VCOM**. È una conferma indipendente del taglio 110/105 del waveform setting, e
+  l'unico esempio in circolazione che scriva pure il VCOM insieme alla waveform;
+- **`0x21` prima di ogni refresh**: `0x00` normale per il fast, `0x40` bypass della RED RAM per il
+  pieno. Stesso idioma dei due driver GxEPD2 recenti;
+- **power off con `0x22 = 0x03`** invece di `0xC3`, e **deep sleep `0x10 = 0x01`**, cioè il modo che
+  sul SSD1683 ritiene la RAM;
+- **grayscale a quattro livelli** su un pannello a due piani: LSB in `0x24`, MSB in `0x26`, una LUT
+  custom e un refresh fast, ~500 ms. Tensioni della loro LUT grigia: VGH `0x17`, VSH1 `0x41`,
+  VSH2 `0xA8`, VSL `0x32`, VCOM `0x30`;
+- timeout del BUSY a 30 s, e il clock SPI spinto oltre i 20 MHz di targa su alcune unità e non su
+  altre — la stessa avvertenza di papyrix-reader.
+
+**Attenzione a riusare le loro LUT grigie su questo film.** Sono scritte per un pannello
+monocromatico, dove LUT2 e LUT3 sono due transizioni come le altre; qui LUT3 è l'accent. La seconda
+delle due, `lut_grayscale_revert`, ha LUT3 = `FC FC FC FC`, e `0xFC` decodificato a due bit per fase
+è `11 11 11 00`, cioè **tre fasi a VSH2**: su questo vetro VSH2 è il pigmento ROSSO. È il caso
+concreto per cui la sonda rifiuta ogni waveform che contenga quel code point fuori dal probe dei
+livelli di sorgente.
 
 ## La regola colori/controller è sistematica
 

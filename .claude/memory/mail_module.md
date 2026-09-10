@@ -36,14 +36,17 @@ ma ha scelto di non toccare la grafica in questa fase.
    Risposta JSON ridotta del ~70% server-side.
 
 4. **Wall-clock budget `MAIL_FETCH_BUDGET_MS`** (default 10s). Mail
-   gira PRIMA dei calendari nel `.ino` (richiesta utente): il budget
-   garantisce che un fetch mail patologicamente lento non eroda il
-   tempo dei fetch calendario successivi nella stessa finestra WiFi.
+   gira PRIMA dei calendari (richiesta utente): il budget garantisce
+   che un fetch mail patologicamente lento non eroda il tempo dei fetch
+   calendario successivi nella stessa finestra WiFi. È un budget di
+   **una esecuzione**, non una cadenza: per questo resta nel modulo e
+   non è passato allo scheduler.
 
-5. **Backoff `MAX_CALENDAR_ATTEMPTS=2` anche su fallimento del refresh.**
-   Senza questo Mail martellerebbe il token endpoint nel loop OTA a 10ms,
-   nonostante il token sia condiviso (Calendar::Google ha il proprio
-   counter, indipendente da Mail).
+5. **Cadenza, ritenti e backoff non sono di Mail.** Il modulo espone
+   solo `runFetch()`, che presuppone la radio già connessa; non ha
+   predicati di scadenza né contatori di tentativi. Il freno all'hammering del token
+   endpoint nella finestra di manutenzione (loop a 10 ms) è
+   `FETCH_RITENTO_MS` dello scheduler — vedi [[fetch_flag_ordering]].
 
 **How to apply:** se in futuro si tocca la struttura del modulo
 (rendering UI, cambio scope, decoupling da Calendar), tenere presente

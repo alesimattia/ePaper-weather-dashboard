@@ -16,7 +16,8 @@ src/GxEPD2_SOLUM_Pins.h             struct di pinout uniforme fra i driver
 src/GxEPDImage.h                    namespace GxEPDImage + template showImage(), condiviso
 src/GxEPD2_SOLUM_097c_960x672.h     driver 9.7" SSD1677, vedi [[gxepd2_097c_driver]]
 src/GxEPD2_SOLUM_122c_960x768.h     driver 12.2" SSD16xx, vedi [[gxepd2_122c_driver]]
-examples/097c/panel_diagnostic/     sonda del 9.7"
+examples/097c/panel_diagnostic/     suite del 9.7", sketch multi-file: .ino + Config/Report/
+                                    Graphics/Controller/Probes*.h, tutto a SPI diretta
 examples/12_2c/dual_panel_finder/   unico example del 12.2": probe del silicio a SPI
                                     diretta + verifica del driver, due fasi separabili
 docs/097c/, docs/122c/              materiale per pannello (cablaggi, foto FCC, identificazione)
@@ -107,7 +108,7 @@ Per forzare il define di selezione da riga di comando:
 tutto il core: ~10 min). **Senza** extra_flags la build di un example è incrementale e dura circa un
 minuto: è il modo normale di verificare una modifica alle sonde. Misure correnti:
 `12_2c/dual_panel_finder` 319 224 B flash / 22 652 B RAM con entrambe le fasi attive,
-`097c/panel_diagnostic` 308 008 B / 26 604 B.
+`097c/panel_diagnostic` 319 248 B / 61 620 B (i buffer delle bande e della taratura).
 
 **Consumer.** `A:\epd` usa la libreria come submodule: i suoi `Layout_097c.h` / `Layout_122c.h`
 definiscono il proprio `SOLUM_PANEL_*`, includono `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h` ed

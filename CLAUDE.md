@@ -259,9 +259,8 @@ src/GxEPD2_SOLUM_Pins.h            struct di pinout uniforme fra i driver
 src/GxEPDImage.h                   namespace GxEPDImage + template showImage(), condiviso
 src/GxEPD2_SOLUM_097c_960x672.h    driver 9.7"  SSD1677
 src/GxEPD2_SOLUM_122c_960x768.h    driver 12.2" SSD16xx, dual controller
-examples/097c/panel_diagnostic/    sonda del 9.7", a SPI diretta
-examples/097c/partial_refresh/     verifica del partial attraverso le API del driver
-examples/097c/partial_lut_tuning/  taratura della waveform del partial, sette bande a confronto
+examples/097c/panel_diagnostic/    suite del 9.7" a SPI diretta: silicio, sequenze di partenza
+                                   dei driver upstream, partial e taratura della waveform
 examples/12_2c/dual_panel_finder/  sonda del 12.2": probe del silicio + verifica del driver
 docs/                              datasheet, foto FCC, sorgenti OEPL, cablaggi
 ```

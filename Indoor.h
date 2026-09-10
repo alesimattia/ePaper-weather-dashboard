@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include <bsec2.h>
 #include <Preferences.h>
+#include "Timings.h"
+#include "Log.h"
 
 /**
  * Modulo header-only del sensore ambientale Bosch BME680 (I2C).
@@ -52,13 +54,24 @@ namespace Indoor
     inline constexpr const char* NVS_NAMESPACE = "bme680";
     inline constexpr const char* NVS_KEY_STATE = "state";
 
-    /**
-     * Cadenza di salvataggio dello stato BSEC su NVS.
-     * Compromesso fra usura della flash e precisione post-reboot:
-     * 6 h significa pochissime scritture/giorno, preservando comunque
-     * gran parte della calibrazione.
-     */
-    inline constexpr uint32_t STATE_SAVE_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL;
+    /** Cadenza di salvataggio dello stato BSEC su NVS, da Timings.h:
+     *  compromesso fra usura della flash e precisione post-reboot. */
+    inline constexpr uint32_t STATE_SAVE_INTERVAL_MS = BSEC_STATE_SAVE_INTERVAL_MS;
+
+    /** Testo dei codici di stato BSEC che compaiono in esercizio. I positivi
+     *  sono warning e riguardano la temporizzazione delle misure: senza
+     *  decodifica sarebbero numeri muti sul seriale. */
+    inline const char* descriviStatoBsec(int stato)
+    {
+      switch (stato)
+      {
+        case 0:   return "ok";
+        case 100: return "chiamata fuori tempo";
+        case 101: return "misura extra rifiutata: misura ULP troppo vicina";
+        case 102: return "misura extra rifiutata: troppo presto dalla precedente";
+        default:  return stato > 0 ? "warning" : "errore";
+      }
+    }
 
     inline Bsec2    bsec;
     inline Sample   current          = {};
@@ -143,24 +156,24 @@ namespace Indoor
       uint8_t buf[BSEC_MAX_STATE_BLOB_SIZE];
       if (!bsec.getState(buf))
       {
-        Serial.printf("[BME680] getState failed: %d\n", bsec.status);
+        LOG("BME680", "getState failed: %d", bsec.status);
         return;
       }
 
       Preferences prefs;
       if (!prefs.begin(NVS_NAMESPACE, false))
       {
-        Serial.println(F("[BME680] NVS open RW failed"));
+        LOG("BME680", "NVS open RW failed");
         return;
       }
       size_t written = prefs.putBytes(NVS_KEY_STATE, buf, BSEC_MAX_STATE_BLOB_SIZE);
       prefs.end();
 
       if (written == BSEC_MAX_STATE_BLOB_SIZE)
-        Serial.printf("[BME680] state saved to NVS (%u bytes)\n", (unsigned)written);
+        LOG("BME680", "state saved to NVS (%u bytes)", (unsigned)written);
       else
-        Serial.printf("[BME680] state partial save: %u/%u\n",
-                      (unsigned)written, (unsigned)BSEC_MAX_STATE_BLOB_SIZE);
+        LOG("BME680", "state partial save: %u/%u",
+            (unsigned)written, (unsigned)BSEC_MAX_STATE_BLOB_SIZE);
     }
 
     /**
@@ -173,7 +186,7 @@ namespace Indoor
       Preferences prefs;
       if (!prefs.begin(NVS_NAMESPACE, true))
       {
-        Serial.println(F("[BME680] no saved state, cold start"));
+        LOG("BME680", "no saved state, cold start");
         return;
       }
 
@@ -181,7 +194,7 @@ namespace Indoor
       if (len != BSEC_MAX_STATE_BLOB_SIZE)
       {
         prefs.end();
-        Serial.println(F("[BME680] no saved state, cold start"));
+        LOG("BME680", "no saved state, cold start");
         return;
       }
 
@@ -190,9 +203,9 @@ namespace Indoor
       prefs.end();
 
       if (bsec.setState(buf))
-        Serial.printf("[BME680] state restored (%u bytes)\n", (unsigned)BSEC_MAX_STATE_BLOB_SIZE);
+        LOG("BME680", "state restored (%u bytes)", (unsigned)BSEC_MAX_STATE_BLOB_SIZE);
       else
-        Serial.printf("[BME680] setState failed: %d\n", bsec.status);
+        LOG("BME680", "setState failed: %d", bsec.status);
     }
   } // namespace detail
 
@@ -213,8 +226,8 @@ namespace Indoor
     Wire.begin(BME680_SDA_PIN, BME680_SCL_PIN);
 
     if (!bsec.begin(BME680_I2C_ADDR, Wire)) {
-      Serial.printf("[BME680] init failed (bsec=%d, sensor=%d)\n",
-                    bsec.status, bsec.sensor.status);
+      LOG("BME680", "init failed (bsec=%d, sensor=%d)",
+          bsec.status, bsec.sensor.status);
       return;
     }
 
@@ -232,7 +245,7 @@ namespace Indoor
     const uint8_t sensorCount = sizeof(sensorList) / sizeof(sensorList[0]);
 
     if (!bsec.updateSubscription(sensorList, sensorCount, BSEC_SAMPLE_RATE_ULP)) {
-      Serial.printf("[BME680] updateSubscription failed: %d\n", bsec.status);
+      LOG("BME680", "updateSubscription failed: %d", bsec.status);
       return;
     }
 
@@ -240,8 +253,11 @@ namespace Indoor
 
     bsecOk          = true;
     lastStateSaveMs = millis();
-    Serial.println(F("[BME680] init ok, ULP 5 min"));
+    LOG("BME680", "init ok, ULP 5 min");
   }
+
+  /** Vero quando il sensore e' stato inizializzato con successo. */
+  inline bool attivo() { return detail::bsecOk; }
 
   /**
    * Polling non bloccante da chiamare ad ogni giro di loop().
@@ -259,19 +275,23 @@ namespace Indoor
     hasNewSample = false;
     if (!bsec.run())
     {
-      // run() ritorna false anche quando semplicemente non ci sono dati:
-      // non è un errore fatale. Logghiamo solo se lo status lo segnala.
-      if (bsec.status < BSEC_OK || bsec.sensor.status < BME68X_OK)
-        Serial.printf("[BME680] run error (bsec=%d, sensor=%d)\n",
-                      bsec.status, bsec.sensor.status);
+      /**
+       * run() ritorna false anche quando semplicemente non ci sono dati:
+       * non e' un errore fatale. Il confronto e' con != e non con <: i codici
+       * positivi sono warning, fra cui la violazione di temporizzazione
+       * (100), e con un filtro sui soli negativi resterebbero invisibili.
+       */
+      if (bsec.status != BSEC_OK || bsec.sensor.status != BME68X_OK)
+        LOG("BME680", "run: bsec=%d (%s), sensor=%d",
+            bsec.status, detail::descriviStatoBsec(bsec.status), bsec.sensor.status);
       return false;
     }
 
     if (!hasNewSample) return false;
 
-    Serial.printf("[BME680] T=%.1fC RH=%.1f%% P=%.1fhPa IAQ=%.0f acc=%u\n",
-                  current.temperature, current.humidity, current.pressure,
-                  current.iaq, (unsigned)current.iaqAccuracy);
+    LOGV("BME680", "T=%.1fC RH=%.1f%% P=%.1fhPa IAQ=%.0f acc=%u",
+         current.temperature, current.humidity, current.pressure,
+         current.iaq, (unsigned)current.iaqAccuracy);
 
     // Salvataggio stato gated: solo a distanza >= 6 h dall'ultimo e solo
     // quando il calibratore ha raggiunto almeno accuracy=1. Evita di
