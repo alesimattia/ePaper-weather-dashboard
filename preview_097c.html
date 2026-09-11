@@ -5,9 +5,10 @@
 <title>EPD SOLUM 9.7" 960w x 672h - Preview UI</title>
 <style>
   /* Anteprima statica del layout per pannello SOLUM 9.7" (960w x 672h,   */
-  /* 4 colori BWRY ma qui resi solo nero/bianco/rosso/giallo). Le coord   */
-  /* replicano fedelmente le costanti di Layout_097c.h e il codice di     */
-  /* rendering di Weather.h / Calendar.h / Graphics.h.                    */
+  /* tre colori: bianco, nero e rosso. Il quarto colore non esiste su     */
+  /* questo pannello, quindi nessun elemento del layout e' giallo). Le    */
+  /* coord replicano fedelmente le costanti di Layout_097c.h e il codice  */
+  /* di rendering di Weather.h / Calendar.h / Mail.h / Graphics.h.        */
   /* Convenzione dimensioni: NwxMh = N px in larghezza (asse X) e M px in */
   /* altezza (asse Y). Le coordinate sono sempre (x, y) con origine in    */
   /* alto a sinistra del pannello in landscape (post setRotation(0)).     */
@@ -16,7 +17,6 @@
   :root {
     --black: #111;
     --red:   #d7263d;
-    --yellow:#e6c42c;
     --white: #fff;
     --img-bg: #d9dde0;
     --img-stripe: #c8ccd0;
@@ -89,7 +89,7 @@
     display: grid; grid-template-columns: repeat(7, 1fr);
     align-items: end;
     text-align: center;
-    font-size: 17px; font-weight: 500;
+    font-size: 17px; font-weight: 400;
     color: var(--black);
     padding-bottom: 6px;       /* baseline = HDR_H - 6 px */
     box-sizing: border-box;
@@ -196,7 +196,7 @@
     position: absolute;
     right: 8px;
     top: 4px;                   /* baseline ~19 con font 17 */
-    font-size: 17px; font-weight: 500;
+    font-size: 17px; font-weight: 400;
     line-height: 1;
     color: inherit;
   }
@@ -268,7 +268,7 @@
   .mail-time {
     position: absolute;
     right: 10px; top: 4px;
-    font-size: 17px; font-weight: 500;
+    font-size: 17px; font-weight: 400;
     line-height: 1;
   }
   /* Data (dx basso). Baseline cellY+36, allineato a destra. */
@@ -330,7 +330,7 @@
   }
   .indoor-row .icn svg { display: block; }
   .indoor-row .val { font-size: 26px; line-height: 1; }
-  .indoor-row .val.red { color: var(--red); font-weight: 600; }
+  .indoor-row .val.red { color: var(--red); }
 
   /* Riga IAQ: FONT_SMALL (9pt ≈ 13 px CSS) + accuracy in FONT_MICRO
      (Picopixel ≈ 6 px ma renderizzato grossolano: usiamo 8 px alzato di 2 px
@@ -428,7 +428,7 @@
      Layout::SUN_COL_CENTER_X (= centro sub-col).
        Row 1: sunrise (icona + HH:MM, FONT_BODY)
        Row 2: sunset  (idem, avvicinata a Row 1 -> blocco "alba/tramonto")
-       Row 3: @widget slider-temp-range (barra/triangolo giallo + labels nere)
+       Row 3: @widget slider-temp-range (barra/triangolo + cifre, tutto nero)
        Row 4: @widget storico-temperature (mini-chart B+R)
      Le righe 3 e 4 sono traslate verso l'alto (-30 px rispetto al layout
      originale) per ridurre il vuoto fra il blocco alba/tramonto e la slider. */
@@ -495,7 +495,10 @@
   <!-- Lista eventi 320w x 230h @ (x=630, y=220), 5 righe da 46h px -->
   <div class="events" id="events"></div>
 
-  <!-- Area mail 620w x 160h @ (x=0, y=300). 4 celle 2x2, lettura LTR/TTB.
+  <!-- Area mail 620w x 160h @ (x=0, y=300). 4 celle 2x2 in ordine
+       COLUMN-MAJOR (drawMailCell: col = idx / MAIL_ROWS_PER_COL,
+       row = idx % MAIL_ROWS_PER_COL): la piu' recente in alto a sinistra,
+       si scende nella colonna sinistra e si prosegue in cima a destra.
        Indirizzo email come sender (no nome), icona busta inline SOLO se unread,
        time HH:MM sopra + data dd/MM sotto sulla destra. -->
   <div class="mail">
@@ -628,22 +631,30 @@
           <div class="val">20:37</div>
         </div>
 
-        <!-- Row 3: barra temp-range. Labels nere + barra/triangolo gialli.
-             drawTempRangeBarYellow disegna sul canale 0x28 (preserveYellow).
-             TRB_W=112, TRB_H=14. Centro orizzontale allineato al centro
-             del testo "HH:MM" della riga sunset sopra (sunsetRowCenterX). -->
+        <!-- Row 3: @widget slider-temp-range. Tutto NERO: cifre, barra e
+             triangolo. drawTempRangeBar() disegna con GxEPD_BLACK dentro il
+             paged loop; su questo pannello non esiste un terzo piano.
+             TRB_W=112, TRB_H=14, cella con origine a
+             (SUN_COL_CENTER_X - bufCenterX, SUN_ROW3_BASELINE - 12).
+             Geometria interna calcolata come nel C++ con morn=8, eve=12:
+               PAD=2, GAP=4, DEG_GAP=2, degR=2
+               labSlotL = wL(12) + 2 + 4 + 1 = 19  -> barLeft  = 25
+               labSlotR = wR(24) + 2 + 4 + 1 = 31  -> barRight = 75
+               barra y=7 spessa 4; triangolo base 11 px dal top cella al barY.
+             Il viewBox parte a y=-6 perche' il cerchietto dei gradi cade a
+             degY = baseline - hL + degR + 1, cioe' sopra il top della cella. -->
         <div class="sun-row r3">
-          <svg width="112" height="18" viewBox="0 0 112 18" style="position: relative; top: 0;">
-            <!-- Cifra sx morn=8 (nera) + cerchietto ° nero -->
-            <text x="2" y="14" font-size="14" font-family="Helvetica, Arial" fill="#111">8</text>
-            <circle cx="14" cy="4" r="2" stroke="#111" fill="none"/>
-            <!-- Barra gialla orizzontale (4 px spessa) -->
-            <rect x="22" y="7" width="68" height="4" fill="#e6c42c"/>
-            <!-- Triangolo giallo punta-giu' (indicatore current) -->
-            <polygon points="51,0 61,0 56,7" fill="#e6c42c"/>
-            <!-- Cifra dx eve=12 (nera) + cerchietto ° nero -->
-            <text x="92" y="14" font-size="14" font-family="Helvetica, Arial" fill="#111">12</text>
-            <circle cx="105" cy="4" r="2" stroke="#111" fill="none"/>
+          <svg width="112" height="24" viewBox="0 -6 112 24" style="position: relative; top: -6px;">
+            <!-- Cifra sx morn=8, baseline a cellY+12 (FONT_BODY) -->
+            <text x="2" y="12" font-size="17" font-family="Helvetica, Arial" fill="#111">8</text>
+            <circle cx="18" cy="-2" r="2" stroke="#111" fill="none"/>
+            <!-- Barra nera orizzontale (4 px spessa), barLeft..barRight -->
+            <rect x="25" y="7" width="50" height="4" fill="#111"/>
+            <!-- Triangolo nero punta-giu' (indicatore current, ratio 0.5) -->
+            <polygon points="45,0 55,0 50,7" fill="#111"/>
+            <!-- Cifra dx eve=12 a rightLabX = TRB_W - PAD - labSlotR = 79 -->
+            <text x="79" y="12" font-size="17" font-family="Helvetica, Arial" fill="#111">12</text>
+            <circle cx="107" cy="-2" r="2" stroke="#111" fill="none"/>
           </svg>
         </div>
 
@@ -719,13 +730,13 @@
 </div>
 
 <div class="legend-list">
-  <span><b>Schermo</b>: 960w × 672h (BWRY, rotation 0)</span>
+  <span><b>Schermo</b>: 960w × 672h (BWR: bianco/nero/rosso, rotation 0)</span>
   <span><b>Wallpaper</b>: 620w × 300h @ (x=0, y=0)</span>
   <span><b>Area mail</b>: 620w × 160h @ (x=0, y=300) — griglia 2×2 = 4 mail, sx: email + (busta inline se unread) sopra / oggetto sotto, dx: HH:MM sopra / dd/MM sotto, solo nero</span>
   <span><b>Calendario</b>: 320w × 200h @ (x=630, y=10), titolo FONT_LARGE sul bordo, cella oggi badge rosso</span>
   <span><b>Eventi</b>: 320w × 230h @ (x=630, y=220), 5 righe da ~46h px (cascata 7→6→5 con soglia 45 px: solo 230/5=46 supera), merge Outlook+Google</span>
   <span><b>Banner</b>: 960w × 212h @ (x=0, y=460) · 3 fieldset (radius 18): Indoor 154w × 202h · Weather 306w × 202h · Forecast 470w × 202h</span>
-  <span><b>Sun row 3</b>: barra temp-range gialla (canale 0x28) + cifre nere</span>
+  <span><b>Sun row 3</b>: barra temp-range morn/eve, tutta nera (nessun terzo piano su questo pannello)</span>
   <span><b>Sun row 4</b>: mini-chart temperatura (nero passato 3h + rosso forecast 9h, pallino nero su "ora")</span>
   <span><b>Oggi (eventi)</b>: testo rosso</span>
 </div>

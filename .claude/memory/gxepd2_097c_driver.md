@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_097c_960x672
-description: Driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL): tre colori chiusi dalla misura con il probe dei livelli, il PARTIAL da 639 ms e il fatto che un waveform setting è di 110 byte mentre 0x32 ne scrive 105 (le tensioni hanno comandi propri 0x03/0x04/0x2C e l'OTP le sovrascrive, da cui il nero pallido), modello durata = 20 ms x frame + 83 ms, semantica (0x26, 0x24) = (precedente, nuovo) con TP/RP condivisi fra le LUT, le due trappole di 0x26 chiuse dal flag, identificazione del pannello, init di fabbrica, vincoli e costi noti
+description: Driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL): tre colori chiusi dalla misura con il probe dei livelli (VSH1 15 V nero, VSH2 5 V rosso, come la letteratura BWR), il PARTIAL da 640 ms, 2,3x piu veloce dell'unico B/N differenziale MISURATO fra i driver a 3 colori di GxEPD2 (GDEY042Z98 1,46 s; gli altri quattro dichiarano solo la costante del pieno), il suo LIMITE DIREZIONALE (aggiunge inchiostro bene, lo toglie male: nero->bianco lascia grigio, causa fisica nel film, tensione/simmetria/multiciclo/VCOM/DURATA tutti e cinque esclusi per misura, e 28 frame sono il punto in cui il nero satura), la ricetta GFXcanvas1 + invert per scriverci testo, il waveform setting da 110 byte di cui 0x32 ne scrive 105 (tensioni su 0x03/0x04/0x2C, l'OTP le sovrascrive, da cui il nero pallido), modello durata = 20 ms x frame + 83 ms valido solo senza power down, semantica (0x26, 0x24) = (precedente, nuovo) con TP/RP condivisi, le due trappole di 0x26 chiuse dal flag, perche il partial non passa dal template (nextPageBW disegna due volte e vuole disarmare setPaged), Mode 2 dell'OTP VUOTO, deep sleep 0x01 ritiene la RAM e 0x03 no, bit SM del MUX che dimezza il pilotaggio (nero -> grigio a righe), 0x21 che FUNZIONA e il cui {40 00} fa sparire l'accent, identificazione del pannello, init di fabbrica, vincoli e costi noti
 type: reference
 ---
 
@@ -282,9 +282,36 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   | `gdeq/GDEQ0426T82` | 800×480 | B/N | idem | `80` | idem | `F7`, fast `0x1A{5A}`+`D7` | `83` | `01` |
   | `epd/370_TC1` | 280×480 | B/N | `CF` | `C0` | scrive `0x03`,`0x04`,`0x2C{44}`,`0x37`, LUT via `0x32` | `CF` | `83` | `03` |
 
-  **Il fatto che orienta la scelta della base: nessuno dei tre driver a 3 colori ha il partial, e
-  tutti e sei i monocromatici ce l'hanno** con `0x26` come frame precedente. È la ragione per cui il
-  partial del driver custom non viene dalla sua base ma dal `1160_T91`.
+  **Il fatto che orienta la scelta della base: nessuno dei tre driver a 3 colori SSD1677 ha il
+  partial, e tutti e sei i monocromatici ce l'hanno** con `0x26` come frame precedente. È la ragione
+  per cui il partial del driver custom non viene dalla sua base ma dal `1160_T91`.
+
+  **Fuori dall'SSD1677, però, cinque driver a 3 colori un B/N differenziale ce l'hanno**, esposto
+  come `refresh_bw()`, e il template `GxEPD2_3C` ha per loro `displayWindowBW()` e `nextPageBW()`.
+  È il termine di paragone con cui giudicare il nostro partial, con la misura che ciascuno dichiara:
+
+  | driver | controller | pieno | B/N differenziale |
+  |---|---|---|---|
+  | `gdey3c/GDEY042Z98` 4.2" | SSD1683 | 22,8 s | **1,46 s**, annotato "using refresh_bw" |
+  | `gdey3c/GDEY075Z08` 7.5" | UC8179 | 26,3 s | costante = pieno, il commento cita anche 16,8 s |
+  | `epd3c/GDEW075Z08` 7.5" | GD7965 | 17,1 s | costante ripetuta dal pieno |
+  | `epd3c/GDEW0213Z19` 2.13" | UC8151D | 16,8 s | costante ripetuta dal pieno |
+  | `epd3c/GDEH029Z13` 2.9" | UC8151D | 17,8 s | costante ripetuta dal pieno |
+  | **driver custom** 9.7" | **SSD1677** | **24,0 s** | **0,64 s misurati** |
+
+  **Attenzione a come si legge la colonna**: `partial_refresh_time` è un delay di fallback, e solo
+  il GDEY042Z98 ne dichiara uno distinto dal pieno. Per gli altri tre la costante non dice niente
+  sul loro differenziale, quindi l'unico paragone misurato è 1,46 s contro i nostri 0,64.
+
+  Due cose da portarsi dietro. La prima: **contro l'unico tempo misurato della famiglia siamo 2,3x
+  più veloci**, su un vetro con più del quadruplo dell'area del 4.2". La seconda: `GDEY042Z98` il suo 1,46 s lo ottiene con
+  `0x22 = 0xDC` e **nessuna LUT custom**, cioè `0xCC` più il bit 4, facendosi dare dall'OTP il banco
+  di Mode 2 — che su questa 9.7" **non esiste** ([[ssd1677_command_set]]). Scrivere la LUT via
+  `0x32` non è quindi una scelta di stile ma l'unica strada. L'architettura combacia: `GDEY042Z98`
+  ha `hasFastPartialUpdate = false`, `refresh(x, y, w, h)` che fa un refresh pieno e il B/N come API
+  separata, riga per riga le stesse scelte del driver custom. E il commento del suo example enuncia
+  la nostra regola di allineamento: *"the controller requires old and new data to be equal outside
+  of the partial window, else it would refresh also outside of the partial window"*.
 
   GDEM133Z91 ha **quattro comandi su cinque byte-identici** al firmware SOLUM (`0x0C` col quinto
   byte `0x80`, `0x3C{01}`, `0x18{80}`, `0x22{F7}`); differiva solo il conteggio gate di `0x01`.
@@ -298,6 +325,21 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   bypassa la RED RAM sul pieno, `{00 00}` la lascia normale sul partial), `0x18` scritto **prima**
   di `0x0C`, il terzo byte di `0x01` a `0x02` (bit SM, scansione interlacciata), e il banco caldo
   chiesto con `0x1A` + `0x22 = 0xD7` invece che con `0xF7`.
+
+  **Due di quei quattro sono stati provati sul vetro, e vanno lasciati stare, per motivi diversi.**
+  Il **bit SM dimezza il pilotaggio**: nella variante `GDEQ0426T82` le zone che dovrebbero essere
+  nere escono GRIGIE a righe alternate imprecise mentre il bianco resta bianco, cioè l'artefatto
+  colpisce solo le aree pilotate. È l'unica delle sette sequenze con un difetto vero, e upstream
+  stesso commenta quel byte `// SM (interlaced) ??`.
+  E **`0x21 = {40 00}` fa sparire l'accent**: quel comando funziona eccome, forma a due byte
+  compresa, e il suo Bypass RAM-as-0 sul nibble RED toglie il rosso dal vetro
+  ([[ssd1677_command_set]]). Corretto sui monocromatici da cui l'idioma viene, distruttivo su un
+  BWR. Restano non discriminati `0x18` prima di `0x0C` e il banco caldo.
+
+  **Sei sequenze di init su sette non mostrano difetti di resa**, la custom e GDEM133Z91
+  comprese: a distinguere le altre sono convenzioni di coordinate e di lettura della RAM (entry
+  mode `0x02` specchia, `0x01` capovolge, `0x21` in BW inverse manda in negativo), non la resa. La sonda non discrimina quindi fra i candidati sulla qualità, e
+  non c'è argomento né per cambiare base né per dire che le altre siano peggio.
 
   **`0x0C[4] = 0xFF` di GDEM102T91 è fuori dalla tabella del datasheet**, che per il soft start
   documenta solo `0x40` (Level 1) e `0x80` (Level 2): resta fuori dalle sequenze riprodotte.
@@ -313,9 +355,16 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   access the RAM"* a 3 µA, il modo 2 *"Cannot retain RAM data"* a 1 µA (tabella elettrica, verbatim).
   Il driver custom manda `0x03` e per questo `_InitDisplay()` riarma `_initial_write` al risveglio:
   se questo silicio si comportasse come l'SSD1683, `0x01` conserverebbe la RAM al prezzo di ~2 µA, e
-  quel riarmo diventerebbe inutile. La ritenzione è una misura e non una deduzione: la sonda del
-  deep sleep di `examples/097c/panel_diagnostic` la esercita facendo, dopo il risveglio, un refresh
-  **senza riscrivere la RAM**.
+  quel riarmo diventerebbe inutile. **MISURATO: si comporta come l'SSD1683.** La schermata dopo il
+  risveglio da `0x10 = 0x01` è identica a quella prima del sonno, cioè la RAM è **ritenuta**;
+  quella dopo `0x10 = 0x03` stampa **pixel casuali nei tre colori**, cioè la RAM è persa e
+  indefinita, non azzerata. La sordità la prova la stessa osservazione, perchè mentre il controller
+  dorme la sonda gli manda un riempimento a nero di TUTTA la RAM B/N più un refresh: da sveglio lo
+  schermo sarebbe diventato nero, e invece è tornata l'immagine di prima. Risveglio 234 ms.
+  **Il driver resta su `0x03`**: il firmware fa comunque un refresh pieno a ogni risveglio, quindi
+  la ritenzione varrebbe i 18 ms del pattern di pulizia al prezzo di ~2 µA continui, ed è anche
+  l'accoppiata che non può sbagliare — perdere la RAM senza riarmare `_initial_write` stamperebbe
+  esattamente quel frame casuale.
 
 - **SSD2677 non è un'alternativa**: è un altro protocollo, e la scelta la determina il silicio, non
   la preferenza. Comandi scritti dai due driver: SSD1677 (`GDEM133Z91`) usa
@@ -330,11 +379,15 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
 
 - **Il partial esiste, 639 ms misurati sul vetro, e vive fuori dal template.** Dettaglio completo
   nella sezione "Partial in bianco e nero" più sotto. `hasFastPartialUpdate = false` non è prudenza
-  ma struttura: in modalità partial `GxEPD2_3C` scriverebbe il piano accent dentro `0x26`
-  (`GxEPD2_3C.h:340`), che sotto la LUT custom è il frame precedente, e con il flag alzato
-  ripeterebbe anche l'intero loop paged (`GxEPD2_3C.h:354-358`).
-  Non serve invece niente dell'OTP: `0xFC`, `0xFF`, `0xCF` e `0xC7` misurano tutti 24,6-24,8 s,
-  quindi **in OTP c'è una sola waveform** e il differenziale del silicio non è una scorciatoia.
+  ma struttura, e **le due leve vanno tenute distinte** perchè è facile attribuirle allo stesso flag:
+  in modalità finestra parziale `GxEPD2_3C` scrive il piano accent dentro `0x26` a ogni pagina
+  (`GxEPD2_3C.h:340`) e questo dipende da `hasPartialUpdate` più `setPartialWindow()`, **non** dal
+  flag — a proteggere è `refresh(x, y, w, h)`, che manda a `_Update_Full()`. Il flag è consultato in
+  un solo punto (`GxEPD2_3C.h:355`) e fa una cosa sola: ripetere l'intero loop paged dopo il
+  refresh, riscrivendo i due piani senza rinfrescare e senza riallineare `0x26`.
+  Non serve invece niente dell'OTP, per una ragione netta: **in OTP non c'è
+  nessuna waveform di Mode 2** e le sue sequenze non dipingono affatto — vedi
+  [[ssd1677_command_set]].
 
 - **`GxEPD_YELLOW` finisce sul rosso, ed è corretto**: il template upstream `GxEPD2_3C` mappa
   `GxEPD_YELLOW` sul piano red (`GxEPD2_3C.h:196`), e su questo film è l'unico esito possibile
@@ -463,11 +516,58 @@ testimone nero `(0,0)` → LUT0 → zeri → intatto. Ogni pixel osservato torna
 due transizioni stanno negli stessi 28 frame. L'unico modo di rompere la simmetria è la fase di
 reset, che ha polarità opposta nelle due LUT.
 
-**Quello che NON serve, ed è misurato**: una catena di partial non ha bisogno di refresh pieni
-periodici. Undici passate consecutive attraverso il driver non hanno degradato nè i testimoni nè il
-fondo, e un solo refresh pieno finale riporta il vetro netto con l'accent rosso saturo. I pixel non
-pilotati non sbiadiscono: quello che sembrava sbiadimento nella sonda a SPI diretta era pilotaggio
-non voluto, perchè lì `0x26` non era allineata e quei pixel cadevano su LUT1 o LUT2.
+**IL LIMITE È DIREZIONALE: il partial aggiunge inchiostro bene e lo toglie male.** Bianco→nero
+rende un nero pieno; nero→bianco **non torna al bianco** e lascia un grigio molto leggero. La causa
+sta nel film e non nella sequenza: su un BWR il pigmento nero e quello rosso hanno la **stessa
+carica positiva** (il bianco negativa), quindi un campo li muove insieme, ma il nero è **leggero e
+veloce** e si pilota a **+15 V** mentre il rosso è **pesante e lento** e si pilota a **4-7 V**. I
+28 frame a 50 Hz sono 560 ms: bastano al nero e non al rosso, che resta disturbato e non si
+riassesta. I valori 15 V / 5 V sono quelli che il probe dei livelli ha misurato su questo film, e
+coincidono con la letteratura sui BWR.
+
+Che non sia una carenza della LUT è **escluso per misura su CINQUE assi**, non quattro. La taratura
+del silicio aveva chiuso sette tensioni fra 9 e 15 V con waveform simmetrica, `LUT1` resa duale di
+`LUT2`, il multiciclo a 3 cicli a frame costanti e tre valori di VCOM. L'ultimo era la **durata**, provata
+attraverso il driver scalando i `TP` del gruppo di drive:
+
+| drive | frame | nero | bianco |
+|---|---|---|---|
+| ×1 | 28 | 765 ms | 682 ms |
+| ×2 | 46 | 1124 ms | 1040 ms |
+| ×4 | 82 | 1841 ms | 1758 ms |
+| ×8 | 154 | 3275 ms | 3192 ms |
+
+Le quattro bande escono **molto simili**, con la ×8 appena meglio della ×4: il guadagno satura già
+lì. Ottuplicare il drive compra un miglioramento marginale del bianco e **niente** sul nero, quindi
+il residuo è del film e non del budget di tempo. **Attenzione a rileggere il log da solo**: la
+domanda costringeva a scegliere una banda fra quattro senza l'opzione "sono uguali", e il tasto `4`
+registrato direbbe il contrario.
+
+**PERCHÈ 28 FRAME**, che smette di essere un numero ereditato dalla tabella upstream: è il punto in
+cui **il nero satura**. Nelle quattro bande il nero esce pieno e uguale dalla ×1 alla ×8, quindi
+ogni frame oltre i 28 si paga in tempo senza comprare resa, e lo pagherebbe per **una sola** delle
+due transizioni.
+
+Corollario da non dimenticare: **le dieci fasi a VSS della `LUT1` upstream non sono tempo
+sprecato**, perchè la letteratura descrive inserzioni ripetute a 0 V come stadio di stabilizzazione
+delle particelle (struttura *balance → shaking → imaging*), e il compositore simmetrico della sonda
+quelle pause le elimina.
+
+**Quello che NON serve, ed è misurato**: le aree **mai pilotate** non sbiadiscono, quindi una catena
+non ha bisogno di refresh pieni periodici per proteggerle. Undici passate consecutive non hanno
+degradato nè i testimoni nè il fondo, e un solo refresh pieno finale riporta il vetro netto con
+l'accent rosso saturo; quello che sembrava sbiadimento nella sonda a SPI diretta era pilotaggio non
+voluto, perchè lì `0x26` non era allineata e quei pixel cadevano su LUT1 o LUT2. Da non confondere
+col **pavimento di grigio dell'area di lavoro**, che invece si accumula e che solo un refresh pieno
+azzera: la letteratura ne raccomanda uno ogni 5-10 passate.
+
+**Come ci si scrive dentro testo e forme**, senza comporre la bitmap a mano e senza passare dal
+template: si disegna su una **`GFXcanvas1`** di Adafruit_GFX, che ha tutte le primitive, e si passa
+il suo buffer a `drawImagePartial(..., invert = true, pgm = false)`. `invert` serve perchè la tela
+mette a 1 i pixel disegnati mentre in `0x24` il bit 1 è il bianco. Un solo rendering, 640 ms. Il
+driver espone anche `drawImagePartialPart()` per un rettangolo di una bitmap più grande e
+`refreshPartial(x, y, w, h)` come overload dichiarativo (le coordinate sono ignorate: la finestra
+non confina). Ricetta e vincoli d'uso nel README della libreria, §3.1.
 
 **Le due trappole dell'API, chiuse nel driver dal flag `_previous_in_color_ram`.** Sotto la LUT
 custom `0x26` è il frame precedente in polarità BW, e un refresh pieno la rilegge come **accent**:
@@ -481,12 +581,25 @@ nessun uso possibile per quel contenuto: cancellarlo non può mai distruggere un
 in cui la pulizia è completa perchè `GxEPD2_3C::firstPage()` riempie solo il buffer locale e non ha
 ancora scritto sul controller.
 
-**Altre due cose che il driver deve fare e che si dimenticano.** `refreshPartial()` chiama
-`_InitDisplay()` se serve, altrimenti una passata come prima operazione dopo `hibernate()` girerebbe
-senza SWRESET, MUX e entry mode. `drawImagePartial()` porta la RAM a uno stato definito quando
-`_initial_write` è alto: senza, `_writeImage` chiamerebbe `writeScreenBuffer()` che azzera `0x26` a
-`0x00`, cioè **frame precedente tutto nero**, e ogni pixel bianco cadrebbe su LUT1 facendo pilotare
-tutto lo schermo.
+**TUTTE le porte del partial passano da `_ensurePartialRamDefined()`**, ed è l'invariante da non
+rompere. La causa unica: `_InitDisplay()` **riarma `_initial_write`** quando si arriva da un
+`hibernate()`, perchè il deep sleep lascia la RAM indefinita. Una porta che chiami l'init nudo senza
+poi consumare quel flag lascia la RAM casuale, e sotto la LUT del partial uno `0x26` casuale fa
+pilotare l'intero schermo. Per questo `drawImagePartial()`, `drawImagePartialPart()`,
+`refreshPartial()` e `writeScreenBufferPrevious()` chiamano l'helper e non `_InitDisplay()`.
+
+L'helper **abbassa `_initial_write` PRIMA** delle scritture e usa le primitive private: da lì si
+rientra in `writeScreenBufferPrevious()`, e col flag ancora alto la ricorsione non terminerebbe.
+Le sole chiamate dirette a `_InitDisplay()` che restano legittime sono in `writeScreenBuffer()`,
+nei due writer privati e nell'helper stesso.
+
+Effetto collaterale utile su `refreshPartial()`: dopo un risveglio i due piani partono bianco e
+bianco, quindi ogni pixel cade su `LUT3` che è a zero e una chiamata fuori posto diventa un
+**no-op** invece di pilotare tutto lo schermo.
+
+**I due writer privati ritornano `bool`**, cioè se hanno scritto davvero: le due `drawImagePartial*()`
+lo guardano e non lanciano una passata da 640 ms per un rettangolo che, tagliato sullo schermo, non
+ha superficie. Gli altri undici call site lo ignorano.
 
 **`setPartialLut(const uint8_t* lut110)`** sostituisce la waveform, e fa scendere il booster:
 altrimenti le nuove tensioni verrebbero scritte ad analog già acceso e `_PowerOn()` salterebbe,

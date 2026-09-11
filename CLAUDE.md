@@ -153,9 +153,11 @@ restano possibili ma spiegano solo il silenzio, non l'assenza sul tag di fabbric
 e di un secondo boost.
 
 Due conseguenze che si pagano se ignorate. La prima: il **read-back non esiste** su questi FPC
-(vedi sopra). La seconda: in OTP c'è **una sola waveform**, misurato con `0xFC`, `0xFF`, `0xCF` e
-`0xC7` tutti a 24,6-24,8 s e uno scarto di 2 ms fra piani identici e piani opposti, quindi il
-controller non confronta i due piani e il refresh differenziale del silicio non è una scorciatoia.
+(vedi sopra). La seconda: **in OTP non c'è nessuna waveform di Mode 2**, quindi il refresh
+differenziale del silicio non è una scorciatoia. A separarle è il bit 3 di `0x22`: le sequenze di
+Mode 1 dipingono in ~24 s, quelle di Mode 2 escono in 85-225 ms **senza toccare il vetro**. Quattro
+osservazioni concordi, e la prima è diretta: la schermata della sonda che gira `0xFF` non è mai
+comparsa, il pannello passa alla successiva senza nessun refresh.
 
 **Il partial però esiste, ed è misurato: 639 ms attraverso il driver, contro i 24 s del refresh
 pieno.** Ci si arriva scrivendo una waveform propria via `0x32`, quella del GDEH116T91 (stesso
@@ -182,14 +184,36 @@ toccarlo:
   quello del bianco.
 - **`0x26` cambia significato**: sotto quella LUT l'indice è `(0x26, 0x24)` = `(frame precedente,
   frame nuovo)`, quindi un frame aggiornato in partial è **senza rosso**, e la scelta è per frame e
-  non per pixel. Da qui `hasFastPartialUpdate = false`, che non è prudenza ma struttura: col flag
-  alzato il template `GxEPD2_3C` scriverebbe l'accent dentro `0x26` e ripeterebbe anche l'intero
-  loop paged. Il partial vive quindi fuori dal template, in API opt-in che il firmware non chiama,
-  e la scelta è esplicita nel `.ino` con `DISPLAY_PARTIAL_REFRESH` più uno `static_assert`.
+  non per pixel. Il partial vive quindi **fuori dal template**, in API opt-in che il firmware non
+  chiama, e la scelta è esplicita nel `.ino` con `DISPLAY_PARTIAL_REFRESH` più uno `static_assert`.
+  Le due ragioni vanno tenute distinte perchè agiscono su leve diverse: in modalità finestra
+  parziale `GxEPD2_3C` scrive l'accent dentro `0x26` a ogni pagina, e questo dipende da
+  `hasPartialUpdate` più `setPartialWindow()`, **non** dal flag di fast partial — a proteggere è
+  `refresh(x, y, w, h)`, che fa un refresh pieno. `hasFastPartialUpdate = false` evita in più il
+  secondo giro di pagine, che riscriverebbe i due piani senza rinfrescare e senza riallineare
+  `0x26`.
 
-Non serve invece nessun refresh pieno periodico: undici passate consecutive di partial non hanno
-degradato nè i testimoni nè il fondo, e una sola passata piena alla fine riporta il vetro netto con
-l'accent rosso saturo.
+**Il partial aggiunge inchiostro bene e lo toglie male**, ed è il suo limite operativo: bianco→nero
+rende un nero pieno, mentre dove il nero viene rimosso resta un grigio molto leggero. La causa sta
+nel film: su un BWR il pigmento nero e quello rosso hanno la stessa carica positiva, ma il nero è
+leggero e veloce e si pilota a 15 V mentre il rosso è pesante e lento e si pilota a 4-7 V, e i
+560 ms della waveform bastano al primo e non al secondo. Che non sia una carenza della LUT è
+escluso per misura su **cinque assi**: sette tensioni fra 9 e 15 V, `LUT1` resa duale di `LUT2`,
+multiciclo a frame costanti, tre valori di VCOM e infine la **durata**, provata attraverso il driver
+fino a 154 frame e 3,2 s. Ottuplicare il drive compra un miglioramento marginale del bianco e niente
+sul nero, quindi il residuo è del film. E ne esce il perchè dei **28 frame** della LUT di serie: è
+il punto in cui il nero satura, e oltre si paga solo tempo.
+
+Le aree **mai pilotate** invece non sbiadiscono, quindi non serve nessun refresh pieno periodico per
+proteggerle: undici passate consecutive non hanno degradato nè i testimoni nè il fondo, e una sola
+passata piena alla fine riporta il vetro netto con l'accent rosso saturo. Serve invece ad azzerare
+il pavimento di grigio dell'**area di lavoro**, e la letteratura sui BWR ne raccomanda uno ogni
+5-10 passate.
+
+Per scriverci dentro testo e forme non si compone la bitmap a mano: si disegna su una `GFXcanvas1`
+di Adafruit_GFX e si passa il suo buffer a `drawImagePartial(..., invert = true, pgm = false)`,
+con `x` e `w` multipli di 8. C'è anche `drawImagePartialPart()` per un rettangolo di una tela più
+grande. La ricetta e i due vincoli d'uso stanno in `GxEPD2_SOLUM_ESL/README.md` §3.1.
 
 Le altre due strade sono state provate e sono **chiuse**. I **banchi di waveform per temperatura**
 (§6.9: l'OTP tiene 34 set WS0..WS33, uno per range TR0..TR33, e il silicio sceglie in base alla
@@ -205,11 +229,27 @@ la waveform del produttore non c'è modo di sapere quanto margine ci sia. Scrive
 non è uscire dai default del chip: sono i valori a cui questo pannello ha già girato nella sonda,
 con i colori corretti.
 
-Il refresh **d'area** invece funziona già ed è misurato: la finestra RAM di `0x44`/`0x45` confina
-davvero la zona ridipinta, in Y e in X, con bordi verticali netti e la fascia di trappola fuori
-finestra rimasta intatta. Non serve a niente per la velocità, perchè la durata non dipende
-dall'altezza della finestra — 168, 48 e 24 righe misurano tutte 24,65 s — quindi restringere la
-finestra fa guadagnare solo sul push SPI, che è lo 0,6% del ciclo.
+Il refresh **d'area non esiste**, ed è misurato: la finestra RAM di `0x44`/`0x45` **non confina**
+la zona ridipinta. La sonda lascia in `0x24` una fascia di trappola a y=176..215 che nessuna
+finestra di refresh comprende, e sul vetro quella fascia **compare nera**: sotto la waveform
+dell'OTP il controller percorre tutto il pannello leggendo la RAM. Le passate d'area sembravano
+confinate solo perchè la RAM è cumulativa e nessuna la ripuliva. Da qui `refresh(x, y, w, h)` che
+manda a `_Update_Full()`: un frame corretto e lento invece di un'area sbagliata.
+
+A confinare è la **LUT**, non la geometria: sotto la waveform del partial `LUT0` e `LUT3` sono a
+zero, quindi i pixel il cui bit non cambia fra le due RAM non vengono pilotati. Ed è comunque
+inutile per la velocità, perchè la durata non dipende dall'altezza della finestra — 168, 48 e 24
+righe misurano tutte 24,65 s — quindi restringerla fa guadagnare solo sul push SPI, che è lo 0,6%
+del ciclo.
+
+**Due idiomi dei driver SSD1677 recenti di GxEPD2 sono stati provati sul vetro e vanno lasciati
+stare**, perchè su un pannello a tre colori fanno danno. Il **bit SM**, cioè il terzo byte di `0x01`
+a `0x02` che `GDEQ0426T82` e `GDEM0397T81` programmano, **dimezza il pilotaggio**: le zone che
+dovrebbero essere nere escono grigie a righe alternate mentre il bianco resta bianco. E `0x21` col
+suo **`{40 00}`** prima del refresh pieno bypassa la RED RAM e **fa sparire l'accent** — corretto
+sui monocromatici da cui l'idioma viene, distruttivo qui. Quel comando funziona eccome, forma a due
+byte compresa: `{08 00}` manda lo schermo in negativo. Il driver non lo scrive mai e resta al POR,
+e non è una convenzione fra due equivalenti ma l'unica scelta possibile.
 
 
 ## Librerie

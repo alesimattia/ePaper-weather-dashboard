@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_122c_960x768 (pannello SOLUM 12.2")
-description: Il 12.2" nel submodule - identità Newton PRO EL122H6W4A, controller SSD16xx 2x960x384 con split sull'asse corto, command set e geometria già allineati nel codice, mirror della banda nel data path, seconda coda FFC muta e le quattro ipotesi (compreso il secondo controller indirizzato con opcode|0x80 senza secondo CS), i pin M/S# e CL della cascade presenti nel pin table dell'SSD1677, come si decodifica il codice modello SOLUM, dove stanno le evidenze FCC
+description: Il 12.2" nel submodule - identità Newton PRO EL122H6W4A, controller SSD16xx 2x960x384 con split sull'asse corto, command set e geometria già allineati nel codice, mirror della banda nel data path, seconda coda FFC muta e le quattro ipotesi (compreso il secondo controller indirizzato con opcode|0x80 senza secondo CS), la CASCADE ESCLUSA dal datasheet (raddoppia le sorgenti, non i gate) e la topologia a due controller indipendenti a rail condivisi, con GxEPD2_1248c come base architetturale giusta e 579c_Z93 come contro-modello, come si decodifica il codice modello SOLUM, dove stanno le evidenze FCC
 type: reference
 ---
 
@@ -28,13 +28,68 @@ Tag di fabbrica: scheda `PRO_12.2_Nordic_TAG_R02`, MCU **nRF52811**, nessun TCON
 dei due connettori FFC**: l'altro è nudo (vedi la sezione sulla cascade).
 Famiglia: il 9.7" è **BWRY**, l'11.6" e il 12.2" sono **BWR** (etichette dei pannelli).
 
+**LA CORRELAZIONE CHE CHIUDE L'ARCHITETTURA**, dal datasheet SOLUM Newton PRO §3.1 letto su tre
+taglie invece che su una:
+
+| Taglia | Datasheet, verbatim | Asse gate | Code |
+|---|---|---|---|
+| 9.7" | `672 x 960 Pixel (121dpi) / 141.1 x 201.6 mm` | 672 | una |
+| 11.6" | `640 x 960 Pixel (100dpi) / 163.0 x 244.5 mm` | 640 | una |
+| **12.2"** | `768 x 960 Pixel (102dpi) / 190.1 x 237.6 mm` | **768** | **due** |
+
+Pitch 0,2475 mm su tutte e tre, e **solo il 12.2" sfora i 680 gate dell'SSD1677 — ed è l'unico con
+due COF**. Le altre due stanno sotto e hanno una coda sola. Non è una deduzione dal tetto dei gate:
+è una correlazione completa fra i numeri del produttore e il conteggio delle code.
+
+**La disposizione, dalla foto** (`docs/122c/fcc/122_pannello_retro.jpg`, col metro accanto): il
+vetro misura ~190 × 237 mm, e le due code escono dai **due bordi lunghi opposti alla stessa
+altezza**, ognuna con il **proprio COF** — la barra metallica alla base è visibile su entrambe.
+Quindi non c'è un COF passivo alimentato dall'altro: **sono due driver IC**. Il bordo di bonding è
+quello da 237,6 mm, cioè l'asse da 960 px = le 960 **source**; l'asse perpendicolare, 768 px, si
+divide in **384 gate per controller**. E i due COF si guardano da bordi opposti, quindi il secondo
+è ruotato di 180°: la specchiatura è un effetto atteso, non un'ipotesi. Che la banda dipinta sia
+quella **adiacente alla propria COF** — osservato — è ciò che questa disposizione predice, ed è
+incompatibile con uno split di sorgenti.
+
+**Temperatura di esercizio: `32°F ~ 104°F (0°C ~ 40°C)`** per il pannello BWRY (§3.1). Lo zero è il
+**pavimento di specifica**, non un estremo, e allo zero il 9.7" sullo stesso silicio ha misurato
+**59067 ms** di refresh — la waveform dell'OTP si allunga di 2,5x verso il freddo. È il caso
+peggiore *in specifica* che `full_refresh_time` e `busy_timeout` devono coprire.
+
+**Il quarto colore e il codice modello.** §3.6 decodifica il campo ⑤ come **"4 = RED, YELLOW
+(BWRY)"** e lista il 12.2" PRO come `EL122F6W4A`. Ma la riga *Display Colors* di §3.1 porta la nota
+del produttore stesso — **"color options are not available for all sizes"** — quindi il campo è una
+designazione di **linea**, non del film montato, e la nota lo dice. Il dato per esemplare è la
+serigrafia sul vetro: `Newton PRO 12.2" BWR normal`. Il frame a bande non può chiudere la questione
+da solo, perchè la Table 6-4 aliasa LUT3 su LUT2 e le due combinazioni con l'accent acceso rendono
+lo stesso colore per costruzione: risponde il probe dei livelli di sorgente, che pilota LUT2 a VSH1
+e LUT3 a VSH2.
+
 **GEOMETRIA E CONTROLLER: RISOLTI, e il driver è allineato.**
 
-- Ogni controller pilota **960 × 384**, split sull'**asse corto** (i 768 px). Misurato:
-  con ESP32 su una sola coda FFC si stampa correttamente un rettangolo 960×384.
+- Ogni controller pilota **960 × 384**, split sull'**asse corto** (i 768 px). Con ESP32 su una
+  sola coda FFC si stampa correttamente un rettangolo 960×384 — ma quella osservazione è
+  **circolare** sul conteggio gate: è stata ottenuta CON IL MUX PROGRAMMATO A 383, quindi conferma
+  che il MUX funziona, non quante gate line il controller piloti. Il conteggio vero lo legge la
+  sonda `0` del finder, con un righello e il MUX spazzato fino fuori specifica.
 - In coordinate driver (`WIDTH 960` = source, `HEIGHT 768` = gate) le metà sono **bande
   orizzontali**: righe 0..383 / 384..767. `PART_WIDTH`/`PART_HEIGHT` = 960/384 e il dispatch
   trasla lo slave di `y - M.HEIGHT`.
+**Costanti e comportamenti attuali del driver**, con la ragione di ognuno:
+
+| Voce | Valore | Perchè |
+|---|---|---|
+| `power_on_time` / `power_off_time` | 100 / 250 ms | misurati 82 e 221 sul controller che risponde |
+| `full_refresh_time` / `partial_refresh_time` | **60000 ms** | 18,3 s a ambiente, ma il margine si prende sul pavimento di specifica: 0 °C, dove il 9.7" misura 59067 ms. È anche il `delay()` di ripiego quando il pin BUSY non è cablato |
+| `busy_timeout` (ai costruttori) | **120 s** | il doppio del peggiore misurato in specifica |
+| `hasFastPartialUpdate` | `false` | misurato: `0xFC` su 64 e 24 righe dà 18167 e 18170 ms contro i 18308 del frame intero. E su SSD16xx a tre colori il piano `0x26` è il rosso, non il buffer *previous* |
+| `hasPartialUpdate` | `true` | vale l'indirizzamento a finestra, non un refresh più corto |
+| `isYellowPreserved()` | `false` | non c'è un terzo piano da preservare: le tre primitive del giallo restano senza corpo |
+| `hibernate()` | `0x10 = 0x03` più `_initial_write = true` | con quel parametro la RAM non sopravvive ("Cannot retain RAM data"), e sul 9.7" al risveglio i piani contengono pixel casuali. L'alternativa `0x10 = 0x01` — Mode 1 del SSD1683, misurato sul 9.7" — ritiene la RAM a ~2 µA in più, e renderebbe inutile il riarmo |
+| `_InitDisplay()` in cascade | init mandato **due volte**, nuda e con `\| CASCADE_CMD_OFFSET` | `_writeCommandAll()` in cascade abbassa il solo `_cs_m` e trasmette l'opcode nudo: senza il secondo giro lo slave non vedrebbe mai SWRESET, soft start, MUX, border, temperatura nè entry mode. `0x21` col secondo byte va invece al **solo master**, perchè arma lui a emettere CL |
+| `ScreenPart::_setPartialRamArea` | riposizionamento simmetrico con guardia | la sottrazione è su `uint16_t`: una finestra che sfora andrebbe in underflow silenzioso |
+| clock SPI dei costruttori | 10 MHz | scelta, non limite: il datasheet dà *"Maximum 20MHz for write"* |
+
 - Controller **SSD16xx**, non UC8179. Argomento chiuso senza bisogno di serigrafia:
   SSD1677 = 960 source × 680 gate; il 9.7" (672 gate) e l'11.6" (640 gate) stanno in un
   chip e hanno **una** coda, il 12.2" (768 gate) non ci sta e ne ha **due** → 2 × 384 gate.
@@ -76,11 +131,52 @@ funzionare.** Il firmware di produzione stampa già correttamente la metà servi
 risponde; lo stesso cablaggio spostato sull'altro FFC non aggiorna nulla, ed è il comportamento
 previsto.
 
-Meccanismo, dal datasheet **SSD1683 §6.12** (archiviato in
-`docs/SSD1683_Rev1.0_2021-01_Solomon-Systech.pdf`): il pin `M/S#` fissa il ruolo (VDDIO master,
-VSS slave); **nello slave oscillatore e booster/regolatore sono disabilitati**, e clock CL più
-tutte le tensioni (VDD, VGH, VGL, VSH1, VSH2, VSL, VCOM) **devono arrivare dal master**. Il master
-si mette in cascade dal registro **`0x21`, secondo parametro, bit B[4] *ckouten***.
+**LA CASCADE È ESCLUSA SU QUESTO PANNELLO, e la esclude il datasheet.** SSD1683 §6.12, letto per
+intero: *"The SSD1683 has a cascade mode that can cascade 2 chips to achieve the display resolution
+up to **800 (sources) x 300 (gates)**"*. Il chip singolo è 400x300: la cascade **raddoppia l'asse
+SOURCE e lascia i gate dove sono**. Due argomenti indipendenti convergono:
+
+1. **aritmetica**: una coppia in cascade di chip di questa famiglia darebbe 1920 source x **680
+   gate**, e 680 < 768 — non copre l'asse gate del 12.2" per nessun cablaggio;
+2. **osservazione**: con la coda lunga sola il pannello dipinge una banda larga **960 px pieni**,
+   mentre in cascade il master coprirebbe metà delle sorgenti, cioè 480 px.
+
+Lo split è quindi sull'asse gate, e la topologia sono **due controller INDIPENDENTI**, ciascuno col
+proprio oscillatore, che condividono i **rail di pilotaggio** — che il datasheet SSD1677 dà per
+alimentabili dall'esterno (Features p.5 e Table 5-4: *"VGH, VGL, VSH1, VSH2, VSL can be connected
+to external power supply"*). È la spiegazione del secondo connettore nudo che le evidenze qui sotto
+descrivono, e fa una previsione che DISCRIMINA: uno slave in cascade ha il BUSY fermo a tutto,
+perchè non ha oscillatore; un chip indipendente senza rail RISPONDE ai comandi (SWRESET, `0x47`,
+CRC `0x34`) e non dipinge, e la sua `0x14` HV Ready parte e va al massimo. La misura è la sonda `4`
+di `examples/12_2c/dual_panel_finder`.
+
+**Conseguenza sul driver**: `ADDRESSING_DUAL_CS` non è "il modello storico da sostituire", è quello
+che il datasheet sostiene; e il ramo `ADDRESSING_CASCADE` poggia su un meccanismo che non si
+applica. Conseguenza sulla base upstream: `GxEPD2_579c_GDEY0579Z93` è il **contro-modello**, non il
+modello — è 792x272, cioè 2x396 SORGENTI x 272 gate, un pannello a split di sorgenti servito da un
+CS unico proprio perchè è una coppia in cascade. L'architettura giusta per uno split di gate è
+quella che il driver ha già, e viene da `GxEPD2_1248c`: l'unico modello upstream a controller
+indipendenti con split a bande. Di `1248c` non va solo il command set, che è UC8179, e il driver lo
+prende già da `GxEPD2_1330c_GDEM133Z91`. Del 579 resta utile una sola cosa come TECNICA: il suo
+`_setPartialRamArea` a quattro entry mode.
+
+Il meccanismo della cascade, per riferimento: il pin `M/S#` fissa il ruolo (VDDIO master, VSS
+slave); **nello slave oscillatore e booster/regolatore sono disabilitati**, e clock CL più tutte le
+tensioni **devono arrivare dal master**. Il master si arma dal registro **`0x21`, secondo
+parametro, bit B[4] *ckouten*** (*"0: Single chip application, 1: Cascade application"*, con la
+nota *"For cascade mode, connect CL pin between Master sample with Slave sample"*).
+
+**Quel bit è scrivibile, e la misura viene dal 9.7".** Sul silicio gemello `0x21` nella forma a due
+byte **funziona**, verificato sul vetro: `{08 00}` manda lo schermo in negativo e `{40 00}` fa
+sparire l'accent, che sono esattamente le due opzioni del primo byte. Di per sè non riapre niente —
+l'esclusione della cascade su questo pannello poggia sull'aritmetica dei gate e sui 960 px dipinti
+da una coda sola, e nessuna delle due dipende da `0x21` — ma **toglie un dubbio**: se un giorno si
+volesse provare l'armamento, il registro risponde e il meccanismo esiste. Il caveat è che la misura
+è del 9.7", quindi vale finchè i due controller sono della stessa famiglia.
+Dettaglio in [[ssd1677_command_set]].
+
+Le evidenze che seguono descrivono l'hardware — un connettore col boost e l'altro nudo, un solo CS
+sul tag, `opcode|0x80` in OEPL — e vanno lette come **rail condivisi**, non come cascade.
 
 Evidenze, dalla più diretta:
 
@@ -96,8 +192,12 @@ Evidenze, dalla più diretta:
 4. GxEPD2 upstream fa lo stesso per il Good Display **GDEY0579Z93** (5.79" 792x272, SSD1683, due
    chip): `A:\tmp\GxEPD2-master\src\gdey3c\GxEPD2_579c_GDEY0579Z93.cpp`.
 
-Conseguenza sul cablaggio: **non serve un secondo CS** (nè GPIO32 nè altro). Servono un solo
-CS/SCK/MOSI/DC/RST/BUSY condivisi e un **ponte passivo fra le due code** che porti CL e i rail dal
+Conseguenza sul cablaggio: il secondo CS **serve** (GPIO32, perchè il 33 non è portato fuori sulla board Waveshare), perchè i due
+controller sono indipendenti e ognuno va selezionato. Il ponte fra le due code serve solo per i
+**cinque rail di pilotaggio** — VGH, VGL, VSH1, VSH2, VSL — e **`CL` non serve**, perchè ogni chip
+ha il proprio oscillatore e il datasheet lo dà *"should be left open in application"*. L'ipotesi cascade si esclude col multimetro: continuità di `M/S#` verso VDDIO o VSS su ciascuna
+coda. Il suo cablaggio sarebbe un solo CS/SCK/MOSI/DC/RST/BUSY condivisi più un **ponte passivo fra
+le due code** che portasse CL e i rail dal
 connettore master a quello slave, cioè quello che fa il tag di fabbrica. `BS1` basso su entrambe.
 
 Restano possibili, ma spiegano solo il silenzio e non l'assenza di secondo CS e secondo boost sul
@@ -124,9 +224,8 @@ chiuderebbe leggendo `0x2E` (User ID da OTP), che pretende un SDO: il connettore
 non lo porta (solo SDI, verificato sullo schematico), ma la coda cablata a mano forse sì — se lo
 porta, collegarlo a GPIO12 rende possibile la lettura, con il caveat che GPIO12 è un pin di
 strapping ([[waveshare_esp32_driver_board]]).
-Restano aperti anche:
-quale banda sta su quale coda; se lo slave vada davvero specchiato e su quali assi;
-`full_refresh_time` (25000 ms nel codice, da allineare al tempo misurato); LUT (OTP).
+Restano aperti anche: se lo slave vada davvero specchiato e su quali assi, e quale banda sta su
+quale coda.
 Il driver compila in entrambe le vie: example `12_2c/dual_panel_finder` (fase driver) e firmware
 in variante `DISPLAY_VARIANT_122C` (1 359 044 B flash, 81 592 B RAM globali).
 
@@ -160,8 +259,9 @@ un solo CS e restano **senza** offset (convenzione di `dualssd.cpp`); `_InitDisp
 `0x21 = 08 10` per mettere il master in cascade; `init()` non pilota `_cs_s` e `_waitWhileAnyBusy`
 ignora `_busy_s`. Effetto collaterale voluto: in cascade `S.isActive()` è vero anche con `cs2 = -1`,
 perchè un secondo CS non serve. La costante **non** si chiama `SLAVE_CMD_OFFSET`: quel nome è già
-una macro in `dual_panel_finder.ino` e la qualificazione di classe non compilerebbe.
-Lo sketch la seleziona col flag `DRIVER_CASCADE`.
+una macro in `dual_panel_finder.ino` e la qualificazione di classe non compilerebbe. Lo sketch
+sceglie il modo dalla voce `f` del menu e dalla candidata di init `per-CS` (voce 6 del tasto `i`),
+non da un flag di compilazione.
 
 **Costruttori**: ESP32 a 9 pin (sck, miso, mosi, cs_m, cs_s, dc, rst, busy_m, busy_s), 6 pin
 (senza bus), single-CS a 4 pin per il bring-up con una sola coda cablata (`cs_s = -1`, le
@@ -186,61 +286,79 @@ porta l'avvertenza: se la coda lunga non risponde, il pin è la prima cosa da ve
 pannello.
 
 **Sketch**. `examples/12_2c/dual_panel_finder` è una sonda **a SPI diretta** (nè GxEPD2 nè il
-driver custom, come `examples/097c/panel_diagnostic`), su una coda alla volta. Tre switch a
-compile time, tutti in un blocco IMPOSTAZIONI in testa al file chiuso da FINE IMPOSTAZIONI, con
-ogni sezione marcata [OBBLIGATORIO] / [OPZIONALE] e il suo costo in tempo: `TEST_TARGET` (coda corta
-= quella che risponde, connettore interno / coda lunga = breakout), `INIT_CANDIDATE`
-(`CAND_MINIMAL` stile 1160c, `CAND_SOLUM` stile 097c/1330c, `CAND_OEPL` init di fabbrica OEPL 9.7"
-con i pattern `0x46`/`0x47` e `0x21` = 08 00 che lì raddrizza l'immagine — da ripetere una volta per
-candidata, il confronto è il punto), `MUX_LINES` (384 misurate / 680 POR per confrontare i tempi),
-più gli opzionali `SHOW_SOLID_COLORS` (+3:15), `SHOW_FAST_CLOCK_FRAME` (+1:05),
-`SHOW_PARTIAL_PROBE` (+1:55), `SHOW_SLAVE_OPCODE_PROBE` (+1:05) e `OBSERVE_MS`
-(pausa fra i frame). Durata con i default **circa 15 minuti**; giro minimo utile 4 refresh, ~1:20. Il banner a runtime
-stampa quali fasi e quali opzionali sono attivi. Il pattern è
-composto riga per riga tutto allineato al byte: cornice, blocco nero nell'origine RAM, blocco
-accent nell'angolo opposto in X, righelli numerati X e Y con font 5x7 scalato, scaletta diagonale,
-lettera della coda, barra accent sulle ultime 64 righe della banda attesa. Poi altri frame: **4
-bande numerate** con le quattro combinazioni dei piani (dice se l'accent di questo film è rosso o
-giallo, e se la coppia BW=0/RED=1 è un quarto stato) e i **colori pieni** bianco/nero/accent
-(uniformità e ghosting), con pausa di osservazione fra i frame perchè ognuno cancella il
-precedente (`OBSERVE_MS`, `SHOW_SOLID_COLORS`).
+driver custom, come `examples/097c/panel_diagnostic`), su una coda alla volta, ed è strutturata
+come il gemello 9.7": un `.ino` corto più otto header.
 
-Misura senza guardare un pixel — è la parte che vale sulla coda muta: pattern hardware
-`0x46`/`0x47` come prova di vita che non dipende dal push SPI, power on `0x22`=0xC0, **HV Ready
-Detection `0x14` = 0x77** (cool down 80 ms x 7 cicli, massimo 560 ms: il datasheet dice che la
-detection si conclude *quando HV è pronta*, quindi un BUSY molto più corto del massimo = alte
-tensioni presenti, un BUSY che arriva al massimo = mai arrivate), **VCI Detection `0x15`**, e i
-registri in lettura `0x2F` / `0x2E` / `0x1B` con `0x2F` (POR 0x01) come prova di validità del
-percorso — i suoi **bit 5 e 4 sono i flag HV Ready e VCI**, cioè l'esito esplicito invece che
-dedotto dai tempi. Sul 9.7" la linea di lettura non esiste sul FPC 24 pin; sulla coda 21 pin del
-12.2" è da vedere, e se rispondesse `0x2E` (User ID da OTP) chiuderebbe la questione del part
-number del controller.
+```
+dual_panel_finder.ino   tabella delle sonde, sottomenu, runner, scheda DRV, menu
+Config.h                configurazione di sessione, limiti del silicio col riferimento al
+                        datasheet, input seriale bloccante, waveformGuard()
+Report.h                frame numerati, gate, registro delle misure, log a tag
+Graphics.h              font 5x7, riquadro del numero, composizione righe. NON tocca SPI
+Controller.h            bus a 4 e 3 fili, init e sei candidate, refresh, registri, LUT.
+                        NON conosce le sonde
+ProbesElettriche.h      le sonde che non spendono un refresh
+ProbesFrame.h           le sonde che dipingono un frame e lo fanno guardare
+ProbesWaveform.h        waveform, LUT, temperatura, sonno, secondo controller
+ProbesDriver.h          la fase che misura il driver invece del silicio
+```
 
-Misura anche: gate line reali (ultima etichetta Y leggibile), verso della banda su entrambi gli
-assi, tempi per piano e per refresh con ms per gate line, BUSY dell'altra coda a riposo e durante
-il refresh, **BUSY della coda sotto test a riposo prima di ogni comando** (se è alto tutto il resto
-del report non vale: pin flottante o coda non alimentata), **finestra parziale con x diverso da
-zero** (tre box a x = 0/448/896, l'unico frame che esercita il percorso di `_setPartialRamArea`),
-power on e power off cronometrati (tarano `power_on_time`/`power_off_time`), **entrambi i parametri
-di deep sleep** 0x03 e 0x11 col BUSY come testimone (decide il byte di `hibernate()`), e la
-ripetizione del pattern a **20 MHz** per validare il default di `selectSPI` del driver.
-Fuori scope di proposito: DISPLAY Mode 2 / 0xFC (sul 9.7", stesso silicio, è già stabilito che la
-seconda RAM è l'accent, quindi `hasFastPartialUpdate = false` è una conseguenza e non
-un'assunzione), varianti di `0x3C` e LUT via `0x32`. Chiude con una scheda di osservazione esito -> conseguenza che copre tutte queste
-voci. Il primo bring-up era stato fatto con lo stock
-`GxEPD2_1160c_GDEY116Z91`, che comanda 640 righe e sul pannello ne materializza 384.
-**Lo sketch è uno solo per il 12.2"**: `color_cycle` è stato eliminato e assorbito nella seconda
-fase del finder. Le due fasi si accendono separatamente con `RUN_PROBE_PHASE` / `RUN_DRIVER_PHASE`
-(più `DRIVER_DUAL` per costruire il driver col solo master): la fase probe misura il **silicio** a
-SPI diretta su una coda alla volta, la fase driver costruisce `GxEPD2_SOLUM_DRIVER_CLASS`
-dall'ombrello e misura il **driver** su entrambe le code — `clearScreen()` sui tre colori e un
-frame di 5 tile 64x64 in PROGMEM di cui uno a cavallo di `PART_HEIGHT`, che è il test del dispatch
-per righe. Se il probe stampa e la fase driver no, il difetto è nel driver: è la distinzione per
-cui le due fasi stanno nello stesso sketch. Con `DRIVER_DUAL 0` il master della fase driver **segue
-`TEST_TARGET`** invece di essere fisso su CS=15: con una coda alla volta le due fasi devono parlare
-allo stesso silicio, altrimenti provando la sola coda lunga il driver piloterebbe un attacco non
-collegato e sembrerebbe rotto. Compila in tutte le combinazioni di fasi
-(318 748 B flash con entrambe attive).
+**Nessuno switch a compile time**: una compilazione copre un'intera sessione. Dal menu si
+scelgono candidata di init (tasto `i`, sei varianti), coda, secondo FFC, esaustivo, polarità e
+dettagli; e dalla voce `p` temperature, i quattro MUX, gate per controller, i tre clock, timeout,
+finestra del multimetro, più i **parametri di registro** alle voci 10..15 — livello del soft start
+`0x0C`, entry mode `0x11`, TB, i tre campi di `0x21` con la sua posizione (mai / init / prima di
+`0x22`), durata e tentativi del reset, border `0x3C` sotto LUT custom. Le combinazioni che una
+singola sonda spazza da sè non stanno nel menu, e non è una mancanza: i quattro entry mode, i
+valori di MUX, le due strade delle tensioni della LUT, gli stadi di `0x22` e i due modi del bus li
+sceglie la sonda, perchè il confronto fra loro **è** la misura. `loop()` legge **un carattere** e chiama
+`handleKey()`; i sottomenu e le domande del gate leggono una riga. Niente NVS: la configurazione
+vive quanto la sessione, e la voce `k` ridichiara quello che si sa già.
+
+**Log a tag in colonna fissa**, come il 9.7": `MEAS` una misura, `guarda:` cosa cercare sul vetro,
+`SEEN` la risposta, `VERDICT` una conclusione, `DRV` una riga da cambiare nel driver. Il tasto `v`
+accende le righe di dettaglio, spente di default. Il numero fra parentesi quadre è il **riquadro in
+alto a destra** dell'area ridipinta e sta sul FRAME, non sulla sonda; le passate che scrivono una
+cifra dentro l'immagine prenotano il numero con `prenotaNumero()` prima di dipingere, così la cifra
+sulla fascia e il riquadro portano lo stesso numero. Prima del primo frame il prefisso non si
+stampa. Unica eccezione documentata: la sonda della polarità, dove le cifre 1 e 2 sulle fasce sono
+etichette di POSIZIONE e il log lo dichiara.
+
+**23 sonde, 30 refresh minimi (~9 min), 41 in esaustivo (~13 min)**, e la selezione di default
+esegue tutto. Le sei elettriche non spendono refresh: candidate, bit 7, clock, **impronta della
+coda** (indicizza per coda BUSY a riposo con e senza pull, `0x47`/`0x46`, power on, HV Ready `0x14`,
+VCI, CRC `0x34`, e stampa le due colonne affiancate — è la sonda che discrimina rail condivisi da
+cascade), **SPI a 3 fili** (`transferBits` a 9 bit: se in 3 fili il chip risponde, BS1 flotta alto e
+il rimedio è un pull-down, non un ponte), **reset a ritentativi** (come OEPL, contro l'impulso
+singolo del driver). Quelle sul pannello intero: `b` opcode|0x80, `0` **identità del die** (righello
+con MUX e finestra fino a 767, fuori specifica di proposito), `j` **TB = 1** (reverse scan gate in
+hardware: se funziona, `_reverseBits` si cancella), `e` **entry mode** (quattro fasce in un frame,
+con un pattern che ha struttura SOTTO il byte, perchè il datasheet non dice cosa accada ai bit
+dentro un byte scritto). Più `q` **bitmask di `0x22`**, che spegne uno stadio per volta da `0xF7`.
+
+Tre sonde spendono meno di prima perchè rimisuravano ciò che il 9.7", stesso silicio, ha già
+chiuso: MUX cronometrato 3 -> 0 refresh, partial d'area 5-7 -> 2, differenziale 3-6 -> 1. Le
+passate restano, in esaustivo. Il **ping-pong** invece è corretto e non ridotto: `0x37` A[7:0] è
+riservato e va a zero, `F[3:0]` è il Display Mode di WS[35:32], e il datasheet aggiunge *"RAM
+ping-pong function is not support for Display Mode 1"* — la versione precedente scriveva `0xFF` sul
+byte riservato e lasciava `F[3:0]` a zero, cioè chiedeva una combinazione dichiarata non
+supportata.
+
+**Lo sketch è uno solo per il 12.2"**, e le due fasi stanno dentro la stessa tabella delle sonde.
+La fase probe misura il **silicio** a SPI diretta, su una coda alla volta; la **fase driver** (tasto
+`r`) costruisce `GxEPD2_SOLUM_DRIVER_CLASS` dall'ombrello e misura il **driver** — fondo bianco con
+accent spento, cinque tile 64x64 in PROGMEM di cui uno a cavallo di `PART_HEIGHT`, che è il test
+del dispatch per righe, e la barra accent sul bordo basso della banda del master. Se il probe
+stampa e la fase driver no, il difetto è nel driver: è la distinzione per cui le due fasi stanno
+nello stesso sketch.
+
+Il driver si costruisce alla **prima** chiamata di `driver()` e non prima, perchè i suoi pin
+dipendono dalla configurazione: senza secondo connettore `cs2` e `busy2` devono restare a -1,
+altrimenti aspetterebbe un BUSY su un GPIO35 flottante e andrebbe in timeout. `driverBegin()`, in
+`ProbesDriver.h`, installa il gancio di avanzamento una volta sola da `setup()`; sta là e non nel
+`.ino` perchè il preprocessore di Arduino inserisce i prototipi generati prima del primo include, e
+una funzione del `.ino` che ritorna quel tipo non compilerebbe. Flash occupata dallo sketch:
+**~343 KB**, il 26% di `huge_app`.
 
 **I fix del 097c ora sono portabili**: i due driver condividono command set oltre che
 infrastruttura (`GxEPDImage` in un header a parte, bulk-SPI con `writeBytes`, page-hint di
@@ -259,14 +377,16 @@ Se i due COF del 12.2" sono strappati master/slave allo stesso modo, il secondo 
 implica**: indirizzare lo slave non basta a farlo stampare, perchè in cascade non ha nè oscillatore
 nè booster (vedi la sezione sulla coda muta). Il test dell'offset da solo, su una coda sola, può
 dire soltanto se il chip di quella coda è lo slave; per vedere un pixel servono anche il ponte dei
-rail e `0x21` B[4] = 1 sul master. **Il finder la implementa**: `SHOW_SLAVE_OPCODE_PROBE`
-(default 1, +1:05) esegue `probeSlaveByOpcodeOffset()`, che scrive il pattern di identificazione con
-gli opcode offset di `SLAVE_CMD_OFFSET` e lancia il refresh. `SLAVE_OPCODE_CASCADE` (default 1)
-scrive `0x21 = 00 10` **sempre al master, senza offset**: è il bit B[4] ckouten, senza il quale il
-master non emette CL e lo slave resta senza clock. `SLAVE_OPCODE_BROADCAST_COMMON` decide se
-`0x3C`/`0x18`/`0x22`/`0x20` restino in broadcast (come dualssd) o vadano anch'essi offset, e
-`SLAVE_OPCODE_BOTH_CS` tiene bassi entrambi i CS insieme per riprodurre il chip select unico del
-tag — ha senso solo con la seconda coda cablata su un pin che esiste (32, non 33).
+rail e `0x21` B[4] = 1 sul master. **Il finder la implementa** nella sonda `b`, `probeSlaveByOpcodeOffset()`, che scrive il pattern
+di identificazione con gli opcode offset e lancia il refresh; `0x21` col secondo byte va **sempre
+al master, senza offset**, perchè è il bit B[4] ckouten e chiederlo allo slave gli chiederebbe di
+emettere un clock che deve invece ricevere. Il broadcast dei comandi comuni e il chip select unico
+(`csBoth`) sono parametri della sonda, e il secondo CS ha senso solo su un pin che esiste: 32, non
+33.
+
+Su questo pannello però il bit 7 è il meccanismo della **cascade**, che il datasheet esclude: un
+esito negativo della sonda `b` è quindi **atteso** e conferma il quadro invece di lasciare la
+domanda aperta.
 **Esito negativo = nessuna informazione** finchè non c'è il ponte dei rail: lo sketch lo dice sia nel
 banner sia nella scheda di osservazione. La sonda configura **anche il master** (soft start, MUX,
 entry mode, border, sensore) perchè è la sua master activation a chiudere la sequenza e la sua banda

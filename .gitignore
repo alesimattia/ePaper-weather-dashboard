@@ -4,3 +4,6 @@ Env.h
 **/build
 GxEPD2-master
 .vscode/c_cpp_properties.json
+# Credenziali scaricate da Google Cloud (client OAuth, chiavi di
+# service account): nessun .json della root va versionato.
+/*.json

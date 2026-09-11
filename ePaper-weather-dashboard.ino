@@ -50,9 +50,10 @@
  * del calendario, riquadri, icone meteo), quindi il partial non è applicabile
  * così come è.
  *
- * A 0 il firmware lavora solo in full-window e non chiama nessuna delle cinque
- * API opt-in del driver: drawImagePartial(), refreshPartial(),
- * writeImagePrevious(), writeScreenBufferPrevious(), setPartialLut().
+ * A 0 il firmware lavora solo in full-window e non chiama nessuna delle sei
+ * API opt-in del driver: drawImagePartial(), drawImagePartialPart(),
+ * refreshPartial(), writeImagePrevious(), writeScreenBufferPrevious() e
+ * setPartialLut().
  * Lo static_assert dopo la costruzione di `display` sorveglia l'unica strada
  * per cui il partial potrebbe attivarsi da sè, cioè il flag
  * hasFastPartialUpdate del driver.
@@ -92,7 +93,7 @@
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
 // Fallback wallpaper offline: immagine PROGMEM
-#include "wallpaper/img_apple_bwry.h" //img_apple_bwry_desc
+#include "wallpaper/img_la_grande_onda.h" //img_la_grande_onda_desc
 
 /** Weather.h contiene logica, fetch OpenWeather One Call 3.0, cache,
  * rendering banner. Il .ino si limita ad accendere/spegnere il WiFi
@@ -125,22 +126,34 @@ GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());
 /**
  * Sorveglianza del refresh parziale, vedi DISPLAY_PARTIAL_REFRESH in testa.
  *
- * Il ramo a 0 controlla il flag del driver, che è l'unico modo per cui il
- * partial possa attivarsi senza che nessuno lo chiami: con hasFastPartialUpdate
- * a true il template GxEPD2_3C scrive il piano accent dentro la RAM 0x26
- * (GxEPD2_3C.h:340), che sotto la waveform del partial è il frame precedente, e
- * ripete anche l'intero loop paged una seconda volta (GxEPD2_3C.h:354-358). Il
- * rosso della dashboard andrebbe perso in silenzio: meglio fermare la build.
+ * Il ramo a 0 controlla il flag del driver, e le due cose che il template fa in
+ * modalità finestra parziale vanno tenute distinte, perchè è facile
+ * attribuirle allo stesso interruttore:
+ *   - GxEPD2_3C scrive il piano accent dentro la RAM 0x26 (GxEPD2_3C.h:340),
+ *     che sotto la waveform del partial è il frame precedente. Dipende da
+ *     setPartialWindow() e NON dal flag: a proteggere è refresh(x, y, w, h),
+ *     che sul driver 097c fa comunque un refresh pieno;
+ *   - hasFastPartialUpdate è consultato in un solo punto (GxEPD2_3C.h:355) e fa
+ *     ripetere l'intero loop paged dopo il refresh, riscrivendo i due piani
+ *     senza rinfrescare e senza riallineare 0x26.
+ * Questo firmware lavora in sola full-window, quindi il flag non verrebbe
+ * nemmeno letto. L'assert resta come tripwire: vederlo a true vorrebbe dire che
+ * qualcuno ha creduto che il template sappia pilotare questo partial.
  *
  * Il ramo a 1 esiste per non far passare il flag come un interruttore che non
  * commuta niente. Riabilitare il partial vuol dire:
  *   1. togliere questo #error;
  *   2. scrivere un percorso di rendering dedicato per le sole zone in bianco e
  *      nero, che chiami epd2.drawImagePartial() FUORI da firstPage()/nextPage():
- *      il partial del driver vive fuori dal template di proposito;
- *   3. accettare che il frame aggiornato in partial non abbia rosso, e decidere
- *      ogni quanti partial rifare un frame pieno per rimetterlo (il driver da sè
- *      non ne ha bisogno: undici passate consecutive non degradano il vetro).
+ *      il partial del driver vive fuori dal template di proposito. Per il testo
+ *      si disegna su una GFXcanvas1 di Adafruit_GFX e se ne passa il buffer con
+ *      invert = true e pgm = false, vedi il README della libreria;
+ *   3. accettare due limiti misurati. Il frame aggiornato in partial non ha
+ *      rosso, e dove il nero viene RIMOSSO resta un grigio leggero, perchè su un
+ *      film BWR il pigmento rosso è lento e i 560 ms della waveform non gli
+ *      bastano. Le aree mai pilotate non degradano, ma il pavimento di grigio
+ *      dell'area di lavoro lo azzera solo un refresh pieno: va deciso ogni
+ *      quanti partial rifarne uno.
  * NON va alzato hasFastPartialUpdate nel driver: quella è la strada sbagliata,
  * per il motivo scritto sopra.
  */
@@ -149,8 +162,8 @@ GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());
 #else
 static_assert(!Layout::Panel::hasFastPartialUpdate,
 			  "Il driver dichiara hasFastPartialUpdate = true, ma DISPLAY_PARTIAL_REFRESH è 0: "
-			  "il template GxEPD2_3C userebbe la RAM 0x26 come buffer del partial e il rosso della "
-			  "dashboard andrebbe perso. Rimettere false nel driver.");
+			  "il partial di questo driver non passa dal template e quel flag non lo abilita: "
+			  "vederlo a true segnala un fraintendimento. Rimettere false nel driver.");
 #endif
 
 /**
@@ -164,10 +177,11 @@ static_assert(!Layout::Panel::hasFastPartialUpdate,
  *     partial-window il template chiamerebbe writeImagePart(black, color) e
  *     poi refresh(x, y, w, h), che sul driver 097c fa comunque un refresh
  *     pieno: nessun guadagno e una modalità in più da mantenere.
- *   - le cinque API del partial del driver NON vanno chiamate da qui:
- *     drawImagePartial(), refreshPartial(), writeImagePrevious(),
- *     writeScreenBufferPrevious(), setPartialLut(). Sono opt-in, quindi basta
- *     non chiamarle; il perchè sta in DISPLAY_PARTIAL_REFRESH in testa al file.
+ *   - le sei API del partial del driver NON vanno chiamate da qui:
+ *     drawImagePartial(), drawImagePartialPart(), refreshPartial(),
+ *     writeImagePrevious(), writeScreenBufferPrevious() e setPartialLut(). Sono
+ *     opt-in, quindi basta non chiamarle; il perchè sta in
+ *     DISPLAY_PARTIAL_REFRESH in testa al file.
  *   - il resto lo gestisce il driver da sè: init dei due piani alla prima
  *     scrittura, ricarica della waveform dall'OTP a ogni refresh pieno, e
  *     ripulitura della RAM al risveglio da hibernate().
@@ -198,7 +212,7 @@ void initDisplay()
 // Convenzione: NwxMh = N px larghezza x M px altezza.
 //
 // Flusso:
-//   1. Boot: g_cinema_desc punta a img_apple_bwry_desc (fallback PROGMEM).
+//   1. Boot: g_cinema_desc punta a img_la_grande_onda_desc (fallback PROGMEM).
 //   2. Al primo ciclo con WiFi connesso, come ultima chiamata di rete del
 //      giro (ultimo task di rete della tabella), fetchCinemaImage() scarica i
 //      Layout::CINEMA_PLANES piani dall'endpoint render.com e li mette in
@@ -219,7 +233,7 @@ void initDisplay()
  * NOTA: Layout::CINEMA_W (larghezza X) / CINEMA_H (altezza Y) NON sono un viewport che ritaglia.
  * GxEPDImage::showImage() disegna pixel per pixel da (0,0) usando la
  * width/height del Descriptor, senza clipping. La sorgente (dinamica
- * dal server cinema o fallback PROGMEM img_apple_bwry_desc) deve essere
+ * dal server cinema o fallback PROGMEM img_la_grande_onda_desc) deve essere
  * generata esattamente a Layout::CINEMA_W (X) x Layout::CINEMA_H (Y). Una sorgente
  * piu' alta invade la fascia bianca fino a Layout::BANNER_Y; una piu'
  * larga entra nella sidebar (Layout::SIDEBAR_X), coperta con fillRect
@@ -255,7 +269,7 @@ static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
 
 // Puntatore all'immagine correntemente visualizzata: fallback PROGMEM al
 // boot, rimappato al descrittore dinamico dopo un fetch riuscito.
-static const GxEPDImage::Descriptor *g_cinema_desc = &img_apple_bwry_desc;
+static const GxEPDImage::Descriptor *g_cinema_desc = &img_la_grande_onda_desc;
 
 
 /**
@@ -382,7 +396,7 @@ static bool fetchCinemaImage()
 	// fallback PROGMEM come "immagine corrente" finchè il nuovo download
 	// non completa con successo.
 	freeCinemaBuffers();
-	g_cinema_desc = &img_apple_bwry_desc;
+	g_cinema_desc = &img_la_grande_onda_desc;
 
 	LOG("cinema", "fetching %s", Layout::CINEMA_URL);
 	LOG("cinema", "PSRAM %s, free heap: %u byte",
