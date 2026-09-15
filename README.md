@@ -45,7 +45,7 @@ Lo sketch principale compone uno schermo completo con:
   [`webapp/`](webapp/) (collage locandine + orari del prossimo martedì);
   fetch una tantum al primo boot con WiFi su, immagine tenuta in RAM/PSRAM
   per tutti i refresh successivi. Se il fetch fallisce o il WiFi non c'è
-  si usa il fallback PROGMEM [`wallpaper/img_apple_bwry.h`](wallpaper/img_apple_bwry.h).
+  si usa il fallback PROGMEM in [`wallpaper/`](wallpaper/).
   Vedi [Background cinema](#background-cinema);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
   bordo): **Indoor** (BME680, 1 colonna × 4 righe: T/RH/IAQ/pressione),
@@ -147,7 +147,7 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
 ├── test/                           # Test su host della logica di Timings.h e Scheduler.h (./test/esegui.sh)
 ├── wallpaper/
-│   └── img_apple_bwry.h            # Fallback wallpaper 4-colori (offline) + descrittore
+│   └── img_la_grande_onda.h        # Fallback wallpaper offline (620x300 B/N) + descrittore
 ├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
 ├── LICENSE
 └── README.md
@@ -157,8 +157,8 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 
 ## Selezione del display
 
-Il firmware supporta due pannelli SOLUM (controller SSD1677, 4 colori
-nativi BWRY) con la **stessa logica applicativa**: cambia solo il driver
+Il firmware supporta due pannelli SOLUM a tre colori (bianco, nero e
+rosso; controller SSD16xx) con la **stessa logica applicativa**: cambia solo il driver
 e il layout grafico (coordinate, baseline, font, dimensioni del wallpaper
 cinema). La selezione avviene via `#define` in testa allo sketch,
 scommentando UNA sola delle due varianti:
@@ -225,8 +225,9 @@ banner ancorato al fondo schermo:
 | `CINEMA_H`         | 300    | 335    | +35 sul 122c; il resto dell'extra va in EVT_H + fascia mail |
 | Area mail (`MAIL_H`)| 160h   | 221h   | `BANNER_Y - CINEMA_H`. Griglia `MAIL_COLS × MAIL_ROWS_PER_COL` = 2×2 (4 mail) sul 097c, 2×3 (6 mail) sul 122c |
 | `EVT_H`            | 230    | 326    | +96 (assorbe extra verticale in sidebar)    |
-| `CINEMA_PLANE_SZ`  | 23 400 | 26 130 | (W/8)·H per ogni piano BWRY                 |
-| `CINEMA_TOTAL_SZ`  | 70 200 | 78 390 | 3 piani -> ~69 KB (097c) / ~77 KB (122c)    |
+| `CINEMA_PLANE_SZ`  | 23 400 | 26 130 | (W/8)·H per ogni piano                        |
+| `CINEMA_PLANES`    | 2      | 3      | il 9.7" è BWR, il 12.2" chiede anche il giallo |
+| `CINEMA_TOTAL_SZ`  | 46 800 | 78 390 | piano × piani -> ~46 KB (097c) / ~77 KB (122c) |
 | `CINEMA_URL` height| 300    | 335    | il server riceve la dimensione corretta     |
 
 Tutto il banner (`X/W` dei fieldset, `BLOCK_FC*_X`, `SUN_COL_OFFSET`)
@@ -813,7 +814,7 @@ Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_097c.h`):
 
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
-| Wallpaper         | `x=0..620, y=0..300`      | Background cinema scaricato via HTTP (620w × 300h BWRY) |
+| Wallpaper         | `x=0..620, y=0..300`      | Background cinema scaricato via HTTP (620w × 300h BWR)  |
 | Area mail         | `x=0..620, y=300..460`    | Griglia 2×2 = 4 mail. Per cella: email mittente + busta inline se non letta / oggetto / orario HH:MM / data dd/MM. Solo nero |
 | Sidebar           | `x=620..960, y=0..460`    | Contenitore bianco per calendario + eventi              |
 | Calendario mese   | `x=630..950, y=10..210`   | 320w × 200h fieldset (raggio 14), mese sul bordo        |
@@ -1004,14 +1005,14 @@ con i dati disponibili.
 | Scenario | Indoor BME680 | Meteo OWM | Cinema | Calendari (Out/Goo) | Mail Gmail | Display |
 |---|---|---|---|---|---|---|
 | Tutto disponibile | OK | OK | Sfondo HTTP | Eventi visibili | Cache popolata | Tutti i campi reali, refresh ogni `DISPLAY_REFRESH_MIN` |
-| Solo Internet down (DNS / gateway down) | OK | Cache precedente o `--` | Fallback `img_apple_bwry` PROGMEM | Cache precedente o `--` | Cache preservata | Display funzionante, log seriale con i fail |
+| Solo Internet down (DNS / gateway down) | OK | Cache precedente o `--` | Fallback PROGMEM | Cache precedente o `--` | Cache preservata | Display funzionante, log seriale con i fail |
 | Solo WiFi giù (boot iniziale, mai connesso) | OK (dopo primo ULP sample 5 min) | `--` | Fallback PROGMEM | `--` | Griglia con placeholder `--` | Refresh dopo `PRIMO_FRAME_ATTESA_MS=15s` con i soli dati locali |
 | WiFi OK, server **meteo OWM** down (`401`/`429`/timeout) | OK | Cache invariata (ultimo snapshot) | OK | OK | OK | Banner meteo mostra valori storici fino al prossimo successo |
 | WiFi OK, server **Microsoft Graph** down (Outlook 5xx/timeout) | OK | OK | OK | Outlook cache invariata; Google OK | OK | Lista eventi mostra solo i Google + cache Outlook precedente |
 | WiFi OK, server **Google Calendar** down (5xx/timeout) | OK | OK | OK | Outlook OK; Google cache invariata | Possibile fail (stesso refresh_token Google) → backoff | Lista eventi mostra solo Outlook + cache Google precedente |
 | WiFi OK, server **Gmail** down (5xx/timeout) | OK | OK | OK | OK | Cache **preservata** (commit atomico) | Griglia mostra l'ultimo snapshot valido; nessun ridisegno (markDirty solo su fetch riuscito) |
 | WiFi OK, OAuth Google **token revocato** | OK | OK | OK | Calendar Google fail (cache invariata) + log seriale | Mail fail (cache invariata) + log seriale | Display ok, Outlook continua a funzionare |
-| WiFi OK, server **cinema render.com** down (HTTP error / cold start scaduto) | OK | OK | Fallback `img_apple_bwry` PROGMEM | OK | OK | Wallpaper "apple" + tutti gli altri campi reali |
+| WiFi OK, server **cinema render.com** down (HTTP error / cold start scaduto) | OK | OK | Fallback PROGMEM | OK | OK | Wallpaper di fallback + tutti gli altri campi reali |
 | WiFi OK, **nessuna** mail in INBOX | OK | OK | OK | OK | Cache azzerata (confermato dal server) | Tutte le celle mostrano placeholder `--` |
 | WiFi cade **durante** un fetch | OK | Cache invariata | Buffer riallocato al prossimo trigger | Cache invariata | Cache **preservata** | Display ok, retry al prossimo trigger di cadenza |
 | Tutto down salvo BME680 | OK | `--` | Fallback PROGMEM | `--` | Cache vuota | Display mostra solo Indoor + grafica fissa |
@@ -1047,31 +1048,33 @@ La fascia tra fine wallpaper e banner meteo (y=`CINEMA_H`..`BANNER_Y`:
 ### Flusso
 
 1. **Boot**: `g_cinema_desc` in [`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino)
-   punta al fallback PROGMEM `img_apple_bwry_desc` — il display ha comunque
+   punta al fallback PROGMEM `img_la_grande_onda_desc` — il display ha comunque
    un'immagine da mostrare se il WiFi non è ancora connesso o l'endpoint
    non risponde.
-2. **Prima connessione WiFi**: nel `loop()`, *dopo* il fetch meteo
-   (OpenWeather) e *prima* dei fetch calendari (Outlook/Google),
-   `fetchCinemaImage()` fa un `HTTP GET` a `Layout::CINEMA_URL`, che vale:
+2. **Prima connessione WiFi**: `fetchCinemaImage()` è l'**ultimo** task di rete
+   del giro, dopo meteo, mail e calendari, perché è l'unico che può pagare il
+   cold start di render.com e il tempo degli altri è la copertura di quel boot.
+   Fa un `HTTP GET` a `Layout::CINEMA_URL`, che vale:
    ```
-   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwry&dither=floyd  (097c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwr&dither=floyd   (097c)
    https://cinema-epd.onrender.com/cinema/arduino?width=620&height=335&colors=bwry&dither=floyd  (122c)
    ```
    L'URL e i parametri `width`/`height` sono hardcoded nel Layout della
    variante: cambiare display significa solo scommentare l'altro
    `DISPLAY_VARIANT_*` nel `.ino`. Il dominio resta `cinema-epd.onrender.com`
    (vedi `Layout::CINEMA_URL`).
-3. **Allocazione adattiva**: 3 buffer da `Layout::CINEMA_PLANE_SZ` byte
-   ciascuno (23 400 sul 097c, 26 130 sul 122c). Totale `Layout::CINEMA_TOTAL_SZ`
-   = ~70 KB (097c) / ~78 KB (122c). La funzione `allocPlaneBuffer()`:
+3. **Allocazione adattiva**: `Layout::CINEMA_PLANES` buffer da
+   `Layout::CINEMA_PLANE_SZ` byte ciascuno, cioè 2 × 23 400 = 46 800 byte sul
+   097c, che è a tre colori, e 3 × 26 130 = 78 390 sul 122c. La funzione
+   `allocPlaneBuffer()`:
    - prova prima `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` se
      `psramFound()` ritorna `true`;
    - fallback a `malloc()` sull'heap interno se la PSRAM non c'è o
      l'allocazione PSRAM fallisce.
    Logga su Serial quale segmento ha usato e la memoria libera residua,
    così al primo boot si capisce subito la configurazione della board.
-4. **Read stream**: `getStreamPtr()->readBytes()` in 3 fasi sequenziali
-   (black → red → yellow) direttamente nei buffer. Il formato binario è
+4. **Read stream**: `getStreamPtr()->readBytes()` in `Layout::CINEMA_PLANES`
+   fasi sequenziali (black → red → yellow) direttamente nei buffer. Il formato binario è
    header-less (vedi [webapp/README.md → Formato binario `/cinema/arduino`](webapp/README.md#formato-binario-cinemaarduino)):
    zero parsing lato ESP32, il body HTTP è già nella rappresentazione
    attesa dal driver.
@@ -1114,15 +1117,15 @@ scheduler esterni, quindi è immune a DST e a deriva di cron.
 
 ### Dimensionamento e PSRAM
 
-| Variante | `CINEMA_PLANE_SZ` | `CINEMA_TOTAL_SZ` (3 piani BWRY) |
-|----------|------------------:|---------------------------------:|
-| 097c (620w × 300h) | 23 400 byte | **70 200 byte** (~69 KB) |
-| 122c (620w × 335h) | 26 130 byte | **78 390 byte** (~77 KB) |
+| Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` |
+|----------|------------------:|----------------:|------------------:|
+| 097c (620w × 300h, BWR)  | 23 400 byte | 2 | **46 800 byte** (~46 KB) |
+| 122c (620w × 335h, BWRY) | 26 130 byte | 3 | **78 390 byte** (~77 KB) |
 
 | Configurazione board | Esito allocazione                                 |
 |----------------------|---------------------------------------------------|
 | ESP32-WROVER (PSRAM 4–8 MB) | OK per entrambe le varianti: tutti i buffer in PSRAM, heap interno libero per altro |
-| ESP32 classico (no PSRAM, ~320 KB DRAM di cui ~120 KB usati da WiFi/Arduino) | OK su entrambe le varianti (~69 KB sul 097c, ~77 KB sul 122c in heap interno). La riduzione di `CINEMA_H` (per fare spazio alla UI mail) ha liberato ~30-50 KB rispetto al layout pre-mail. Verifica `ESP.getFreeHeap()` dopo connessione WiFi |
+| ESP32 classico (no PSRAM, ~320 KB DRAM di cui ~120 KB usati da WiFi/Arduino) | OK su entrambe le varianti (~46 KB sul 097c, ~77 KB sul 122c in heap interno). La riduzione di `CINEMA_H` (per fare spazio alla UI mail) ha liberato ~30-50 KB rispetto al layout pre-mail. Verifica `ESP.getFreeHeap()` dopo connessione WiFi |
 | ESP32 low-memory / già caricato | Allocazione fallisce → fallback al PROGMEM, nessun crash |
 
 Al primo boot il Serial monitor stampa qualcosa come:

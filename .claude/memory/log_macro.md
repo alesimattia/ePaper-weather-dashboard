@@ -12,6 +12,8 @@ type: project
 
 Il preprocessore concatena tag, testo e a capo in **un unico letterale**: nessuna concatenazione a runtime, `.rodata` identica a scrivere il tag a mano.
 
+`__VA_OPT__(,)` emette la virgola solo quando gli argomenti variadici ci sono: è ciò che permette a una macro sola di servire sia `LOG("tag", "testo")` sia `LOG("tag", "http=%d", code)` senza lasciare una virgola sospesa. È **C++20 standard**, non l'estensione GNU `, ##__VA_ARGS__`, e ha un prezzo su un compilatore host: MSVC lo conosce solo con il preprocessore conforme, quindi i test su host vanno compilati con `/Zc:preprocessor` (vedi [[build_toolchain_arduino]]). Non va sostituito con la forma GNU per assecondare un compilatore che serve solo ai test.
+
 **`F()` va tolto, e non è cosmetica.** Su ESP32 `F()` è un semplice cast (`PROGMEM` è vuoto, `PSTR(s)` è `(s)`), quindi non risparmia RAM. Ma se il format string fosse avvolto in `F()` si selezionerebbe l'overload `Print::printf(const __FlashStringHelper*, ...)`, che **non ha `__attribute__((format))**: si perderebbe il controllo del format string su tutti i call site. Con la forma attuale il controllo c'è e la diagnostica punta alla riga della chiamata — ma va compilato con `--warnings more`, perché la build passa `-w`.
 
 **Verbosità a compile-time**, non a runtime: `LOG_LEVEL` 0/1/2 nel `.ino`. La forma spenta è `((void)sizeof(...))`, che in contesto non valutato non genera né codice né stringhe, resta type-checked e marca gli argomenti come usati (niente `-Wunused-variable`). È un'**espressione**, quindi `LOG(...)` funziona come ramo senza graffe di un `if/else` senza il solito `do{}while(0)`.

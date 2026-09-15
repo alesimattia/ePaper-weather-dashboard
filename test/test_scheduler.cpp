@@ -3,21 +3,60 @@
  * ritenti, cadenza giornaliera con recupero, fascia oraria, ora legale,
  * rollover di millis() e clamp del light sleep.
  *
- * Include l'header VERO del firmware (-I..), non una copia. L'orologio di
- * sistema e' sostituito da una macro perche' Scheduler.h chiama time(nullptr);
- * localtime_r e mktime restano quelli di libc, cosi' il fuso Europe/Rome e il
- * cambio dell'ora legale sono quelli veri.
+ * Include l'header VERO del firmware (-I..), non una copia. Tre funzioni della
+ * piattaforma sono sostituite da macro: time(), perche' Scheduler.h chiama
+ * time(nullptr), piu' localtime_r() e mktime(), che passano dalle regole POSIX
+ * di stub/fuso_posix.h invece che dalla libc dell'host.
+ *
+ * Il fuso non e' quindi quello di sistema, ed e' voluto: sull'ESP32 non esiste
+ * nessun database IANA e newlib interpreta esattamente la stringa CAL_POSIX_TZ,
+ * cioe' fa lo stesso lavoro dello stub. In piu' il CRT Windows non legge i
+ * campi di transizione di quella stringa, quindi con la libc dell'host il test
+ * non sarebbe attendibile fuori da macOS e Linux.
+ *
+ * Perche' la cosa non diventi circolare, lo stub e' ancorato in due modi: una
+ * batteria di epoch di riferimento scritti come letterali, ricavati dal
+ * calendario (ultima domenica di marzo e di ottobre, transizione alle 01:00
+ * UTC per direttiva UE) e verificati contro il database dei fusi di Windows; e
+ * su host POSIX il confronto diretto con la libc lungo tutto l'anno.
  */
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include "fuso_posix.h"
+
+/** Stringa POSIX del fuso, la stessa di CAL_POSIX_TZ in Calendar.h. Duplicata
+ *  e non inclusa perche' Calendar.h tira dentro il display e tutto il resto. */
+#define TZ_TEST "CET-1CEST,M3.5.0,M10.5.0/3"
+
+/**
+ * Timings.h va incluso PRIMA delle macro: porta con se' gli stub di
+ * Preferences e Arduino, e quindi <map> e <string>. Con le macro gia' attive
+ * si rischia di riscrivere una dichiarazione di mktime del CRT, che su MSVC
+ * arriva decorata.
+ */
+#include "Timings.h"
+
+#ifndef _WIN32
+/**
+ * Accesso alle funzioni vere, definito PRIMA delle macro che le nascondono:
+ * serve al confronto fra stub e libc, che gira solo dove la libc sa leggere le
+ * regole POSIX. Due wrapper e non due puntatori a funzione, perche' glibc
+ * dichiara localtime_r con __restrict sui parametri e il tipo del puntatore
+ * non combacerebbe.
+ */
+static struct tm* libcLocaltime(const time_t* t, struct tm* out) { return localtime_r(t, out); }
+static time_t libcMktime(struct tm* t) { return mktime(t); }
+#endif
+
 static time_t g_epochFinta = 0;
 static inline time_t tempoFinto(time_t* p) { if (p) *p = g_epochFinta; return g_epochFinta; }
 #define time(p) tempoFinto(p)
+#define localtime_r(a, b) fusoLocaltime(a, b)
+#define mktime(t) fusoMktime(t)
 #include "Scheduler.h"
-#undef time
 
 uint32_t g_msFinto = 0;
 SerialeFinta Serial;
@@ -45,13 +84,121 @@ static const struct tm* oggiLocale()
   return &t;
 }
 
+/**
+ * Ancora lo stub del fuso a valori indipendenti dal suo stesso codice.
+ *
+ * Gli epoch sono ricavati dal calendario: la direttiva UE fissa le due
+ * transizioni alle 01:00 UTC dell'ultima domenica di marzo e di ottobre, che
+ * nel 2026 sono il 29/03 e il 25/10. Le ore locali attese sono state
+ * verificate contro il database dei fusi di Windows ("W. Europe Standard
+ * Time"), cioe' una terza implementazione che non e' ne' la nostra ne' la libc
+ * dell'host.
+ */
+static void verificaFuso()
+{
+  struct Atteso
+  {
+    time_t epoch;
+    int anno, mese, giorno, ora, minuto, secondo, dst;
+    const char* nome;
+  };
+  static const Atteso ATTESI[] = {
+      {1774745999, 2026,  3, 29,  1, 59, 59, 0, "un secondo prima del cambio di marzo"},
+      {1774746000, 2026,  3, 29,  3,  0,  0, 1, "  e subito dopo: le 02 non esistono"},
+      {1792889999, 2026, 10, 25,  2, 59, 59, 1, "un secondo prima del cambio di ottobre"},
+      {1792890000, 2026, 10, 25,  2,  0,  0, 0, "  e subito dopo: le 02 tornano indietro"},
+      {1768474800, 2026,  1, 15, 12,  0,  0, 0, "mezzogiorno di gennaio in ora solare"},
+      {1784109600, 2026,  7, 15, 12,  0,  0, 1, "mezzogiorno di luglio in ora legale"},
+  };
+
+  for (const Atteso& a : ATTESI)
+  {
+    struct tm t;
+    localtime_r(&a.epoch, &t);
+    const bool esatto = t.tm_year + 1900 == a.anno && t.tm_mon + 1 == a.mese &&
+                        t.tm_mday == a.giorno && t.tm_hour == a.ora &&
+                        t.tm_min == a.minuto && t.tm_sec == a.secondo &&
+                        (t.tm_isdst > 0 ? 1 : 0) == a.dst;
+    ok(esatto, a.nome);
+  }
+
+  // Andata e ritorno su un istante non ambiguo, con tm_isdst = -1 come lo usa
+  // Scheduler::msFinoAllOra().
+  {
+    struct tm t{};
+    t.tm_year = 2026 - 1900; t.tm_mon = 6; t.tm_mday = 15;
+    t.tm_hour = 12; t.tm_isdst = -1;
+    ok(mktime(&t) == 1784109600, "mktime con isdst=-1 sceglie l'ora legale in luglio");
+  }
+
+  // Le due ore patologiche, che il firmware puo' raggiungere con cine_h o
+  // wifi_h_ini a 2: qui si fissa la convenzione, non si spera che non accada.
+  {
+    struct tm t{};
+    t.tm_year = 2026 - 1900; t.tm_mon = 2; t.tm_mday = 29;
+    t.tm_hour = 2; t.tm_min = 30; t.tm_isdst = -1;
+    const time_t e = mktime(&t);
+    ok(e == 1774747800 && t.tm_hour == 3 && t.tm_min == 30,
+       "ora inesistente di marzo: 02:30 diventa 03:30 legali");
+  }
+  {
+    struct tm t{};
+    t.tm_year = 2026 - 1900; t.tm_mon = 9; t.tm_mday = 25;
+    t.tm_hour = 2; t.tm_min = 30; t.tm_isdst = -1;
+    const time_t e = mktime(&t);
+    ok(e == 1792891800 && (t.tm_isdst > 0 ? 1 : 0) == 0,
+       "ora ripetuta di ottobre: vince la seconda occorrenza, in ora solare");
+  }
+
+#ifndef _WIN32
+  /**
+   * Dove la libc sa leggere le regole POSIX, cioe' ovunque tranne Windows, il
+   * confronto diretto: se stub e sistema divergono anche solo su un istante
+   * dell'anno il test lo dice, invece di lasciarlo passare.
+   */
+  setenv("TZ", TZ_TEST, 1);
+  tzset();
+  bool concordi = true;
+  time_t divergente = 0;
+  for (time_t t = 1767225600; t < 1798761600 && concordi; t += 20 * 60)
+  {
+    struct tm mio, suo;
+    fusoLocaltime(&t, &mio);
+    libcLocaltime(&t, &suo);
+    if (mio.tm_year != suo.tm_year || mio.tm_mon != suo.tm_mon ||
+        mio.tm_mday != suo.tm_mday || mio.tm_hour != suo.tm_hour ||
+        mio.tm_min != suo.tm_min || mio.tm_sec != suo.tm_sec ||
+        (mio.tm_isdst > 0) != (suo.tm_isdst > 0))
+    {
+      concordi = false;
+      divergente = t;
+    }
+    else
+    {
+      /**
+       * Ritorno all'epoch con l'ora legale NOTA, non con -1: sull'ora
+       * ripetuta di ottobre la risoluzione di mktime con isdst = -1 non e'
+       * specificata e le due implementazioni possono divergere in modo
+       * legittimo, il che darebbe un falso allarme. La convenzione dello stub
+       * per quel caso e' fissata a parte, dalle asserzioni sulle due ore
+       * patologiche.
+       */
+      struct tm a = mio, b = suo;   // ognuno riparte dal proprio tm
+      if (fusoMktime(&a) != t || libcMktime(&b) != t) { concordi = false; divergente = t; }
+    }
+  }
+  if (!concordi) std::printf("   diverge su epoch %lld\n", (long long)divergente);
+  ok(concordi, "stub e libc concordano su ogni istante del 2026 (host POSIX)");
+#endif
+}
+
 static Scheduler::Esito esitoOk() { return Scheduler::Esito::OK; }
 static Scheduler::Esito esitoKo() { return Scheduler::Esito::FALLITO; }
 
 int main()
 {
-  setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-  tzset();
+  ok(fusoImposta(TZ_TEST), "stringa POSIX del fuso interpretata");
+  verificaFuso();
   Timings::begin();
   const uint32_t MIN = 60u * 1000u;
 
@@ -160,7 +307,7 @@ int main()
     time_t atteso = mktime(&b);
     uint32_t d = Scheduler::msFinoAllOra(7, false);
     ok((uint32_t)((atteso - g_epochFinta) * 1000) == d,
-       "ora legale: msFinoAllOra coincide con il calcolo di libc");
+       "ora legale: msFinoAllOra coincide con mktime sullo stesso fuso");
     ok(d > 8u * 3600u * 1000u, "  attraversando il cambio la distanza cresce di un'ora");
   }
 

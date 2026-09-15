@@ -8,14 +8,15 @@ Calcoli derivati. Le costanti `CINEMA_*` vivono nel namespace `Layout` (`Layout_
 
 Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y).
 
-**097c (620w × 300h BWRY):**
+**097c (620w × 300h BWR, due piani):** il pannello è a tre colori, non a quattro, e la query
+di `CINEMA_URL` chiede infatti `colors=bwr`.
 - `stride = ceil(620/8) = 78` byte/riga (`Layout::CINEMA_STRIDE`).
 - Dimensione singolo piano = `78 * 300 = 23400` byte (`Layout::CINEMA_PLANE_SZ`).
-- Total body = `3 piani * 23400 = 70200` byte (`Layout::CINEMA_TOTAL_SZ`).
-- `Content-Length` atteso = 70200 esatti; ogni mismatch → fallback PROGMEM.
+- Total body = `2 piani * 23400 = 46800` byte (`Layout::CINEMA_TOTAL_SZ`).
+- `Content-Length` atteso = 46800 esatti; ogni mismatch → fallback PROGMEM.
 - Fascia bianca y=300..460 (160h px) riservata alla UI mail (`Mail.h`).
 
-**122c (620w × 335h BWRY):**
+**122c (620w × 335h BWRY, tre piani):** qui la query chiede `colors=bwry`.
 - `stride = 78` (invariato, stessa width 620).
 - `Layout::CINEMA_PLANE_SZ = 78 * 335 = 26130` byte.
 - `Layout::CINEMA_TOTAL_SZ = 3 * 26130 = 78390` byte.
@@ -23,9 +24,9 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 - Fascia bianca y=335..556 (221h px) riservata alla UI mail.
 
 **Memoria ESP32:**
-- 097c: 3 buffer da 23400 ≈ 69 KB.
+- 097c: 2 buffer da 23400 ≈ 46 KB.
 - 122c: 3 buffer da 26130 ≈ 77 KB.
-- I 3 buffer stanno in ~69 KB sul 097c e ~77 KB sul 122c: la fascia riservata alla UI mail tiene il wallpaper basso e con esso l'occupazione.
+- Quanti buffer si allocano lo dice `Layout::CINEMA_PLANES`, e il `.ino` ci cicla sopra: allocazione, free e lettura sono un pezzo di codice solo per entrambe le varianti. La fascia riservata alla UI mail tiene il wallpaper basso e con esso l'occupazione.
 - Il modello Waveshare driver board ha tipicamente 4 MB PSRAM (modulo WROVER): allocazione comoda per entrambe le varianti.
 - Senza PSRAM (modulo WROOM bare): `ESP.getFreeHeap()` ≈ 200 KB libere; ora entrambe le varianti rientrano comodamente in heap interno. `allocPlaneBuffer()` preferisce PSRAM e fa fallback heap-interno.
 
@@ -35,4 +36,4 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 
 **Catena dimensioni → URL → ESP32 (compile-time per variante):**
 - Per cambiare display: scommentare l'altro `DISPLAY_VARIANT_*` nel `.ino`. Il `Layout_<variante>.h` corrispondente espone `CINEMA_W`, `CINEMA_H`, `CINEMA_URL` con la query `width=...&height=...&colors=bwry` già coerente. Niente da toccare a mano lato firmware.
-- Cambiare `Layout::CINEMA_W` / `CINEMA_H` SENZA aggiornare anche `width=`/`height=` in `Layout::CINEMA_URL` produce `Content-Length` mismatch silenzioso e fallback PROGMEM perpetuo. Stessa cosa per `colors`: se si vuole BWR (2 piani) bisogna cambiare URL E sostituire i 3 buffer/loop con 2 nel `.ino`.
+- Cambiare `Layout::CINEMA_W` / `CINEMA_H` SENZA aggiornare anche `width=`/`height=` in `Layout::CINEMA_URL` produce `Content-Length` mismatch silenzioso e fallback PROGMEM perpetuo. Stessa cosa per `colors`, che deve concordare con `Layout::CINEMA_PLANES` dello stesso file: il `.ino` cicla su quella costante e non va toccato, ma un `colors=bwr` con `CINEMA_PLANES` a 3 dà lo stesso mismatch silenzioso.

@@ -372,7 +372,10 @@ Vincoli da non violare:
 ## Build su questa macchina
 
 Comando unico: **`A:\tmp\arduino\build.ps1`** (`-Clean`, `-Dettagli`, `-Board <fqbn>`,
-`-Partizioni <schema>`). FQBN `esp32:esp32:esp32`, `PartitionScheme=huge_app`. Gli oggetti
+`-Partizioni <schema>`). FQBN `esp32:esp32:esp32`, `PartitionScheme=no_fs`: due slot
+applicative da 1984 KB e nessuna partizione SPIFFS, che il firmware non usa. Le due slot
+servono all'aggiornamento OTA dalla finestra di manutenzione, e `huge_app` ne ha una sola,
+quindi produrrebbe un firmware che non puo' aggiornarsi da `/update`. Gli oggetti
 intermedi stanno in `A:\tmp\arduino-build\<sketch>` e nessun binario viene esportato: **da qui non
 si flasha**, è solo compilazione di verifica e l'upload avviene da un altro PC.
 

@@ -1,6 +1,6 @@
 ---
 name: Toolchain compilazione Arduino/ESP32 su questa macchina
-description: Come compilare il firmware A:\epd da qui - arduino-cli su A:\tmp, core esp32 3.3.11 ridotto su C:\xz, junction sketch/GxEPD2, FQBN e esito verificato
+description: Come compilare il firmware A:\epd da qui - arduino-cli su A:\tmp, core esp32 3.3.11 ridotto su C:\xz, junction sketch/GxEPD2, FQBN e esito verificato; piu' i test su host con MSVC (test_timings si', test_scheduler no per le regole DST del CRT Windows)
 type: reference
 ---
 
@@ -72,15 +72,45 @@ La RAM globale della 097c è coerente con la stima ~69 KB in [[esp32_cinema_cons
 - `Env.h` è gitignored e obbligatorio per compilare; quello attuale ha solo placeholder, quindi il
   firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
 
-**Entrambe le varianti compilano** (FQBN `esp32:esp32:esp32`, `PartitionScheme=no_fs`). Lo schema **deve** essere `no_fs`: è quello con la slot applicativa più grande (1984 KB) fra quelli con **due** slot OTA, e le due slot servono all'aggiornamento via web. `huge_app` ne ha una sola e lo romperebbe:
+**Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed e' il default di `build.ps1`.
 
-| variante | flash | RAM globali |
-|---|---|---|
-| `DISPLAY_VARIANT_097C` | 1 358 336 B (43%) | 78 368 B (23%) |
-| `DISPLAY_VARIANT_122C` | 1 359 044 B (43%) | 81 592 B (24%) |
+**Lo schema di partizioni deve essere `no_fs`**, ed e' il default dello script. Le CSV del core lo mostrano senza ambiguita': `huge_app.csv` ha la sola `app0` da 3 MB, `no_fs.csv` ha `app0` e `app1` da 1984 KB ciascuna, `default.csv` due slot da 1280 KB piu' SPIFFS. Servono **due** slot perche' l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]), e il firmware non usa nessun filesystem, quindi lo spazio di SPIFFS e' meglio darlo alle due slot. Con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce: il guasto si manifesta solo al primo aggiornamento via web.
 
-I ~3,2 KB di RAM in più della 122c sono i buffer di page più alti (96 righe invece di 84). Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
+Il vincolo di dimensione e' quindi la slot da 1984 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero e' la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in piu' della 097c, che sono i buffer di page piu' alti (96 righe invece di 84), mentre il flash e' praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 
-**Dipendenza non ovvia:** `wallpaper/img_apple_bwry.h` definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `img_apple_bwry_desc was not declared` su tutte le altre varianti. La emette `epd_image_converter.pyw`, quindi va corretta lì e non solo nel file generato.
+**Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (oggi `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
 
 **Gli examples del submodule non li compila questo build** (Arduino concatena i `.ino` solo dalla root dello sketch). Si compilano a parte passando la libreria per quella build, senza installarla: comando e caveat in [[gxepd2_solum_esl_library]].
+
+## Test su host da questa macchina
+
+`test/esegui.sh` pretende `g++`, che qui **non c'è**, e in `A:\tmp` non c'è nessuna toolchain C++
+generica. Le uniche in `C:\xz\arduino\...\esp-x32\2601\bin` sono cross-compiler
+`xtensa-esp32-elf`: producono ELF per l'MCU, non eseguibili Windows, quindi non servono allo scopo.
+
+Il compilatore host disponibile è **MSVC di Visual Studio 2022 Community**, già installato
+(`VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe`): usarlo non installa niente e non viola il
+vincolo "solo `A:\tmp\sandbox`". L'ambiente del toolset si prende chiamando `vcvars64.bat` **nello
+stesso processo di `cl`**, quindi dentro un `.bat` generato, non con un `cmd /c "call ... && cl ..."`
+che perderebbe il quoting: INCLUDE, LIB e PATH non sopravvivono al processo. Lo fa
+`test\esegui.ps1`, runner Windows accanto a `esegui.sh`, con artefatti in `A:\tmp\epd-test`.
+
+- Riga verificata: `cl /nologo /std:c++20 /Zc:preprocessor /EHsc /W4 /I test\stub /I . test_timings.cpp`.
+- **`/Zc:preprocessor` non è opzionale**: `Log.h` usa `__VA_OPT__` e il preprocessore tradizionale
+  di MSVC si ferma con errore di sintassi, non con un avviso. Misurato: senza il flag, C2146 +
+  C3861 su ogni chiamata di `LOG`.
+- Il backslash finale di `/Fo"<dir>\"` va **raddoppiato**: `cl` legge `\"` come virgoletta letterale
+  e perde il resto della riga di comando (D8003 "nome del file di origine mancante").
+- Localizzato: la console di Windows PowerShell parte in codepage OEM e i `.ps1` con accenti vanno
+  salvati **UTF-8 con BOM**, come `build.ps1`, più `[Console]::OutputEncoding` a UTF-8 nello script.
+
+**La suite gira interamente qui**, `test_timings` e `test_scheduler`. Il secondo non usa il fuso
+della libc ma le regole POSIX di `test\stub\fuso_posix.h`, ed e' cio' che lo rende eseguibile su
+Windows: il CRT non legge i campi di transizione di una stringa TZ POSIX (accetta solo
+`tzn[+|-]hh[dzn]` e poi applica le regole statunitensi), e vale anche per MinGW, che usa lo stesso
+CRT. Il confronto fra stub e libc dentro il test sta sotto `#ifndef _WIN32`, quindi **su questa
+macchina non viene compilato**: quel ramo lo verifica solo il Mac.
+
+Docker Desktop e' installato (daemon fermo) e resta la via per girare la suite su glibc vera:
+`docker run --rm -v A:\epd:/src gcc:14 sh -c "cd /src/test && ./esegui.sh"`. WSL2 Ubuntu 26.04
+esiste ma e' **senza compilatore**, e installarcelo ricadrebbe fuori da `A:\tmp\sandbox`.
