@@ -23,6 +23,8 @@ Ognuna rompe l'upload se ignorata, e nessuna dà un errore chiaro:
 3. **Le credenziali della Basic Auth vanno passate a `updater.setup()`.** L'upload è atomico dentro una sola `handleClient()`: parsing multipart → `Update.end(true)` → `ESP.restart()`. Un controllo a valle arriverebbe dopo che la partizione è già scritta. Per lo stesso motivo la deadline della finestra **non può** interrompere un upload iniziato.
 4. **Lo schema di partizioni deve avere due slot applicative** (`No FS 4MB`, 1984 KB ciascuna). Con `Huge APP (3MB No OTA)` c'è una sola slot e `Update.begin()` fallisce.
 
+**La finestra fa partire anche l'orologio.** `apri(Stato::ServerSta)` e il ramo `ServerAp` quando la STA sale chiamano `Clock::sincronizza(0)`, non bloccante. Sta lì e non altrove perchè sono i due punti in cui la macchina a stati **sa** di avere la rete di casa con un indirizzo, e perchè in questa finestra la radio non è dello scheduler: `wifiOn()` non viene mai chiamata e senza quell'aggancio nessuno sincronizzerebbe. Bloccare è escluso: il loop gira ogni ~10 ms e l'attesa congelerebbe web server e access point durante un upload.
+
 ## Costi misurati
 
 mDNS pesa **~34 KB di flash** (spegnibile con `MAINT_MDNS 0`, resta l'IP). Basic Auth ~344 byte. Con tutto attivo il firmware sta al 67% (9.7") e 69% (12.2") dello slot.

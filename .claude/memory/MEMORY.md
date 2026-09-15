@@ -1,4 +1,4 @@
-- [Toolchain compilazione Arduino](build_toolchain_arduino.md) — questa macchina compila: build.ps1, arduino-cli su A:\tmp, core esp32 3.3.11 filtrato su C:\xz, junction sketch/GxEPD2; schema partizioni no_fs obbligatorio per l'OTA; test su host con MSVC via test\esegui.ps1
+- [Toolchain compilazione Arduino](build_toolchain_arduino.md) — questa macchina compila: build.ps1, installazione arduino-cli unica in C:\tmp\arduino (core esp32 3.3.11 filtrato, librerie, junction sketch), output su A:\tmp\arduino-build; schema partizioni no_fs obbligatorio per l'OTA; test su host con MSVC via test\esegui.ps1
 - [ESP32 cinema consumer](esp32_cinema_consumer.md) — fetchCinemaImage nel .ino: task GIORNALIERO a cine_h con recupero in giornata, PSRAM, fallback PROGMEM
 - [Cautela su firmware Arduino](arduino_root_caution.md) — i .h/.ino in A:\epd\ root sono firmware in produzione, modifiche solo su richiesta
 - [Webapp è git submodule](webapp_submodule.md) — A:\epd\webapp punta a github.com/alesimattia/cinema-programmation-feed; memorie webapp in webapp\.claude\memory\

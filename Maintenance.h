@@ -35,6 +35,7 @@
 
 #include "Env.h"
 #include "Timings.h"
+#include "Clock.h"
 #include "Log.h"
 #include "Scheduler.h"
 
@@ -170,6 +171,15 @@ namespace Maintenance
       if (s == Stato::ServerSta)
       {
         avviaMdns();
+        /**
+         * Qui il dispositivo sa di essere sulla rete di casa con un
+         * indirizzo, che e' la precondizione di SNTP: e' il punto giusto per
+         * far partire l'orologio, perche' in questa finestra la radio non e'
+         * dello scheduler e wifiOn() non viene mai chiamata. Non bloccante:
+         * il loop gira ogni ~10 ms e attendere congelerebbe web server e
+         * access point durante un possibile upload.
+         */
+        Clock::sincronizza(0);
         LOG("MAINT", "server su rete di casa: http://%s/ oppure http://%s.local/ per %lu s",
             WiFi.localIP().toString().c_str(), MAINT_HOSTNAME,
             (unsigned long)(finestraMs() / 1000UL));
@@ -487,6 +497,7 @@ namespace Maintenance
         if (WiFi.status() == WL_CONNECTED && !mdnsAttivo)
         {
           avviaMdns();
+          Clock::sincronizza(0);   // stesso motivo di apri(ServerSta)
           LOG("MAINT", "STA salita: raggiungibile anche su http://%s/",
               WiFi.localIP().toString().c_str());
         }

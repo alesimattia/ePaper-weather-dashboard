@@ -99,16 +99,17 @@ header (vedi [[build_toolchain_arduino]]). Si compilano passando la cartella com
 quella build:
 
 ```
-A:\tmp\arduino\bin\arduino-cli.exe compile --config-file A:/tmp/arduino/arduino-cli.yaml \
-  -b esp32:esp32:esp32 --library A:/epd/GxEPD2_SOLUM_ESL <cartella-sketch>
+C:\tmp\arduino\bin\arduino-cli.exe compile --config-file C:/tmp/arduino/arduino-cli.yaml \
+  -b esp32:esp32:esp32 --library A:/epd/GxEPD2_SOLUM_ESL \
+  --build-path A:/tmp/arduino-build/<nome-esempio> <cartella-sketch>
 ```
 
-Per forzare il define di selezione da riga di comando:
-`--build-property "compiler.cpp.extra_flags=-DSOLUM_PANEL_122C"` (cambia i flag, quindi ricompila
-tutto il core: ~10 min). **Senza** extra_flags la build di un example è incrementale e dura circa un
-minuto: è il modo normale di verificare una modifica alle sonde. Misure correnti:
-`12_2c/dual_panel_finder` 319 224 B flash / 22 652 B RAM con entrambe le fasi attive,
-`097c/panel_diagnostic` 319 248 B / 61 620 B (i buffer delle bande e della taratura).
+Il `--build-path` tiene gli intermedi su `A:\tmp\arduino-build`, come per il firmware, e rende
+incrementali le build successive. Per forzare il define di selezione da riga di comando:
+`--build-property "compiler.cpp.extra_flags=-DSOLUM_PANEL_122C"`, che cambia i flag e quindi
+ricompila tutto il core, cioè la build lenta. **Senza** extra_flags la build di un example è
+incrementale: è il modo normale di verificare una modifica alle sonde. `panel_diagnostic` occupa
+più RAM di `dual_panel_finder` per i buffer delle bande e della taratura.
 
 **Consumer.** `A:\epd` usa la libreria come submodule: i suoi `Layout_097c.h` / `Layout_122c.h`
 definiscono il proprio `SOLUM_PANEL_*`, includono `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h` ed

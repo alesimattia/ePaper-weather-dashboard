@@ -9,7 +9,7 @@
  * Qui vivono i segreti (password, API key, client secret, refresh
  * token) + la posizione GPS (dato personale sensibile). Le restanti
  * costanti di dominio stanno nei moduli consumer:
- *   - Calendar.h: CAL_POSIX_TZ (fuso + DST automatico),
+ *   - Clock.h:    CLOCK_POSIX_TZ (fuso + DST automatico),
  *                 CAL_MSGRAPH_TENANT_ID (tenant Azure AD)
  */
 

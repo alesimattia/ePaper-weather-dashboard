@@ -260,7 +260,7 @@ sorgenti (i template `GxEPD2_3C`/`GxEPD2_BW`, i driver SSD1677 di riferimento, g
 board-specific). Non modificarla e non trattarla come codice del progetto.
 
 Sta **fuori** dalla cartella del progetto perchè arduino-cli copia l'intero albero dello sketch
-dentro la build dir a ogni build, e quei 47,8 MB venivano duplicati ogni volta. Una junction dentro
+dentro la build dir a ogni build, e il clone veniva duplicato ogni volta. Una junction dentro
 `A:\epd` non risolve: **arduino-cli la segue**, misurato, e la copia torna identica.
 
 Per consultare i sorgenti c'è quindi **`epd.code-workspace`**, workspace multi-root che monta il
@@ -275,15 +275,15 @@ dentro al file:
   stia in una cartella `tmp` accanto al repo. Se sul Mac sta altrove, VS Code segna la radice come
   non disponibile senza rompere niente e basta correggere quella riga.
 
-Alla toolchain **non** arriva il clone intero: `A:\tmp\arduino\user\libraries\GxEPD2` è una
-**copia potata**, che rigenera `A:\tmp\arduino\rigenera-libreria-gxepd2.ps1` e va rifatta dopo
+Alla toolchain **non** arriva il clone intero: `C:\tmp\arduino\user\libraries\GxEPD2` è una
+**copia potata**, che rigenera `C:\tmp\arduino\rigenera-libreria-gxepd2.ps1` e va rifatta dopo
 ogni aggiornamento del clone. Tiene `library.properties`, tutti gli header tranne `src\bitmaps\`
-(42,8 MB dei 43,6 di header, fuori dal grafo di include del firmware) e il solo
+(quasi tutto il peso degli header, fuori dal grafo di include del firmware) e il solo
 `src\GxEPD2_EPD.cpp`. Il motivo è il tempo di build: Arduino compila **tutti** i sorgenti di una
-libreria, e dei 104 di GxEPD2 questo progetto ne usa uno — il pannello lo pilota il driver custom
-del submodule e dalla libreria arrivano solo header. Gli altri 103 venivano preprocessati per il
-rilevamento delle dipendenze, compilati e poi scartati dal linker: **misurati 696 s di build contro
-120 s dopo la potatura**. Gli header dei driver restano: `GxEPD2_3C.h` li include sotto
+libreria, e di quelli di GxEPD2 questo progetto ne usa uno, perchè il pannello lo pilota il driver
+custom del submodule e dalla libreria arrivano solo header. Gli altri venivano preprocessati per il
+rilevamento delle dipendenze, compilati e poi scartati dal linker: **misurato, la potatura accorcia
+la build in modo netto**. Gli header dei driver restano: `GxEPD2_3C.h` li include sotto
 `__has_include`, quindi tenerli lascia il grafo identico al clone, mentre toglierli cambierebbe
 cosa vede il compilatore.
 
@@ -371,7 +371,7 @@ Vincoli da non violare:
 
 ## Build su questa macchina
 
-Comando unico: **`A:\tmp\arduino\build.ps1`** (`-Clean`, `-Dettagli`, `-Board <fqbn>`,
+Comando unico: **`C:\tmp\arduino\build.ps1`** (`-Clean`, `-Dettagli`, `-Board <fqbn>`,
 `-Partizioni <schema>`). FQBN `esp32:esp32:esp32`, `PartitionScheme=no_fs`: due slot
 applicative da 1984 KB e nessuna partizione SPIFFS, che il firmware non usa. Le due slot
 servono all'aggiornamento OTA dalla finestra di manutenzione, e `huge_app` ne ha una sola,
@@ -379,17 +379,23 @@ quindi produrrebbe un firmware che non puo' aggiornarsi da `/update`. Gli oggett
 intermedi stanno in `A:\tmp\arduino-build\<sketch>` e nessun binario viene esportato: **da qui non
 si flasha**, è solo compilazione di verifica e l'upload avviene da un altro PC.
 
-- `arduino-cli` 1.5.2 in `A:\tmp\arduino`, con config **non** nel percorso di default: passare
-  sempre `--config-file A:/tmp/arduino/arduino-cli.yaml`.
-- Core esp32 3.3.11 + toolchain + cache in `C:\xz\arduino` — deroga autorizzata al vincolo "tutto
-  su `A:\tmp`", perchè il core completo chiede ~3,4 GB. È installato con un **index filtrato**
-  (`A:\tmp\arduino-setup\package_esp32_min_index.json`) che tiene solo i target usati:
-  reinstallando o cambiando versione va rigenerato con lo stesso filtro.
+- L'installazione Arduino sta tutta in `C:\tmp\arduino`, deroga autorizzata al vincolo "tutto su
+  `A:\tmp\sandbox`" perchè il core non entra nello spazio libero di `A:`: eseguibile in `bin\`, core esp32
+  3.3.11 e toolchain in `data\` e `staging\`, librerie in `user\libraries\`, junction degli
+  sketch in `sketch\`. Sul volume `A:` restano solo gli output delle build, in
+  `A:\tmp\arduino-build\<sketch>`: gli script di epd, rd e obd passano tutti `--build-path`.
+- `arduino-cli` 1.5.2 ha il config **non** nel percorso di default: passare sempre
+  `--config-file C:/tmp/arduino/arduino-cli.yaml`.
+- Il core è installato con un **index filtrato** (`C:\tmp\arduino\setup\package_esp32_min_index.json`,
+  generato da `pkg_esp32.json` nella stessa cartella) che tiene solo i target usati: reinstallando
+  o cambiando versione va rigenerato con lo stesso filtro. Si installa sempre con la versione
+  esplicita, mai con `core upgrade`: l'index ufficiale Arduino porta versioni esp32 più recenti
+  e non filtrate. Accanto c'è l'index filtrato del core esp8266 3.1.2, usato da `A:\obd`.
 - Una **junction, non una copia** (Arduino pretende che la cartella si chiami come il `.ino`):
-  `A:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`. La libreria `GxEPD2` invece è una
+  `C:\tmp\arduino\sketch\ePaper-weather-dashboard` → `A:\epd`. La libreria `GxEPD2` invece è una
   copia potata, vedi la sezione Librerie.
 - **Le build non stanno nella codebase**: senza `--build-path` arduino-cli mette gli intermedi in
-  `C:\xz\arduino\cache\sketches\<hash>` e, quando si esportano i binari, li lascia in una
+  `C:\tmp\arduino\cache\sketches\<hash>` e, quando si esportano i binari, li lascia in una
   cartella `build\` dentro lo sketch. `build.ps1` passa `--build-path`
   `A:\tmp\arduino-build\ePaper-weather-dashboard`; per gli examples del submodule si passa a mano
   `--build-path A:\tmp\arduino-build\<nome-esempio>`. Quella cartella serve alla compilazione

@@ -64,7 +64,7 @@ Lo sketch principale compone uno schermo completo con:
   `dd/MM` impilati a destra (come per gli eventi calendario). Solo nero,
   font come gli eventi calendario. Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
-  impostato da `Calendar::initTimezone()` in `setup()`);
+  impostato da `Clock::begin()` in `setup()`);
 - **finestra di manutenzione** al boot (default 3 min): aggiornamento del
   firmware e configurazione dei tempi da browser, sulla rete di casa, con
   access point di riserva se la STA non sale.
@@ -130,6 +130,7 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── Timings.h                       # Tutti i tempi: default, pavimenti, override runtime su NVS
 ├── Scheduler.h                     # Scheduler dei flussi temporizzati + light sleep dinamico
 ├── Log.h                           # Macro LOG/LOGV con tag e livello di verbosita'
+├── Clock.h                         # Fuso orario POSIX + sincronizzazione SNTP
 ├── Layout.h                        # Dispatcher: include Layout_097c.h o Layout_122c.h via #define DISPLAY_VARIANT_*
 ├── Layout_097c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 9.7" (960w x 672h)
 ├── Layout_122c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 12.2" (960w x 768h)
@@ -292,7 +293,7 @@ I moduli applicativi non vanno toccati.
 OpenWeatherMap, password dell'AP OTA, client-secret e refresh-token
 OAuth) e la **posizione GPS** (dato personale, accoppiato alla chiave
 OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
-`CAL_POSIX_TZ` (Europe/Rome con DST automatico) e
+`CLOCK_POSIX_TZ` (Europe/Rome con DST automatico, in `Clock.h`) e
 `CAL_MSGRAPH_TENANT_ID` in `Calendar.h`.
 
 ```cpp
@@ -349,7 +350,7 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 
 I parametri **non-sensibili e non-accoppiati ai segreti** (fuso orario,
 tenant Azure pubblico) non stanno in `Env.h` ma nei moduli consumer:
-`CAL_POSIX_TZ` e `CAL_MSGRAPH_TENANT_ID` in `Calendar.h`. Allo stesso
+`CLOCK_POSIX_TZ` in `Clock.h` e `CAL_MSGRAPH_TENANT_ID` in `Calendar.h`. Allo stesso
 modo la configurazione hardware del BME680 (`BME680_I2C_ADDR`,
 `BME680_SDA_PIN`, `BME680_SCL_PIN`) vive in [`Indoor.h`](Indoor.h): sono
 costanti locali al modulo, non segreti.
@@ -393,7 +394,7 @@ parallelo a `_current_page` privato del template, in:
 
 ## Moduli applicativi
 
-Oltre al driver e al convertitore, lo sketch si appoggia a cinque
+Oltre al driver e al convertitore, lo sketch si appoggia a sei
 moduli applicativi disaccoppiati, ciascuno **header-only**. Il `.ino`
 ne **orchestra** solo il ciclo di vita; tutta la logica (stato,
 helper, API pubblica) sta dentro il singolo header del modulo,
@@ -487,8 +488,8 @@ il `TENANT_ID` Microsoft è in `Calendar.h` come `CAL_MSGRAPH_TENANT_ID`
 in entrambi i casi un evento in corso (iniziato ma non ancora finito)
 resta in lista finchè non termina.
 
-**Timezone** — `Calendar::initTimezone()` applica la stringa POSIX
-`CAL_POSIX_TZ = "CET-1CEST,M3.5.0,M10.5.0/3"` al processo via
+**Timezone** — `Clock::begin()` applica la stringa POSIX
+`CLOCK_POSIX_TZ = "CET-1CEST,M3.5.0,M10.5.0/3"` al processo via
 `setenv + tzset`. Da quel momento ogni `localtime_r()` nel progetto
 gestisce automaticamente la transizione CET↔CEST. `Calendar::draw()`
 accetta solo un `utcEpoch`: il fuso non è più un parametro.
@@ -657,6 +658,29 @@ Se il sensore non è collegato o l'indirizzo è errato `begin()` logga
 `[BME680] init failed` e il modulo si comporta come un no-op: meteo,
 calendario e display continuano a girare normalmente.
 
+### Clock (`Clock.h`)
+
+Fuso orario e sincronizzazione SNTP, cioè l'unica sorgente di ora assoluta del
+firmware. Tre funzioni: `begin()` applica `CLOCK_POSIX_TZ` con `setenv + tzset`
+e non tocca la rete, `valido()` dice se l'ora è stata sincronizzata, e
+`sincronizza(timeout)` avvia SNTP presupponendo la rete su.
+
+Esiste come modulo perché **la radio in questo firmware ha due proprietari** e
+la sincronizzazione non appartiene a nessuno dei due: nel ciclo normale la
+accende lo scheduler tramite `wifiOn()`, che chiama `Clock::sincronizza()` nella
+forma bloccante; nella finestra di manutenzione la radio è di
+[`Maintenance.h`](Maintenance.h), che chiama la forma **non bloccante** quando
+la sua macchina a stati constata che la STA è salita — bloccare lì
+congelerebbe web server e access point durante un possibile upload.
+
+`valido()` è l'unica definizione di "ora valida" del progetto: ci poggiano la
+fascia oraria dello scheduler, la cadenza giornaliera del cinema, la
+precondizione dei due task calendario e le guardie dei moduli. La soglia è
+`TIME_VALID_EPOCH_MIN` in [`Timings.h`](Timings.h), con tutti gli altri tempi.
+
+`configTzTime()` e non `configTime()`: la seconda deriverebbe il fuso dagli
+offset e sovrascriverebbe la stringa POSIX, perdendo il DST automatico.
+
 ### Maintenance (`Maintenance.h`)
 
 Finestra di manutenzione di **default 3 minuti** al boot (durata
@@ -770,7 +794,7 @@ void setup()
 {
   Serial.begin(115200);
   initDisplay();
-  Calendar::initTimezone();                  // POSIX TZ Europe/Rome + DST
+  Clock::begin();                            // POSIX TZ Europe/Rome + DST
   Weather::begin();
   Calendar::Outlook::begin();
   Calendar::Google::begin();
@@ -804,8 +828,8 @@ l'unico posto dove l'ordine è definito.
 |---|---|---|---|
 | `meteo` | sì | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta invece di attendere la cadenza piena. |
 | `mail` | sì | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
-| `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. |
-| `outlook` | sì | `outl_min` | |
+| `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finché l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
+| `outlook` | sì | `outl_min` | Stessa precondizione di `google`. |
 | `cinema` | sì | giornaliera, `cine_h` | Ultimo perché è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. |
 | `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
 | `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
@@ -994,6 +1018,7 @@ Ogni esito è loggato con durata e prossima scadenza:
 | Calendario senza eventi futuri | Cache azzerata e ridisegno richiesto: è un successo, non un errore | Alla cadenza piena |
 | Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
 | BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
+| Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
 ### Matrice di degradazione per scenario di connettività
 
