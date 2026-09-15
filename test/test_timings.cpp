@@ -22,7 +22,8 @@ int main()
 {
   using namespace Timings;
   Timings::begin();
-  ok(get().owmMin == 10 && get().displayRefreshMin == 5 && get().cinemaOra == 7,
+  ok(get().owmMin == 10 && get().displayRefreshMin == 5 && get().cinemaOra == 7 &&
+         get().tuyaMin == 5,
      "default caricati");
 
   // Combinazione valida che l'applicazione campo-per-campo respingeva:
@@ -49,6 +50,15 @@ int main()
 
   Valori f = get(); f.displayRefreshMin = 0;
   ok(!applica(f, nullptr), "refresh display a 0 respinto");
+
+  // Il pavimento della telemetria Tuya e' il periodo di campionamento BSEC:
+  // sotto, si ripubblica lo stesso campione.
+  Valori i = get(); i.tuyaMin = 2;
+  ok(!applica(i, nullptr), "telemetria Tuya sotto il pavimento respinta");
+
+  // Unico vincolo incrociato violato: le altre cadenze restano sopra il 5.
+  Valori j = get(); j.coalesceMin = j.tuyaMin;
+  ok(!applica(j, nullptr), "coalescing pari alla cadenza Tuya respinto");
 
   Valori g = get(); g.mailMin = 3;
   ok(applica(g, nullptr) && save(), "mail a 3 min: applicato e salvato");

@@ -14,9 +14,10 @@ type: project
 | 1 | mail | sì | `mail_min` | prima di Google: condividono la cache del token OAuth, chi gira per primo paga il refresh |
 | 2 | google | sì | `goog_min` | il token è quello appena rinfrescato da mail |
 | 3 | outlook | sì | `outl_min` | |
-| 4 | cinema | sì | GIORNALIERA `cine_h` | ultimo: è l'unico che può pagare il cold start, e il tempo degli altri è la copertura. Il suo `prima()` è il ping di sveglia |
-| 5 | bsec | no | custom, dal sensore | **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
-| 6 | display | no | `disp_min` come **rate limit** | `pronto` = `Weather::sporco() && primoFrameConsentito()` |
+| 4 | tuya | sì | `tuya_min` | `pronto` = credenziali + campione BSEC valido + orologio sincronizzato; `maxTentativi = 0`; `ignoraFascia = TUYA_IGNORE_ACTIVE_HOUR`; prima del cinema, così il suo handshake TLS è altra copertura del boot di render |
+| 5 | cinema | sì | GIORNALIERA `cine_h` | ultimo: è l'unico che può pagare il cold start, e il tempo degli altri è la copertura. Il suo `prima()` è il ping di sveglia |
+| 6 | bsec | no | custom, dal sensore | **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
+| 7 | display | no | `disp_min` come **rate limit** | `pronto` = `Weather::sporco() && primoFrameConsentito()` |
 
 **Il giro ha due fasi**, e in ciascuna i `prima()` di *tutti* i task dovuti girano prima di *qualunque* `esegui()`. È questo che dà al ping del cinema la sua copertura: parte all'inizio, e render fa boot mentre l'ESP32 è occupato con gli altri fetch.
 
@@ -34,6 +35,6 @@ type: project
 
 **Diagnostica.** Con lo scheduler "perché questo task non parte" non è più una riga di codice ma la combinazione di sei campi: per questo `stampaStato(Print&)` non è decorativa, ed è esposta su `/status` della finestra di manutenzione. Ogni esito è loggato con durata, tentativo e prossima scadenza.
 
-**Aggiungere un task** = una riga di tabella più gli adattatori. Al merge del branch `tuya`, Tuya diventa: `pronto = Indoor::sample().valid`, `maxTentativi = 0` (pessimista, come già fa), `ignoraFascia = TUYA_IGNORE_ACTIVE_HOUR`, `prima`/`dopo` per il badge di guasto (markDirty solo quando `hasFailed()` **cambia**, non su successo).
+**Aggiungere un task** = una riga di tabella più gli adattatori, ed è tutto: nessun modulo e nessun ramo di `loop()` si toccano. Tuya è l'esempio già in tabella, e l'unico che usa due campi altrimenti dormienti — `maxTentativi = 0` e `ignoraFascia` — più un `dopo()` che non è `marcaSuOk`: chiede il ridisegno solo quando `hasFailed()` **cambia** rispetto al badge già disegnato, non su successo (vedi [[tuya_module]]).
 
 **Verificato per esecuzione**: `test/test_scheduler.cpp` compila `Scheduler.h` su host sostituendo con macro `time()`, `localtime_r()` e `mktime()`; le ultime due passano dalle regole POSIX di `test/stub/fuso_posix.h` invece che dalla libc, cosi' il test gira identico su macOS e su Windows, dove il CRT non sa leggere i campi di transizione di una stringa TZ. Copre cadenze, coalescing, ritenti e soglia, `SALTATO` che non spende il tentativo, cadenza giornaliera col recupero in giornata, fascia oraria, orologio non sincronizzato, cambio dell'ora legale, rollover di `millis()` a 49,7 giorni e clamp del light sleep. `./test/esegui.sh`.

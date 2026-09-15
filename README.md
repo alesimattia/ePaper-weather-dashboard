@@ -139,6 +139,7 @@ in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 ├── Calendar.h                      # Mese + lista eventi Outlook+Google + TZ Europe/Rome
 ├── Mail.h                          # Lettura ultime N mail Gmail via batch endpoint + UI griglia 2×2 / 2×3
 ├── Indoor.h                        # Sensore BME680 via I2C (BSEC2 ULP, IAQ+T+RH, persistenza NVS)
+├── Tuya.h                          # Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT, esp-mqtt + mbedtls)
 ├── Maintenance.h                   # Finestra di manutenzione: /update + /config, su rete di casa con AP di riserva
 ├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
 ├── icons.h                         # Bitmap icone meteo indicizzate per icon code OWM
@@ -322,6 +323,10 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 #define GOOGLE_CLIENT_SECRET  "paste_client_secret_here"
 #define GOOGLE_REFRESH_TOKEN  "paste_refresh_token_here"
 
+/* --- TuyaLink (telemetria BME680 verso l'app Smart Life) --- */
+#define TUYA_DEVICE_ID     "paste_device_id_here"
+#define TUYA_DEVICE_SECRET "paste_device_secret_here"
+
 #endif
 ```
 
@@ -338,6 +343,8 @@ OWM). Le costanti di dominio non-sensibili stanno nei moduli consumer:
 | `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa nè Google Calendar nè Gmail. |
 | `GOOGLE_CLIENT_SECRET`  | opz | Client secret della stessa app.                                 |
 | `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly` **e/o** `gmail.readonly` (vedi sotto). |
+| `TUYA_DEVICE_ID`        | opz | DeviceID TuyaLink, dalla console `platform.tuya.com`. È **per-dispositivo**: ogni esemplare consuma una licenza a sè. Lasciando i placeholder la telemetria si disattiva da sè. |
+| `TUYA_DEVICE_SECRET`    | opz | DeviceSecret dello stesso device: è la chiave con cui il firmware firma l'HMAC di autenticazione MQTT. |
 
 > ℹ️ **Refresh token Google condiviso fra Calendar e Mail**. `Mail.h` riusa
 > `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REFRESH_TOKEN`: se
@@ -394,7 +401,7 @@ parallelo a `_current_page` privato del template, in:
 
 ## Moduli applicativi
 
-Oltre al driver e al convertitore, lo sketch si appoggia a sei
+Oltre al driver e al convertitore, lo sketch si appoggia a sette
 moduli applicativi disaccoppiati, ciascuno **header-only**. Il `.ino`
 ne **orchestra** solo il ciclo di vita; tutta la logica (stato,
 helper, API pubblica) sta dentro il singolo header del modulo,
@@ -658,6 +665,61 @@ Se il sensore non è collegato o l'indirizzo è errato `begin()` logga
 `[BME680] init failed` e il modulo si comporta come un no-op: meteo,
 calendario e display continuano a girare normalmente.
 
+### Tuya (`Tuya.h`)
+
+Pubblica le cinque grandezze di `Indoor::sample()` sul cloud Tuya con
+**TuyaLink**, il canale MQTT che Tuya offre per hardware non suo, così che i
+dati compaiano nell'app Android **Smart Life**. Il dispositivo si associa
+scansionando il QR code generato dalla console: il firmware non fa nessun
+pairing.
+
+Una sessione MQTT per messaggio — connect, publish QoS 1, PUBACK, teardown —
+e al ritorno di `runPublish()` **non resta nessun task esp-mqtt vivo**: è
+l'invariante che rende sicuro il light sleep che parte poco dopo, ed è il
+motivo per cui il modulo non espone nessuno `stop()`.
+
+| | |
+|---|---|
+| Broker | `mqtts://m1.tuyaeu.com:8883` (`TUYA_MQTT_URI`), la region deve coincidere con quella dell'account Smart Life |
+| Client id | `tuyalink_{deviceId}` |
+| Username | `{deviceId}\|signMethod=hmacSha256,timestamp={ts},secureMode=1,accessType=1` |
+| Password | HMAC-SHA256 del DeviceSecret sullo stesso timestamp, in esadecimale minuscolo |
+| Topic | `tylink/{deviceId}/thing/property/report` |
+
+Nessuna libreria da installare: il client è **esp-mqtt** del core, l'HMAC viene
+da **mbedtls** e il certificato del broker è verificato con il **certificate
+bundle** compilato nel core, quindi non c'è nessun PEM da aggiornare quando
+Tuya ruota la CA. È l'unico modulo che verifica davvero il certificato invece
+di fare `setInsecure()`: su questa connessione transita l'HMAC del
+DeviceSecret.
+
+**Dipende dall'orologio**: l'autenticazione firma un timestamp Unix, quindi
+senza SNTP il publish viene saltato senza ritentare.
+
+**Il PUBACK conferma la consegna MQTT, non l'accettazione dei valori.** Con un
+identifier fuori dal device model o una `scale` diversa dal `TUYA_MUL_*` del
+firmware il publish riesce e i valori non compaiono nell'app, senza nessun
+errore: la temperatura appare divisa per dieci o decuplicata. È il rischio di
+configurazione numero uno del modulo e si vede solo in **Device Debugging**
+sulla console, oppure alzando `TUYA_REQUEST_ACK` a 1, che aggiunge al messaggio
+il campo `sys.ack`, sottoscrive il topic di risposta e logga il codice del
+cloud (`0` = accettato) o il corpo intero del rifiuto. Costa una
+sottoscrizione e fino a `TUYA_ACK_TIMEOUT_MS` per publish, quindi è pensato per
+il bring-up e non per il regime.
+
+**Sul pannello** compare solo un badge `[TUYA ERR]` accanto al titolo del
+riquadro Indoor quando l'ultimo tentativo speso è fallito. Il ridisegno viene
+chiesto **solo** quando il badge compare o sparisce: un refresh pieno costa
+~24 s e non si spende per un esito invariato. Una radio caduta non alza il
+badge, perché in quel caso lo scheduler non chiama nemmeno il modulo.
+
+Cadenza (`tuya_min`), fascia oraria e ritenti sono dello scheduler. È l'unico
+task con `maxTentativi` a 0 — un tentativo per slot comunque vada, perché i
+suoi modi di fallimento sono permanenti sulla scala dei minuti e ogni ritento
+costerebbe un altro handshake TLS — e l'unico che può ignorare la fascia WiFi,
+con `TUYA_IGNORE_ACTIVE_HOUR` a 1 nel `.ino`, per mandare dati anche di notte
+mentre il resto del firmware resta confinato alla finestra.
+
 ### Clock (`Clock.h`)
 
 Fuso orario e sincronizzazione SNTP, cioè l'unica sorgente di ora assoluta del
@@ -680,6 +742,7 @@ precondizione dei due task calendario e le guardie dei moduli. La soglia è
 
 `configTzTime()` e non `configTime()`: la seconda deriverebbe il fuso dagli
 offset e sovrascriverebbe la stringa POSIX, perdendo il DST automatico.
+
 
 ### Maintenance (`Maintenance.h`)
 
@@ -830,6 +893,7 @@ l'unico posto dove l'ordine è definito.
 | `mail` | sì | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
 | `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finché l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | sì | `outl_min` | Stessa precondizione di `google`. |
+| `tuya` | sì | `tuya_min` | Telemetria BME680 sul cloud Tuya. Sospeso finché mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
 | `cinema` | sì | giornaliera, `cine_h` | Ultimo perché è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. |
 | `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
 | `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
@@ -914,6 +978,7 @@ comando](#modificare-i-tempi-da-riga-di-comando).
 | `outl_min` | `10` | `1` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati: il costo è la radio accesa. |
 | `goog_min` | `10` | `1` | min | Cadenza Google Calendar API v3. |
 | `mail_min` | `10` | `1` | min | Cadenza Gmail API. Indipendente dalle altre. |
+| `tuya_min` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il periodo di campionamento del BME680: sotto, si ripubblica lo stesso campione. |
 | `coal_min` | `2` | `0` | min | Finestra di coalescing: a radio accesa si eseguono anche i task che scadrebbero entro questo margine, così scadenze vicine condividono un'accensione. `0` disattiva. |
 | `maint_min` | `3` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | ora | Inizio della fascia in cui la radio può accendersi. |
@@ -940,6 +1005,9 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
 | `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake TLS ha il suo timeout separato. |
 | `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
+| `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
+| `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. |
+| `TUYA_ACK_TIMEOUT_MS` | `2000` ms | Attesa della conferma applicativa del cloud, pagata solo con `TUYA_REQUEST_ACK` a 1. |
 | `SLEEP_MIN_S` / `SLEEP_MAX_S` | `30` / `300` s | Pavimento e tetto del light sleep dinamico. Il tetto è il periodo ULP del sensore. |
 | `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). |
 | `BSEC_STATE_SAVE_INTERVAL_MS` | `6` h | Persistenza dello stato di calibrazione BSEC in NVS. |
@@ -1017,6 +1085,7 @@ Ogni esito è loggato con durata e prossima scadenza:
 | Mail (list ritorna 0 mail) | Cache **azzerata**: è una risposta valida, non un errore | Alla cadenza piena |
 | Calendario senza eventi futuri | Cache azzerata e ridisegno richiesto: è un successo, non un errore | Alla cadenza piena |
 | Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
+| Tuya (broker, credenziali, PUBACK mancante) | Badge `[TUYA ERR]` accanto al titolo Indoor, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
 | BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
@@ -1193,6 +1262,7 @@ limiti pubblici documentati:
 | Microsoft Graph (Outlook) | `CAL_OUTLOOK_FETCH_MIN`      | 10 min | 10 000 richieste ogni 10 min per app    |
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 1 000 000 richieste/giorno per progetto |
 | Gmail API (Mail)          | `MAIL_GOOGLE_FETCH_MIN`      | 10 min | 250 quota units/utente/secondo, 1 B unit/giorno per progetto. Un fetch (`messages.list` + 1× batch con N `messages.get`) consuma ~30 unit, ben sotto la soglia. |
+| TuyaLink (MQTT)           | `TUYA_PUBLISH_MIN`           | 5 min  | Nessun rate limit sui messaggi; il vincolo è la **licenza per device**, gratuita in sviluppo. Il pavimento non è del fornitore ma del sensore: sotto i 5 min si ripubblica lo stesso campione. |
 
 Il fetch cinema (endpoint render.com) avviene **al boot + una volta al
 giorno alle `CINEMA_DAILY_FETCH_HOUR` local** (default 07:00) e non ha
