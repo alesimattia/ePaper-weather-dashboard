@@ -85,6 +85,14 @@
 #endif
 #define MAIL_GOOGLE_FETCH_MIN_FLOOR 1
 
+/** Telemetria Tuya. Il pavimento e' il periodo di campionamento del BME680:
+ *  sotto quello si ripubblica lo stesso campione, perche' la cache di Indoor
+ *  non ne ha uno nuovo da dare. */
+#ifndef TUYA_PUBLISH_MIN
+  #define TUYA_PUBLISH_MIN 5
+#endif
+#define TUYA_PUBLISH_MIN_FLOOR (BSEC_PERIODO_ULP_S / 60)
+
 /**
  * Finestra di coalescing: con la radio gia' accesa vengono eseguiti anche i
  * task che scadrebbero entro questo margine, cosi' scadenze vicine
@@ -174,6 +182,18 @@
  *  parte affatto. Va tenuto sotto 65535: setTimeout() prende un uint16_t. */
 #define CINEMA_PREWARM_TIMEOUT_MS 1500
 
+/** Telemetria Tuya: attesa del CONNACK, che comprende l'handshake TLS, e del
+ *  PUBACK in QoS 1. Il terzo e' l'attesa della conferma applicativa del cloud
+ *  e vale solo con TUYA_REQUEST_ACK alzato, quindi a regime non si paga. */
+#define TUYA_CONNECT_TIMEOUT_MS 8000UL
+#define TUYA_PUBACK_TIMEOUT_MS 3000UL
+#define TUYA_ACK_TIMEOUT_MS 2000UL
+
+/** Passo con cui si attendono i flag alzati dal task esp-mqtt. Piu' fitto di
+ *  WIFI_ATTESA_POLL_MS perche' qui si attende un CONNACK, non un'associazione
+ *  alla rete. */
+#define TUYA_ATTESA_POLL_MS 10
+
 /** Budget wall-clock di UNA esecuzione del fetch mail, non una cadenza:
  *  limita quanto a lungo la sequenza token + list + batch puo' occupare la
  *  finestra radio. */
@@ -235,6 +255,8 @@ static_assert(CAL_GOOGLE_FETCH_MIN >= CAL_GOOGLE_FETCH_MIN_FLOOR &&
 static_assert(MAIL_GOOGLE_FETCH_MIN >= MAIL_GOOGLE_FETCH_MIN_FLOOR &&
                   MAIL_GOOGLE_FETCH_MIN <= CADENZA_MAX_MIN,
               "MAIL_GOOGLE_FETCH_MIN fuori dai limiti");
+static_assert(TUYA_PUBLISH_MIN >= TUYA_PUBLISH_MIN_FLOOR && TUYA_PUBLISH_MIN <= CADENZA_MAX_MIN,
+              "sotto il pavimento il publish Tuya ripubblica lo stesso campione BSEC");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,
               "OTA_WINDOW_MIN fuori dai limiti");
 static_assert(FETCH_COALESCE_MIN >= FETCH_COALESCE_MIN_FLOOR,
@@ -242,7 +264,8 @@ static_assert(FETCH_COALESCE_MIN >= FETCH_COALESCE_MIN_FLOOR,
 static_assert(FETCH_COALESCE_MIN < WEATHER_FORECAST_FETCH_MIN &&
                   FETCH_COALESCE_MIN < CAL_OUTLOOK_FETCH_MIN &&
                   FETCH_COALESCE_MIN < CAL_GOOGLE_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < MAIL_GOOGLE_FETCH_MIN,
+                  FETCH_COALESCE_MIN < MAIL_GOOGLE_FETCH_MIN &&
+                  FETCH_COALESCE_MIN < TUYA_PUBLISH_MIN,
               "coalescing >= cadenza: il task partirebbe a ogni accensione della radio");
 static_assert(WIFI_ACTIVE_HOUR_START <= WIFI_ACTIVE_HOUR_END && WIFI_ACTIVE_HOUR_END <= 23,
               "fascia oraria WiFi non valida");
@@ -284,6 +307,7 @@ namespace Timings
     uint16_t outlookMin;
     uint16_t googleMin;
     uint16_t mailMin;
+    uint16_t tuyaMin;
     uint16_t coalesceMin;
     uint16_t finestraManutenzioneMin;
     uint16_t wifiOraInizio;
@@ -297,6 +321,7 @@ namespace Timings
       CAL_OUTLOOK_FETCH_MIN,
       CAL_GOOGLE_FETCH_MIN,
       MAIL_GOOGLE_FETCH_MIN,
+      TUYA_PUBLISH_MIN,
       FETCH_COALESCE_MIN,
       OTA_WINDOW_MIN,
       WIFI_ACTIVE_HOUR_START,
@@ -342,6 +367,8 @@ namespace Timings
          &Valori::googleMin, CAL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_GOOGLE_FETCH_MIN},
         {"mail_min",   "Posta Gmail",                               "min",
          &Valori::mailMin, MAIL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, MAIL_GOOGLE_FETCH_MIN},
+        {"tuya_min",   "Telemetria Tuya",                           "min",
+         &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, CADENZA_MAX_MIN, TUYA_PUBLISH_MIN},
         {"coal_min",   "Coalescing (anticipo a radio accesa)",      "min",
          &Valori::coalesceMin, FETCH_COALESCE_MIN_FLOOR, CADENZA_MAX_MIN, FETCH_COALESCE_MIN},
         {"maint_min",  "Finestra di manutenzione",                  "min",
@@ -380,7 +407,8 @@ namespace Timings
       if (v.cinemaOra < v.wifiOraInizio || v.cinemaOra > v.wifiOraFine)
         return "l'ora del fetch cinema cade fuori dalla fascia WiFi";
       if (v.coalesceMin >= v.owmMin || v.coalesceMin >= v.outlookMin ||
-          v.coalesceMin >= v.googleMin || v.coalesceMin >= v.mailMin)
+          v.coalesceMin >= v.googleMin || v.coalesceMin >= v.mailMin ||
+          v.coalesceMin >= v.tuyaMin)
         return "il coalescing e' maggiore o uguale a una cadenza di fetch";
       if ((uint32_t)v.displayRefreshMin * 60UL < DISPLAY_REFRESH_PIENO_S)
         return "il refresh del display e' piu' breve della durata di un refresh";

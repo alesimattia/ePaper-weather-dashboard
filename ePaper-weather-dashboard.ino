@@ -70,6 +70,25 @@
  */
 #define LOG_LEVEL 2
 
+/**
+ * A 1 il publish della telemetria Tuya puo' accendere la radio anche fuori
+ * dalla fascia WiFi, cosi' l'app riceve dati 24 ore su 24 mentre meteo,
+ * calendari, mail e refresh del pannello restano confinati alla finestra. A 0
+ * di notte non si pubblica e nell'app resta visibile l'ultimo dato della sera.
+ *
+ * Alimenta il campo `ignoraFascia` della tabella dei task: e' l'unico task che
+ * lo usa, tutti gli altri stanno dentro la fascia.
+ */
+#define TUYA_IGNORE_ACTIVE_HOUR 0
+
+/**
+ * Conferma applicativa del cloud Tuya, da alzare durante il bring-up e da
+ * riabbassare a regime: il PUBACK dice che il broker ha ricevuto il messaggio,
+ * non che il cloud ne abbia accettato il contenuto. Costo e meccanismo sono
+ * documentati in Tuya.h, dove il valore ha anche il suo default.
+ */
+#define TUYA_REQUEST_ACK 0
+
 // ---------------------------------------------------------------------------
 // Cadenze, timeout e pavimenti stanno tutti in Timings.h, che va incluso PRIMA
 // dei moduli perche' i loro #ifndef li raccolgano. Le cadenze sono anche
@@ -105,6 +124,9 @@
 #include "Weather.h"
 #include "Maintenance.h"
 #include "Mail.h"
+// Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT). Non disegna nulla:
+// il pannello la interroga solo per il badge di guasto del riquadro Indoor.
+#include "Tuya.h"
 #include "Env.h"
 #include "Log.h"
 #include "Clock.h"
@@ -526,6 +548,32 @@ static Scheduler::Esito eseguiCinema()
 	return fetchCinemaImage() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
 }
 
+static Scheduler::Esito eseguiTuya()
+{
+	return Tuya::runPublish() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+}
+
+/** Senza credenziali, senza un campione del sensore o senza orologio non c'e'
+ *  niente da pubblicare: il task resta sospeso, non accende la radio e non
+ *  brucia il suo unico tentativo per cadenza. */
+static bool tuyaPronto() { return Tuya::readyToPublish(); }
+
+/** Stato del badge di guasto come si trova sul pannello disegnato. */
+static bool g_tuya_badge_mostrato = false;
+
+/**
+ * Ridisegno solo quando il badge [TUYA ERR] compare o sparisce: un refresh
+ * pieno costa ~24 s e la telemetria, a parte quel badge, non cambia niente a
+ * schermo. Non passa da marcaSuOk perche' qui conta la transizione, non
+ * l'esito del singolo giro.
+ */
+static void dopoTuya(Scheduler::Esito)
+{
+	if (Tuya::hasFailed() == g_tuya_badge_mostrato) return;
+	g_tuya_badge_mostrato = Tuya::hasFailed();
+	Weather::markDirty();
+}
+
 /** Poll del sensore: BSEC temporizza da se' i 5 minuti, quindi la chiamata e'
  *  a costo trascurabile quando nessun campione e' dovuto. */
 static Scheduler::Esito eseguiIndoor()
@@ -575,11 +623,19 @@ static void dopoDisplay(Scheduler::Esito) {}
  *   - mail prima di Google perche' i due condividono la cache del token
  *     OAuth: chi gira per primo paga il refresh;
  *   - Google prima di Outlook perche' il token appena rinfrescato e' il suo;
+ *   - la telemetria Tuya prima del cinema: i secondi del suo handshake TLS
+ *     sono altro tempo di copertura del boot di render.com;
  *   - cinema per ultimo perche' e' l'unico che puo' pagare il cold start di
  *     render.com, e il tempo di rete degli altri e' la copertura di quel
  *     boot; il suo prima() manda il ping di sveglia all'inizio del giro;
  *   - il sensore precede il display cosi' un campione appena prodotto entra
  *     nel frame dello stesso giro.
+ *
+ * Tuya e' l'unico task con maxTentativi a 0, cioe' un tentativo per slot
+ * comunque vada: i suoi modi di fallimento sono permanenti sulla scala dei
+ * minuti (credenziali, region, device model) e ogni ritento costerebbe un
+ * altro handshake TLS senza cambiare l'esito. Ed e' l'unico con ignoraFascia
+ * potenzialmente a 1, vedi TUYA_IGNORE_ACTIVE_HOUR in testa al file.
  */
 static Scheduler::Task TABELLA_TASK[] = {
 	{"meteo", Scheduler::Cadenza::PERIODICA, true, false,
@@ -601,6 +657,11 @@ static Scheduler::Task TABELLA_TASK[] = {
 	 &Timings::Valori::outlookMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
 	 eseguiOutlook, calendarioPronto, nullptr, nullptr, marcaSuOk, nullptr},
+
+	{"tuya", Scheduler::Cadenza::PERIODICA, true, TUYA_IGNORE_ACTIVE_HOUR,
+	 &Timings::Valori::tuyaMin, nullptr,
+	 FETCH_RITENTO_MS, 0,
+	 eseguiTuya, tuyaPronto, nullptr, nullptr, dopoTuya, nullptr},
 
 	{"cinema", Scheduler::Cadenza::GIORNALIERA, true, false,
 	 nullptr, &Timings::Valori::cinemaOra,
@@ -724,6 +785,11 @@ void setup()
 	 * Lo stato del calibratore, se presente in NonVolatileStorage, viene ripristinato qui dentro.
 	 */
 	Indoor::begin();
+	/**
+	 * Telemetria Tuya: compone topic e client id dal DeviceID di Env.h e resta
+	 * disattivata se le credenziali non ci sono. Nessuna rete qui dentro.
+	 */
+	Tuya::begin();
 	/**
 	 * Apre subito la finestra OTA (OTA_WINDOW_MIN): AP per l'aggiornamento firmware +
 	 * STA in parallelo per il fetch meteo. Scaduta la finestra, loop() chiamera'

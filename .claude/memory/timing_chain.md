@@ -24,10 +24,12 @@ Tutti i tempi stanno in `Timings.h`; il **quando** lo decide `Scheduler.h`, mai 
 - `CINEMA_HTTP_TIMEOUT_MS` 45 s, sia sul GET sia sulla lettura per piano.
 - `CINEMA_PREWARM_TIMEOUT_MS` 1500 ms: è l'attesa della **risposta** al ping `/health`, non della connessione. L'handshake TLS ha il suo timeout separato (default HTTPClient, 5 s) e **non va accorciato**, altrimenti su rete lenta la richiesta non parte affatto.
 - Cold start render.com **misurato 22,4 s**; dopo il boot `/cinema/arduino` risponde in **0,54 s**, perché le cache su disco sopravvivono al suspend. È il motivo per cui pingare `/health` basta: a costare è il boot del processo, non la pipeline di rendering.
-- Ordine del giro: ping → meteo → mail → Google → Outlook → cinema. I fetch intermedi valgono 8-20 s e sono la copertura di quel boot.
+- Ordine del giro: ping → meteo → mail → Google → Outlook → tuya → cinema. I fetch intermedi valgono 8-20 s e sono la copertura di quel boot, e il publish Tuya (fino a 8 s di CONNACK + 3 s di PUBACK) ne fa parte.
 
 **Worst case:** 15 s (WiFi) + fino a 22 s (cold start) + 2-3 s (download) ≈ 40 s, dentro i 45 s del timeout. Il pre-warm riduce l'attesa, non elimina il bisogno di margine.
 
 **Durante la finestra di manutenzione** `loop()` gira con `delay(10)` per `WebServer::handleClient()`: un fetch cinema bloccante congela il server per la sua durata. Accettato, ma è il motivo per cui esiste `FETCH_RITENTO_MS` (30 s), che impedisce a un tentativo appena fallito di ripetersi cento volte al secondo.
+
+**Ogni confronto su `tm_hour` di questa catena** (giornaliera del cinema, fascia WiFi) vale solo con l'orologio sincronizzato, e nella finestra di manutenzione non lo è: vedi [[clock_sntp]].
 
 **Se sposti il fetch giornaliero del cinema** basta cambiare `cine_h` (da `/config` o in `Timings.h`): una `static_assert` e il controllo a runtime impongono che resti dentro la fascia `wifi_h_ini..wifi_h_fin`. Non c'è più nessuno scheduler esterno da tenere allineato — vedi [[github_cron_inaffidabile]].
