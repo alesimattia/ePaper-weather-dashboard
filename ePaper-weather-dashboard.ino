@@ -107,6 +107,7 @@
 #include "Mail.h"
 #include "Env.h"
 #include "Log.h"
+#include "Clock.h"
 #include "Scheduler.h"
 
 SPIClass hspi(HSPI);
@@ -510,6 +511,16 @@ static Scheduler::Esito eseguiOutlook()
 	return Calendar::Outlook::runFetch() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
 }
 
+/**
+ * Precondizione dei due fetch calendario: senza orologio le query partono da
+ * 1970-01-01 e, ordinando per data, riportano i PRIMI eventi del calendario
+ * invece dei prossimi. Una risposta cosi' e' HTTP 200, quindi lo scheduler la
+ * registrerebbe come successo e chiuderebbe lo slot per la cadenza piena.
+ * Meglio non partire: il task resta sospeso e diventa dovuto da se' appena
+ * l'ora e' vera.
+ */
+static bool calendarioPronto() { return Clock::valido(); }
+
 static Scheduler::Esito eseguiCinema()
 {
 	return fetchCinemaImage() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
@@ -584,12 +595,12 @@ static Scheduler::Task TABELLA_TASK[] = {
 	{"google", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::googleMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiGoogle, nullptr, nullptr, nullptr, marcaSuOk, nullptr},
+	 eseguiGoogle, calendarioPronto, nullptr, nullptr, marcaSuOk, nullptr},
 
 	{"outlook", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::outlookMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiOutlook, nullptr, nullptr, nullptr, marcaSuOk, nullptr},
+	 eseguiOutlook, calendarioPronto, nullptr, nullptr, marcaSuOk, nullptr},
 
 	{"cinema", Scheduler::Cadenza::GIORNALIERA, true, false,
 	 nullptr, &Timings::Valori::cinemaOra,
@@ -637,89 +648,12 @@ void drawTestBackground()
 }
 
 /**
- * Ritorna true se l'orologio di sistema è stato sincronizzato, cioè se time()
- * supera TIME_VALID_EPOCH_MIN. Prima della sincronizzazione time() restituisce
- * l'uptime contato dal 1970, che dopo 27,7 h di accensione diventa
- * indistinguibile da un'ora reale.
- */
-static bool timeIsValid()
-{
-	return time(nullptr) >= TIME_VALID_EPOCH_MIN;
-}
-
-/**
- * Sincronizza l'orologio via SNTP se non lo è già. Presuppone la STA
- * connessa: va chiamata da wifiOn() o dentro la finestra OTA, dove la radio è
- * su. Quando l'ora è già valida costa un solo confronto.
- *
- * Usa configTzTime() e non configTime(): la prima applica la stringa POSIX che
- * le viene passata, quindi ripassando CAL_POSIX_TZ riapplica lo stesso fuso di
- * Calendar::initTimezone(); la seconda deriverebbe il TZ dagli offset e lo
- * sovrascriverebbe, perdendo il DST automatico di Europe/Rome.
- *
- * Una sincronizzazione riuscita per boot basta: il light sleep mantiene la base
- * temporale su cui poggiano time() e millis(), quindi l'ora sopravvive al
- * sonno. Il drift dell'RTC, che su questo modulo gira sull'oscillatore RC
- * interno perchè non c'è il cristallo da 32 kHz, viene corretto dal polling
- * SNTP di lwIP: riprova ogni 3 h e va a buon fine appena cade in una finestra
- * con radio accesa, per questo sntp non viene mai fermato.
- *
- * @param timeout_ms attesa massima della prima sincronizzazione. A 0 avvia
- *        SNTP e ritorna subito, lasciando che il polling di lwIP allinei
- *        l'ora entro pochi secondi: serve al ramo OTA, dove bloccare
- *        congelerebbe AP e web server.
- * @return true se l'ora è valida al ritorno.
- */
-static bool ensureTimeSynced(uint32_t timeout_ms = TIME_SYNC_TIMEOUT_MS)
-{
-	static uint32_t last_attempt_ms = 0;
-	static bool attempted = false;
-
-	if (timeIsValid())
-		return true;
-	// Backoff fra tentativi falliti: senza, il ramo OTA riavvierebbe SNTP a
-	// ogni giro da 10 ms.
-	if (attempted && (int32_t)(millis() - last_attempt_ms) < (int32_t)TIME_SYNC_RETRY_MS)
-		return false;
-
-	last_attempt_ms = millis();
-	attempted = true;
-
-	configTzTime(CAL_POSIX_TZ, NTP_SERVER_1, NTP_SERVER_2);
-
-	uint32_t t0 = millis();
-	while (!timeIsValid() && (millis() - t0) < timeout_ms)
-	{
-		delay(WIFI_ATTESA_POLL_MS);
-	}
-
-	if (!timeIsValid())
-	{
-		// Con timeout_ms a 0 non è un errore: la richiesta è partita e il
-		// polling SNTP di lwIP la porta a termine senza bloccare il chiamante.
-		if (timeout_ms == 0)
-			LOG("Time", "SNTP avviato, sincronizzazione in corso");
-		else
-			LOG("Time", "SNTP timeout");
-		return false;
-	}
-
-	time_t now = time(nullptr);
-	struct tm t;
-	localtime_r(&now, &t);
-	LOG("Time", "SNTP ok: %04d-%02d-%02d %02d:%02d:%02d locale",
-		t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-		t.tm_hour, t.tm_min, t.tm_sec);
-	return true;
-}
-
-/**
  * Accende il WiFi in modalita' STA e attende la connessione fino a
  * WIFI_CONNECT_TIMEOUT_MS.
  * La radio resta accesa solo per la finestra di fetch: viene spenta
  * da wifiOff() subito dopo.
  *
- * A connessione riuscita sincronizza anche l'orologio con ensureTimeSynced(),
+ * A connessione riuscita sincronizza anche l'orologio con Clock::sincronizza(),
  * che al primo boot puo' aggiungere fino a TIME_SYNC_TIMEOUT_MS di attesa.
  * @return true se connesso entro il timeout.
  */
@@ -738,9 +672,11 @@ static bool wifiOn()
 		/**
 		 * Orologio sincronizzato nello stesso punto in cui la radio diventa
 		 * disponibile: tutti i fetch del ramo normale stanno dentro questo
-		 * if (wifiOn()), quindi da qui in avanti vedono l'ora vera.
+		 * if (wifiOn()), quindi da qui in avanti vedono l'ora vera. Bloccante,
+		 * perche' qui si puo' attendere: nella finestra di manutenzione, dove
+		 * non si puo', ci pensa Maintenance con la forma non bloccante.
 		 */
-		ensureTimeSynced();
+		Clock::sincronizza();
 		return true;
 	}
 	LOG("WiFi", "connection timeout");
@@ -777,7 +713,7 @@ void setup()
 	 * TZ Europe/Rome con DST automatico: va fatto PRIMA di qualsiasi
 	 * modulo che formatti orari locali (Weather/Calendar usano localtime_r).
 	 */
-	Calendar::initTimezone();
+	Clock::begin();
 	Weather::begin();
 	Calendar::Outlook::begin();
 	Calendar::Google::begin();

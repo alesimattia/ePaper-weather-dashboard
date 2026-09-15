@@ -623,7 +623,7 @@ namespace Mail
     // Riferimento "oggi" locale (riservato per future logiche di formato data).
     struct tm today{};
     time_t nowUtc = time(nullptr);
-    if (nowUtc > 1000000000) localtime_r(&nowUtc, &today);
+    if (nowUtc >= TIME_VALID_EPOCH_MIN) localtime_r(&nowUtc, &today);
 
     for (size_t i = 0; i < MAX_MESSAGES; ++i)
     {

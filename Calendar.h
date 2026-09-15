@@ -30,17 +30,10 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 // ---------------------------------------------------------------------------
 
 /**
- * POSIX TZ string per Europe/Rome con gestione automatica del DST.
- *  - Standard: CET (UTC+1), da ultima domenica di ottobre alle 03:00 locali
- *    a ultima domenica di marzo.
- *  - Estiva:   CEST (UTC+2), da ultima domenica di marzo alle 02:00 UTC
- *    a ultima domenica di ottobre alle 03:00 locali.
- *
- * Applicata da Calendar::initTimezone() via setenv("TZ", ...) + tzset().
- * Dopo l'init, tutte le chiamate a localtime_r() nel progetto ritornano
- * componenti locali gia' corretti per il DST in corso.
+ * Il fuso orario NON sta qui: e' dell'orologio di sistema, quindi vive in
+ * Clock.h come CLOCK_POSIX_TZ e lo applica Clock::begin(). Tutte le
+ * localtime_r() di questo file presuppongono quella chiamata, fatta in setup().
  */
-#define CAL_POSIX_TZ            "CET-1CEST,M3.5.0,M10.5.0/3"
 
 /**
  * Tenant Azure AD per Microsoft Graph. Usato nella URL del token
@@ -65,7 +58,6 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
  * STA gia' connessa: la radio è gestita dallo sketch .ino.
  *
  * API:
- *  - Calendar::initTimezone()    : applica CAL_POSIX_TZ al sistema;
  *  - Calendar::draw()            : riquadro mese corrente + lista eventi;
  *  - namespace Calendar::Outlook : scheduler/fetch eventi Microsoft Graph;
  *  - namespace Calendar::Google  : scheduler/fetch eventi Google Calendar.
@@ -306,7 +298,7 @@ namespace Calendar
     inline time_t nowUtcEpoch()
     {
       time_t t = time(nullptr);
-      return (t > 1000000000) ? t : 0;
+      return (t >= TIME_VALID_EPOCH_MIN) ? t : 0;
     }
 
     /**
@@ -797,7 +789,7 @@ namespace Calendar
       }
 
       /**
-       * Localtime secondo TZ di sistema (CAL_POSIX_TZ applicato da initTimezone):
+       * Localtime secondo il TZ di sistema, applicato da Clock::begin():
        * gestisce automaticamente il passaggio CET <-> CEST.
        */
       struct tm tmL;
@@ -899,30 +891,12 @@ namespace Calendar
   // =========================================================================
 
   /**
-   * Applica la stringa POSIX TZ (CAL_POSIX_TZ) al processo: dopo questa
-   * chiamata tutte le localtime_r() ritornano componenti in Europe/Rome
-   * con DST automatico. Idempotente.
-   *
-   * Va chiamata in setup() PRIMA di qualsiasi altro modulo che formatti
-   * orari locali (Weather::begin, Calendar::Outlook::begin, ecc.).
-   */
-  inline void initTimezone()
-  {
-    /**
-     * Applica la stringa POSIX di Europe/Rome al processo. Da qui in
-     * avanti localtime_r() gestisce DST in automatico.
-     */
-    setenv("TZ", CAL_POSIX_TZ, 1);
-    tzset();
-  }
-
-  /**
    * Disegna il riquadro calendario del mese corrente (in alto a destra
    * dentro la sidebar) e la lista dei prossimi eventi (merge di Outlook +
    * Google) nello spazio sottostante, fino al banner meteo.
    *
    * I componenti locali vengono calcolati via localtime_r(), che
-   * applica il TZ impostato da initTimezone().
+   * applica il TZ impostato da Clock::begin().
    *
    * @param utcEpoch epoch UTC di riferimento (0 = usa time(nullptr))
    */
@@ -930,7 +904,7 @@ namespace Calendar
   {
     if (utcEpoch == 0) utcEpoch = time(nullptr);
 
-    // Componenti locali derivati dal TZ di sistema (CAL_POSIX_TZ).
+    // Componenti locali derivati dal TZ di sistema (Clock::begin()).
     struct tm tmNow;
     localtime_r(&utcEpoch, &tmNow);
 

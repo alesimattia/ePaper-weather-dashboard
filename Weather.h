@@ -50,8 +50,8 @@ extern void drawTestBackground();
  * alla chiamata). Cosi' la radio resta spenta fra un fetch e l'altro.
  *
  * Credenziali WiFi e API key OWM sono in Env.h. Posizione GPS (LAT/LON)
- * pure in Env.h. Il fuso orario è gestito da Calendar::initTimezone()
- * (POSIX TZ in Calendar.h): localtime_r() applica CET/CEST in automatico.
+ * pure in Env.h. Il fuso orario è gestito da Clock::begin()
+ * (POSIX TZ in Clock.h): localtime_r() applica CET/CEST in automatico.
  */
 namespace Weather
 {
@@ -139,7 +139,7 @@ namespace Weather
 
     /**
      * Formatta un epoch UTC in "HH:MM" locale Europe/Rome (DST gestito
-     * automaticamente dal TZ di sistema impostato da Calendar::initTimezone).
+     * automaticamente dal TZ di sistema impostato da Clock::begin()).
      * @param epoch epoch UTC (o 0 per "--:--")
      * @param out   buffer di almeno 6 byte
      * @modified 21/04/26 localtime_r al posto di gmtime_r(epoch+TZ_OFFSET)
@@ -1133,7 +1133,7 @@ namespace Weather
          * Calendar::draw riempie di bianco il proprio riquadro: riduce di fatto
          * l'area visibile dell'immagine di background. Il riquadro calendario
          * è posizionato subito a sinistra della sidebar. Il TZ applicato è
-         * quello impostato da Calendar::initTimezone() in setup().
+         * quello impostato da Clock::begin() in setup().
          */
         Calendar::draw(calEpoch);
         /**

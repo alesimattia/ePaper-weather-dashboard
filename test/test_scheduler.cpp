@@ -192,6 +192,9 @@ static void verificaFuso()
 #endif
 }
 
+/** Stessa precondizione che nel firmware hanno i due task calendario. */
+static bool orologioPronto() { return Clock::valido(); }
+
 static Scheduler::Esito esitoOk() { return Scheduler::Esito::OK; }
 static Scheduler::Esito esitoKo() { return Scheduler::Esito::FALLITO; }
 
@@ -293,10 +296,30 @@ int main()
 
   // ---- orologio non sincronizzato ----------------------------------------
   g_epochFinta = 1000;
-  ok(!Scheduler::orologioValido(), "epoch bassa: orologio non sincronizzato");
+  ok(!Clock::valido(), "epoch bassa: orologio non sincronizzato");
   ok(Scheduler::inFascia(), "  fascia fail-open, altrimenti il primo SNTP non avverrebbe mai");
   ok(Scheduler::msAllaScadenza(g, g_msFinto, nullptr) == Scheduler::MAI,
      "  cadenza giornaliera sospesa");
+
+  // Precondizione non temporale: e' cosi' che i due calendari evitano di
+  // interrogare da 1970 e di consumare lo slot con una risposta sbagliata.
+  {
+    Scheduler::Task c {};
+    c.tag = "c"; c.cadenza = Scheduler::Cadenza::PERIODICA; c.richiedeRadio = true;
+    c.intervalloMin = &Timings::Valori::googleMin;
+    c.intervalloRitentoMs = FETCH_RITENTO_MS; c.maxTentativi = FETCH_MAX_TENTATIVI;
+    c.esegui = esitoOk; c.pronto = orologioPronto;
+
+    ok(Scheduler::msAllaScadenzaEffettiva(c, g_msFinto, nullptr) == Scheduler::MAI,
+       "pronto() falso: task sospeso anche se mai eseguito");
+    ok(!Scheduler::dovuto(c, g_msFinto, nullptr, 10u * 60u * 1000u),
+       "  e non dovuto nemmeno con un anticipo generoso");
+
+    impostaOra(2026, 9, 10, 12, 0);
+    ok(Clock::valido(), "orologio sincronizzato: la precondizione si avvera");
+    ok(Scheduler::msAllaScadenza(c, g_msFinto, oggiLocale()) == 0,
+       "  e il task e' dovuto subito, senza aver perso lo slot");
+  }
 
   // ---- cambio dell'ora legale --------------------------------------------
   {

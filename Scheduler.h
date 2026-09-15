@@ -9,6 +9,7 @@
 
 #include "Timings.h"
 #include "Log.h"
+#include "Clock.h"
 
 /**
  * Scheduler centralizzato di tutti i flussi temporizzati: fetch di rete,
@@ -143,20 +144,13 @@ namespace Scheduler
   }
 
   /**
-   * Vero se l'orologio di sistema e' stato sincronizzato. Prima di SNTP time()
-   * restituisce l'uptime contato dal 1970, che dopo 27,7 h di accensione
-   * diventa indistinguibile da un'ora reale.
-   */
-  inline bool orologioValido() { return time(nullptr) >= TIME_VALID_EPOCH_MIN; }
-
-  /**
    * Vero dentro la fascia oraria in cui la radio puo' accendersi.
    * Fail-open a orologio non sincronizzato: senza questa eccezione il primo
    * SNTP non potrebbe mai avvenire, perche' richiede la radio.
    */
   inline bool inFascia()
   {
-    if (!orologioValido()) return true;
+    if (!Clock::valido()) return true;
     time_t now = time(nullptr);
     struct tm t;
     localtime_r(&now, &t);
@@ -374,7 +368,7 @@ namespace Scheduler
 
     struct tm tmOggi;
     const struct tm* oggi = nullptr;
-    if (orologioValido())
+    if (Clock::valido())
     {
       time_t now = time(nullptr);
       localtime_r(&now, &tmOggi);
@@ -432,7 +426,7 @@ namespace Scheduler
   {
     struct tm tmOggi;
     const struct tm* oggi = nullptr;
-    if (orologioValido())
+    if (Clock::valido())
     {
       time_t now = time(nullptr);
       localtime_r(&now, &tmOggi);
@@ -501,7 +495,7 @@ namespace Scheduler
   {
     struct tm tmOggi;
     const struct tm* oggi = nullptr;
-    if (orologioValido())
+    if (Clock::valido())
     {
       time_t now = time(nullptr);
       localtime_r(&now, &tmOggi);
@@ -509,7 +503,7 @@ namespace Scheduler
     }
     const uint32_t ora = millis();
     out.printf("giri: %lu  orologio: %s  fascia: %s\n", (unsigned long)detail::giri,
-               orologioValido() ? "sincronizzato" : "non sincronizzato",
+               Clock::valido() ? "sincronizzato" : "non sincronizzato",
                inFascia() ? "aperta" : "chiusa");
     out.printf("%-9s %-6s %-9s %8s %8s %8s\n", "task", "radio", "prossimo", "esiti", "ok", "falliti");
     for (uint8_t i = 0; i < detail::nTask; ++i)
