@@ -2,8 +2,10 @@
 #define LAYOUT_097C_H
 
 /**
- * Layout per pannello SOLUM ESL 9.7" (controller SSD1677, 4 colori nativi
- * BWRY, native 672w x 960h -> setRotation(0) -> landscape 960w x 672h visibile).
+ * Layout per pannello SOLUM ESL 9.7" (controller SSD1677, tre colori misurati:
+ * bianco, nero e rosso, nessun quarto colore). Vetro nativo 672w x 960h
+ * portrait, che il driver indirizza come 960w x 672h: con setRotation(0) è
+ * la geometria visibile.
  *
  * Convenzione dimensioni in questo header e nei commenti dei moduli:
  *  - NwxMh (oppure Nw x Mh) = N px in larghezza (asse X) e M px in altezza (Y)
@@ -79,10 +81,14 @@ namespace Layout
     return Panel(GxEPD2_SOLUM_Pins{ PIN_CS, PIN_DC, PIN_RST, PIN_BUSY });
   }
 
-  // Orientamento e geometria visibile dopo setRotation(ROTATION).
+  /**
+   * Geometria visibile dopo setRotation(ROTATION), presa dal driver con gli
+   * stessi WIDTH_VISIBLE e HEIGHT che GxEPD2_3C passa ad Adafruit_GFX,
+   * scambiati sulle rotazioni dispari come fa setRotation().
+   */
   inline constexpr uint8_t ROTATION = 0;
-  inline constexpr int16_t SCREEN_W = 960;
-  inline constexpr int16_t SCREEN_H = 672;
+  inline constexpr int16_t SCREEN_W = (ROTATION % 2 == 0) ? Panel::WIDTH_VISIBLE : Panel::HEIGHT;
+  inline constexpr int16_t SCREEN_H = (ROTATION % 2 == 0) ? Panel::HEIGHT : Panel::WIDTH_VISIBLE;
 
   // -------------------------------------------------------------------------
   // Font (semantic role, non size). Layout_122c.h puo' rimappare a font
@@ -111,13 +117,9 @@ namespace Layout
   inline constexpr int16_t SIDEBAR_X = SCREEN_W - SIDEBAR_W;   // 620
 
   // -------------------------------------------------------------------------
-  // Wallpaper cinema (a sinistra, sotto la sidebar). Una sorgente piu'
-  // alta di CINEMA_H invade la fascia bianca CINEMA_H..BANNER_Y; una piu'
+  // Wallpaper cinema (a sinistra, sotto la sidebar). Una sorgente più
+  // alta di CINEMA_H invade la fascia mail CINEMA_H..BANNER_Y; una più
   // larga di CINEMA_W entra nella sidebar.
-  //
-  // CINEMA_H ridotto da 440 a 300 per liberare la fascia y=300..460 (160h
-  // px) destinata alla futura UI mail. Banner ancorato al fondo invariato
-  // (BANNER_Y=460). Risparmio RAM: ~33 KB sui 3 piani (102960 -> 70200 byte).
   // -------------------------------------------------------------------------
   inline constexpr int16_t  CINEMA_W         = 620;
   inline constexpr int16_t  CINEMA_H         = 300;
@@ -322,6 +324,13 @@ namespace Layout
   inline constexpr int16_t TC_AXIS_PAD_BOT = 8;        // spazio sotto asse X per HH:MM
   inline constexpr int16_t TC_TICK_H       = 2;
   inline constexpr int16_t TC_DOT_R        = 3;
+
+  // Le costanti pixel sono tarate su 960x672 e non seguono il driver: se la sua geometria
+  // cambia la build si ferma qui, perchè drawPixel() scarterebbe in silenzio ciò che esce dallo schermo.
+  static_assert(BANNER_Y + BANNER_H == SCREEN_H,
+                "Layout 097c: il banner non chiude sul fondo dello schermo del driver (BANNER_Y + BANNER_H != SCREEN_H)");
+  static_assert(FORECAST_RR_X + FORECAST_RR_W + INDOOR_RR_X == SCREEN_W,
+                "Layout 097c: i riquadri del banner non coprono la larghezza del driver con inset simmetrico");
 }
 
 #endif
