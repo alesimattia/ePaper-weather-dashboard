@@ -981,7 +981,7 @@ namespace Weather
       }
 
       /** Riga 2 - umidita' (nera). */
-      if (s.valid) snprintf(buf, sizeof(buf), "%.0f %%", s.humidity);
+      if (s.valid) snprintf(buf, sizeof(buf), "%u %%", (unsigned)s.humidity);
       else         strcpy(buf, "--");
       drawIndoorRow(INDOOR_ICON_HUMIDITY, buf, col1X, Layout::INDOOR_ROW2_BASELINE, GxEPD_BLACK);
 
@@ -990,8 +990,8 @@ namespace Weather
       if (s.valid)
       {
         char mainStr[24];
-        snprintf(mainStr, sizeof(mainStr), "%s %.0f",
-                 Indoor::iaqLabel(s.iaq), s.iaq);
+        snprintf(mainStr, sizeof(mainStr), "%s %u",
+                 Indoor::iaqLabel(s.iaq), (unsigned)s.iaq);
 
         display.setFont(Layout::FONT_SMALL);
         drawIndoorRow(INDOOR_ICON_AIR_QUALITY, mainStr, col1X, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
@@ -1017,10 +1017,31 @@ namespace Weather
         display.setFont(Layout::FONT_LARGE);
       }
 
-      /** Riga 4 - pressione atmosferica (nera, "XXXX hPa"). */
-      if (s.valid) snprintf(buf, sizeof(buf), "%.0f hPa", s.pressure);
-      else         strcpy(buf, "--");
-      drawIndoorRow(INDOOR_ICON_PRESSURE, buf, col1X, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
+      /** Riga 4 - pressione atmosferica: valore in FONT_LARGE e unità in
+       *  FONT_MICRO, perchè "1013 mBar" tutto in FONT_LARGE occuperebbe 167 px
+       *  contro i 117 che restano nel riquadro, finendo dentro quello Weather. */
+      if (s.valid)
+      {
+        snprintf(buf, sizeof(buf), "%u", (unsigned)s.pressure);
+        drawIndoorRow(INDOOR_ICON_PRESSURE, buf, col1X, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
+
+        int16_t  x1, y1;
+        uint16_t nw, nh;
+        display.getTextBounds(buf, 0, 0, &x1, &y1, &nw, &nh);
+        const int16_t unitX = col1X + Layout::INDOOR_ICON_SIZE + Layout::INDOOR_ICON_GAP
+                              + (int16_t)nw + Layout::INDOOR_UNIT_GAP;
+
+        display.setFont(Layout::FONT_MICRO);
+        display.setCursor(unitX, Layout::INDOOR_ROW4_BASELINE);
+        display.setTextColor(GxEPD_BLACK);
+        display.print("mBar");
+
+        display.setFont(Layout::FONT_LARGE);
+      }
+      else
+      {
+        drawIndoorRow(INDOOR_ICON_PRESSURE, "--", col1X, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
+      }
     }
 
     /**

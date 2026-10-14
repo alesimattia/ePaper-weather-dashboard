@@ -235,6 +235,11 @@ namespace Layout
 
   inline constexpr int16_t INDOOR_ICON_GAP    = 6;
   inline constexpr int16_t INDOOR_COL1_OFFSET = 10;
+  /**
+   * Distanza fra un valore e la sua unità di misura, quando questa viene
+   * scritta in un font più piccolo accanto al numero.
+   */
+  inline constexpr int16_t INDOOR_UNIT_GAP = 3;
 
   // -------------------------------------------------------------------------
   // Riquadro mese (in cima alla sidebar). 320x200 con bordi arrotondati e

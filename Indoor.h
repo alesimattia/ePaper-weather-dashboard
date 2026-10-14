@@ -31,14 +31,19 @@ namespace Indoor
    * Finchè BSEC non ha stabilizzato il primo output, valid=false e tutti i campi a
    * zero; dopo un cold start ci vogliono ~5 min per il primo sample
    * (immediato invece quando lo stato è stato ripristinato da NVS).
+   *
+   * BSEC espone ogni grandezza come float perchè ha un solo campo signal, ma
+   * qui i tipi seguono il dato: il decimale è significativo solo per la
+   * temperatura, mentre umidità, pressione e IAQ stanno nel tipo intero più
+   * piccolo che ne contiene il range.
    */
   struct Sample
   {
     bool     valid;
     float    temperature;   // °C (heat compensated)
-    float    humidity;      // %RH (heat compensated)
-    float    pressure;      // hPa
-    float    iaq;           // 0-500
+    uint8_t  humidity;      // %RH (heat compensated), arrotondata
+    uint16_t pressure;      // mBar (= hPa), arrotondati
+    uint16_t iaq;           // 0-500
     uint8_t  iaqAccuracy;   // 0 (stabilizing) -> 3 (calibrated)
     uint32_t lastUpdateMs;  // millis() del sample corrente
   };
@@ -91,6 +96,17 @@ namespace Indoor
     }
 
     /**
+     * Arrotonda un output BSEC al valore intero da memorizzare, scartando il
+     * NaN: lroundf() su NaN ha comportamento indefinito e produrrebbe un
+     * valore arbitrario dentro un campo che non può più segnalare l'errore.
+     */
+    inline uint32_t toRounded(float signal)
+    {
+      if (isnan(signal) || signal <= 0.0f) return 0;
+      return (uint32_t)lroundf(signal);
+    }
+
+    /**
      * Callback invocato da BSEC quando è pronto un nuovo set di output.
      * Aggiorna la cache `current` e setta il flag `hasNewSample` che
      * Indoor::refresh() leggera' al ritorno da bsec.run().
@@ -124,17 +140,18 @@ namespace Indoor
         switch (out.sensor_id)
         {
           case BSEC_OUTPUT_IAQ:
-            current.iaq         = out.signal;
+            current.iaq         = (uint16_t)toRounded(out.signal);
             current.iaqAccuracy = out.accuracy;
             break;
           case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
             current.temperature = out.signal;
             break;
           case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
-            current.humidity = out.signal;
+            current.humidity = (uint8_t)toRounded(out.signal);
             break;
           case BSEC_OUTPUT_RAW_PRESSURE:
-            current.pressure = out.signal / 100.0f;   // Pa -> hPa
+            // Pa -> mBar, numericamente identici agli hPa.
+            current.pressure = (uint16_t)toRounded(out.signal / 100.0f);
             break;
           default:
             break;
@@ -289,9 +306,10 @@ namespace Indoor
 
     if (!hasNewSample) return false;
 
-    LOGV("BME680", "T=%.1fC RH=%.1f%% P=%.1fhPa IAQ=%.0f acc=%u",
-         current.temperature, current.humidity, current.pressure,
-         current.iaq, (unsigned)current.iaqAccuracy);
+    LOGV("BME680", "T=%.1fC RH=%u%% P=%umBar IAQ=%u acc=%u",
+         current.temperature, (unsigned)current.humidity,
+         (unsigned)current.pressure, (unsigned)current.iaq,
+         (unsigned)current.iaqAccuracy);
 
     // Salvataggio stato gated: solo a distanza >= 6 h dall'ultimo e solo
     // quando il calibratore ha raggiunto almeno accuracy=1. Evita di
@@ -334,14 +352,14 @@ namespace Indoor
    *
    * @since 21/04/26 Mattia Alesi
    */
-  inline const char* iaqLabel(float iaq)
+  inline const char* iaqLabel(uint16_t iaq)
   {
-    if (iaq <=  50.0f) return "Ottima";
-    if (iaq <= 100.0f) return "Buona";
-    if (iaq <= 150.0f) return "Discreta";
-    if (iaq <= 200.0f) return "Mediocre";
-    if (iaq <= 250.0f) return "Cattiva";
-    if (iaq <= 350.0f) return "Pessima";
+    if (iaq <=  50) return "Ottima";
+    if (iaq <= 100) return "Buona";
+    if (iaq <= 150) return "Discreta";
+    if (iaq <= 200) return "Mediocre";
+    if (iaq <= 250) return "Cattiva";
+    if (iaq <= 350) return "Pessima";
     return "Nociva";
   }
 }

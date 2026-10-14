@@ -25,3 +25,6 @@ type: reference
 4. **Non compone bene con uno scheduler periodico.** Il task `bsec` ha una scadenza calcolata su `lastUpdateMs + 300 s`, mentre una misura extra produce un campione **fuori scadenza**: senza un flag che leghi le due cose il task non risulterebbe dovuto nel giro in cui la misura è stata chiesta, e il campione verrebbe raccolto fino a 5 minuti dopo. E un flag del genere ha bisogno del proprio tetto, perché "nessuna risposta" non è osservabile (punto 1 della sezione precedente): senza scadenza il sensore resterebbe dovuto a ogni giro e il dispositivo si sveglierebbe a `SLEEP_MIN_S` invece che ogni 300 s, dieci volte più spesso.
 
 Il beneficio, anche funzionando tutto, sarebbe stato "a volte più fresco" e non "sempre fresco": se BSEC ha bisogno di più di un `run()` per il ciclo dello heater, il campione arriva comunque al giro dopo. Sproporzionato rispetto al rischio.
+
+Correlate: [[bme680_precisione_e_tipi]] per il dato che questi campioni
+producono, la precisione di ogni grandezza e i tipi in cui viene rappresentato.

@@ -43,7 +43,7 @@ sotto, la cache di Indoor non ha un campione nuovo da dare e si ripubblica lo
 stesso. `TUYA_CONNECT_TIMEOUT_MS` / `TUYA_PUBACK_TIMEOUT_MS` /
 `TUYA_ACK_TIMEOUT_MS` / `TUYA_ATTESA_POLL_MS` stanno anch'essi in `Timings.h`;
 in `Tuya.h` restano solo i valori che non sono tempi (URI del broker,
-identifier e moltiplicatori dei DP, stack del task, `TUYA_REQUEST_ACK`).
+identifier dei DP, stack del task, `TUYA_REQUEST_ACK`).
 
 L'ora valida la dice `Clock::valido()`, non una copia locale della soglia: il
 modulo include `Clock.h` e non `Scheduler.h`, perchè la dipendenza fra moduli e
@@ -77,7 +77,7 @@ Vincoli che non si vedono dal codice:
 ## Payload, e le tre divergenze fra le fonti
 
 ```json
-{"msgId":"7","time":1757246400,"data":{"temp_current":{"value":235}},"sys":{"ack":1}}
+{"msgId":"7","time":1757246400,"data":{"temp_value":{"value":23.4},"hum_value":{"value":47},"press_value":{"value":1013},"iaq_value":{"value":48},"iaq_acc":{"value":2}},"sys":{"ack":1}}
 ```
 
 L'SDK ufficiale (`tuyalink_message_send`) compone
@@ -112,12 +112,29 @@ il SUBACK prima di pubblicare, e logga il `code` (0 = accettato) o il corpo
 intero in caso di rifiuto. Costa ~1148 byte di flash, 120 di RAM e fino a
 `TUYA_ACK_TIMEOUT_MS` per publish.
 
-**Corrispondenza moltiplicatore-scale**: i DP numerici Tuya sono interi con una
-`scale` dichiarata in console. `TUYA_MUL_*` nel firmware deve corrispondere: con
-scale 1 e moltiplicatore 1 la temperatura appare divisa per dieci, con scale 0 e
-moltiplicatore 10 decuplicata. In nessuno dei due casi c'è un errore. È il
-rischio di configurazione numero uno del modulo, e si vede solo in "Device
-Debugging" sulla console.
+**Corrispondenza fra tipo in console e tipo in Sample**: il device model
+rispecchia i tipi del firmware, quindi non c'è nessuna scalatura e il valore si
+trasmette com'è.
+
+| Campo di Sample | Tipo C | Identifier | Tipo in console | Range |
+|---|---|---|---|---|
+| `temperature` | `float` | `temp_value` | Float, pitch 0.1 | -50..80 °C |
+| `humidity` | `uint8_t` | `hum_value` | Value, scale 0, pitch 1 | 0..100 % |
+| `pressure` | `uint16_t` | `press_value` | Value, scale 0, pitch 1 | 0..2000 mBar |
+| `iaq` | `uint16_t` | `iaq_value` | Value, scale 0, pitch 1 | 0..500 |
+| `iaqAccuracy` | `uint8_t` | `iaq_acc` | Value, scale 0, pitch 1 | 0..5 |
+
+Tutte le property sono Report Only, perchè il firmware non si sottoscrive a
+`property/set`. La scale va tenuta a zero sulle quattro Value: una scale diversa
+scala il valore nell'app senza che niente segnali l'errore. Il pitch è la
+distanza fra valori ammessi e la quantità trasferita vale `step × 10^scale`; la
+documentazione non chiarisce se venga validato sui report o se guidi solo il
+widget, quindi sul Float va messo 0.1, cioè la risoluzione che `%.1f` produce.
+
+Il tipo Float non è documentato nei payload TuyaLink e compare solo
+nell'elenco dei tipi della Cloud API. La piattaforma TSL analoga di Alibaba
+pretende almeno un decimale sui float, e `%.1f` lo garantisce anche sui valori
+tondi.
 
 ## TLS: la catena reale del broker, misurata
 
@@ -243,9 +260,9 @@ delle coordinate (vedi [[layout_separation]]).
 ## How to apply
 
 Al bring-up, in quest'ordine: log seriale (CONNECTED, poi PUBACK), poi "Device
-Debugging" in console per verificare **valori e scala**, poi QR code e app. Il
-passo in console non è salvabile: è l'unico punto in cui si vede un
-moltiplicatore sbagliato, a meno di alzare `TUYA_REQUEST_ACK`.
+Debugging" in console per verificare i **valori**, poi QR code e app. Il passo
+in console non è saltabile: è l'unico punto in cui si vede un tipo o una scale
+non combacianti, a meno di alzare `TUYA_REQUEST_ACK`.
 
 Su un errore di connessione, `connect_return_code` 0x04/0x05 punta a
 credenziali, firma o timestamp; un errore di trasporto punta a CA, DNS o

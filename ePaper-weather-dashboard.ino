@@ -87,7 +87,7 @@
  * non che il cloud ne abbia accettato il contenuto. Costo e meccanismo sono
  * documentati in Tuya.h, dove il valore ha anche il suo default.
  */
-#define TUYA_REQUEST_ACK 0
+#define TUYA_REQUEST_ACK 1
 
 // ---------------------------------------------------------------------------
 // Cadenze, timeout e pavimenti stanno tutti in Timings.h, che va incluso PRIMA

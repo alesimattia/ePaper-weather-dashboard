@@ -77,52 +77,36 @@
 #endif
 
 /**
- * Identifier delle properties nel device model creato sulla console, con il
- * moltiplicatore che converte il valore float del sensore nell'intero che
- * Tuya si aspetta.
+ * Identifier delle properties nel device model della console, uno per campo di
+ * Indoor::Sample. Nessun moltiplicatore: il tipo di ogni property rispecchia
+ * quello del campo, quindi il valore si trasmette così com'è.
  *
- * ATTENZIONE: il moltiplicatore deve corrispondere alla "scale" dichiarata in
- * console per quella property, ed è l'errore di configurazione più insidioso
- * del modulo. Con scale 1 e moltiplicatore 1 la temperatura appare divisa per
- * dieci; con scale 0 e moltiplicatore 10 appare decuplicata. In nessuno dei
- * due casi si vede un errore: il PUBACK conferma la consegna MQTT, non
- * l'accettazione del valore. Va verificato in "Device Debugging" sulla
- * console prima di guardare l'app.
- *
- * I valori qui sotto sono un default plausibile: gli identifier veri si
- * leggono dalla console dopo aver creato le properties.
+ * La corrispondenza da mantenere è fra tipo in console e tipo in Sample: la
+ * temperatura è Float perchè il decimale è significativo, le altre quattro
+ * sono Value con scale 0 perchè sono già intere nel firmware. Se una property
+ * in console avesse una scale diversa da zero il valore apparirebbe scalato
+ * nell'app senza che niente segnali l'errore, perchè il PUBACK conferma la
+ * consegna MQTT e non l'accettazione del valore.
  */
 #ifndef TUYA_DP_TEMPERATURE
-#define TUYA_DP_TEMPERATURE "temp_current"
-#endif
-#ifndef TUYA_MUL_TEMPERATURE
-#define TUYA_MUL_TEMPERATURE 10L
+#define TUYA_DP_TEMPERATURE "temp_value"
 #endif
 
 #ifndef TUYA_DP_HUMIDITY
-#define TUYA_DP_HUMIDITY "humidity_value"
-#endif
-#ifndef TUYA_MUL_HUMIDITY
-#define TUYA_MUL_HUMIDITY 1L
+#define TUYA_DP_HUMIDITY "hum_value"
 #endif
 
 #ifndef TUYA_DP_PRESSURE
-#define TUYA_DP_PRESSURE "pressure_value"
-#endif
-#ifndef TUYA_MUL_PRESSURE
-#define TUYA_MUL_PRESSURE 1L
+#define TUYA_DP_PRESSURE "press_value"
 #endif
 
 #ifndef TUYA_DP_IAQ
-#define TUYA_DP_IAQ "air_quality_index"
-#endif
-#ifndef TUYA_MUL_IAQ
-#define TUYA_MUL_IAQ 1L
+#define TUYA_DP_IAQ "iaq_value"
 #endif
 
 /** Accuratezza del calibratore BSEC, 0..3: dice se l'IAQ è attendibile. */
 #ifndef TUYA_DP_IAQ_ACCURACY
-#define TUYA_DP_IAQ_ACCURACY "iaq_accuracy"
+#define TUYA_DP_IAQ_ACCURACY "iaq_acc"
 #endif
 
 /** Stack del task esp-mqtt: esplicito perchè l'handshake TLS gira lì dentro.
@@ -152,7 +136,7 @@
  * (tuyalink_message_send), che le compone esattamente così.
  */
 #ifndef TUYA_REQUEST_ACK
-#define TUYA_REQUEST_ACK 0
+#define TUYA_REQUEST_ACK 1
 #endif
 
 /**
@@ -214,14 +198,12 @@ namespace Tuya
 #endif
 
     /**
-     * Converte una misura in virgola mobile nell'intero atteso da Tuya.
-     * lroundf e non un cast: il cast troncherebbe (23,49 con moltiplicatore
-     * 10 darebbe 234 invece di 235) e sui negativi troncherebbe verso zero.
+     * Tiene un eventuale NaN fuori dal payload: BSEC può produrlo e "nan" non
+     * è un numero JSON, quindi il messaggio verrebbe scartato per intero.
      */
-    inline long toDp(float value, long mul)
+    inline float toFloatDp(float value)
     {
-      if (isnan(value)) return 0;
-      return lroundf(value * (float)mul);
+      return isnan(value) ? 0.0f : value;
     }
 
     /**
@@ -301,19 +283,25 @@ namespace Tuya
       const unsigned long ageSec   = (millis() - s.lastUpdateMs) / 1000UL;
       const unsigned long sampleTs = (ageSec < ts) ? (ts - ageSec) : ts;
 
+      /**
+       * La temperatura esce con un decimale perchè la sua property è Float:
+       * %.1f lo emette anche sui valori tondi, e un float senza parte
+       * decimale è la forma che le piattaforme TSL rifiutano. Le altre quattro
+       * sono già intere in Sample e vanno come interi.
+       */
       int n = snprintf(payload, sizeof(payload),
                        "{\"msgId\":\"%lu\",\"time\":%lu,\"data\":{"
-                       "\"%s\":{\"value\":%ld},"
-                       "\"%s\":{\"value\":%ld},"
-                       "\"%s\":{\"value\":%ld},"
-                       "\"%s\":{\"value\":%ld},"
-                       "\"%s\":{\"value\":%ld}}" TUYA_SYS_ACK_FIELD "}",
+                       "\"%s\":{\"value\":%.1f},"
+                       "\"%s\":{\"value\":%u},"
+                       "\"%s\":{\"value\":%u},"
+                       "\"%s\":{\"value\":%u},"
+                       "\"%s\":{\"value\":%u}}" TUYA_SYS_ACK_FIELD "}",
                        (unsigned long)++msgSeq, sampleTs,
-                       TUYA_DP_TEMPERATURE,  toDp(s.temperature, TUYA_MUL_TEMPERATURE),
-                       TUYA_DP_HUMIDITY,     toDp(s.humidity,    TUYA_MUL_HUMIDITY),
-                       TUYA_DP_PRESSURE,     toDp(s.pressure,    TUYA_MUL_PRESSURE),
-                       TUYA_DP_IAQ,          toDp(s.iaq,         TUYA_MUL_IAQ),
-                       TUYA_DP_IAQ_ACCURACY, (long)s.iaqAccuracy);
+                       TUYA_DP_TEMPERATURE,  toFloatDp(s.temperature),
+                       TUYA_DP_HUMIDITY,     (unsigned)s.humidity,
+                       TUYA_DP_PRESSURE,     (unsigned)s.pressure,
+                       TUYA_DP_IAQ,          (unsigned)s.iaq,
+                       TUYA_DP_IAQ_ACCURACY, (unsigned)s.iaqAccuracy);
 
       return n > 0 && (size_t)n < sizeof(payload);
     }
@@ -655,8 +643,9 @@ namespace Tuya
       // Unico punto che azzera il guasto: solo un PUBACK dimostra che il
       // dato è arrivato.
       failedLast = false;
-      LOG("Tuya", "publish ok: T=%.1f RH=%.1f P=%.1f IAQ=%.0f acc=%u",
-          s.temperature, s.humidity, s.pressure, s.iaq, (unsigned)s.iaqAccuracy);
+      LOG("Tuya", "publish ok: T=%.1f RH=%u P=%u IAQ=%u acc=%u",
+          s.temperature, (unsigned)s.humidity, (unsigned)s.pressure,
+          (unsigned)s.iaq, (unsigned)s.iaqAccuracy);
     }
     else
       LOG("Tuya", "publish non confermato");
