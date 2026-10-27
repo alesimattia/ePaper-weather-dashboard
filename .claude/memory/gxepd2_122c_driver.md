@@ -211,7 +211,7 @@ sbagliato per questa famiglia). Da lì si prende: init in broadcast senza offset
 `0x1A`, `0x22`=0xB1 + `0x20`), `_setPartialRamArea(..., target)` con target 0x00/0x80 che offsetta
 `0x11/0x44/0x45/0x4E/0x4F`, piani `0x24|target` / `0x26|target`, refresh e power on in broadcast, e
 soprattutto **il mirror di una metà fatto con l'entry mode** (`0x11` = 0x02 su un chip, 0x03
-sull'altro) invece che ribaltando byte e bit nel data path come fa oggi il nostro driver.
+sull'altro) invece che ribaltando byte e bit nel data path come fa il nostro driver.
 
 **OEPL, stato corrente** (`Shared_OEPL_Definitions` letto live, non lo snapshot in `docs/`):
 niente 12.2". Le taglie grandi arrivano a `STYPE_SIZE_116` 0x65, `STYPE_SIZE_116B` 0x4A,

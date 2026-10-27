@@ -1,6 +1,6 @@
 ---
 name: Scheduler centralizzato dei flussi temporizzati
-description: Scheduler.h possiede tutto il timing; struttura della tabella dei task, le due fasi del giro, coalescing, proprieta' della radio
+description: Scheduler.h possiede tutto il timing; struttura della tabella dei task, le due fasi del giro, coalescing, proprietà della radio
 type: project
 ---
 
@@ -37,4 +37,4 @@ type: project
 
 **Aggiungere un task** = una riga di tabella più gli adattatori, ed è tutto: nessun modulo e nessun ramo di `loop()` si toccano. Tuya è l'esempio già in tabella, e l'unico che usa due campi altrimenti dormienti — `maxTentativi = 0` e `ignoraFascia` — più un `dopo()` che non è `marcaSuOk`: chiede il ridisegno solo quando `hasFailed()` **cambia** rispetto al badge già disegnato, non su successo (vedi [[tuya_module]]).
 
-**Verificato per esecuzione**: `test/test_scheduler.cpp` compila `Scheduler.h` su host sostituendo con macro `time()`, `localtime_r()` e `mktime()`; le ultime due passano dalle regole POSIX di `test/stub/fuso_posix.h` invece che dalla libc, cosi' il test gira identico su macOS e su Windows, dove il CRT non sa leggere i campi di transizione di una stringa TZ. Copre cadenze, coalescing, ritenti e soglia, `SALTATO` che non spende il tentativo, cadenza giornaliera col recupero in giornata, fascia oraria, orologio non sincronizzato, cambio dell'ora legale, rollover di `millis()` a 49,7 giorni e clamp del light sleep. `./test/esegui.sh`.
+**Verificato per esecuzione**: `test/test_scheduler.cpp` compila `Scheduler.h` su host sostituendo con macro `time()`, `localtime_r()` e `mktime()`; le ultime due passano dalle regole POSIX di `test/stub/fuso_posix.h` invece che dalla libc, così il test gira identico su macOS e su Windows, dove il CRT non sa leggere i campi di transizione di una stringa TZ. Copre cadenze, coalescing, ritenti e soglia, `SALTATO` che non spende il tentativo, cadenza giornaliera col recupero in giornata, fascia oraria, orologio non sincronizzato, cambio dell'ora legale, rollover di `millis()` a 49,7 giorni e clamp del light sleep. `./test/esegui.sh`.

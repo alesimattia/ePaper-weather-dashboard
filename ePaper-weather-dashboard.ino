@@ -272,8 +272,9 @@ void initDisplay()
 static constexpr uint8_t CINEMA_PLANES_MAX = 3;
 static uint8_t *g_cinema_planes[CINEMA_PLANES_MAX] = {};
 
-// Nomi dei piani nell'ordine in cui il server li concatena, per i log.
-static const char *const g_cinema_plane_names[CINEMA_PLANES_MAX] = {"black", "red", "yellow"};
+// Nomi dei piani nell'ordine in cui il server li concatena, per i log. Il terzo
+// piano lo chiede solo il 12.2", il cui quarto colore non è determinato.
+static const char *const g_cinema_plane_names[CINEMA_PLANES_MAX] = {"black", "red", "third"};
 
 static_assert(Layout::CINEMA_PLANES >= 2 && Layout::CINEMA_PLANES <= CINEMA_PLANES_MAX,
 			  "Layout::CINEMA_PLANES fuori dai formati serviti da /cinema/arduino");

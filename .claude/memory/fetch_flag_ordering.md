@@ -1,6 +1,6 @@
 ---
 name: Politica di ritento e consumo dello slot
-description: Come lo scheduler evita il retry-storm, e perche' il cinema usa la politica pessimista
+description: Come lo scheduler evita il retry-storm, e perchè il cinema usa la politica pessimista
 type: project
 ---
 

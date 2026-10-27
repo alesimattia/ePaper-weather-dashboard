@@ -31,15 +31,15 @@ disponibili, il descrittore solo se il tipo esiste. La guardia la emette `epd_im
 quindi va corretta lì oltre che nel file generato. Nominare un driver specifico romperebbe la build
 su tutte le altre varianti di display.
 
-**Il fallback deve combaciare con l'area del wallpaper, e oggi combacia.** Il descrittore in
-`wallpaper/` e' generato a `620x300`, cioe' esattamente `Layout::CINEMA_W x CINEMA_H` del 097c, ed
-e' un vincolo da rispettare a ogni rigenerazione: `showImage` **non clippa**, disegna da `(0,0)`
-usando width e height del `Descriptor`. Un fallback piu' alto invaderebbe la fascia mail
-(`MAIL_Y = CINEMA_H`), che `Mail::draw()` non ripulisce perche' conta sul `fillScreen(GxEPD_WHITE)`
-del loop paged, e le righe delle mail finirebbero disegnate sopra l'immagine; uno piu' largo
+**Il fallback deve combaciare con l'area del wallpaper.** Il descrittore in
+`wallpaper/` è generato a `620x300`, cioè esattamente `Layout::CINEMA_W x CINEMA_H` del 097c, ed
+è un vincolo da rispettare a ogni rigenerazione: `showImage` **non clippa**, disegna da `(0,0)`
+usando width e height del `Descriptor`. Un fallback più alto invaderebbe la fascia mail
+(`MAIL_Y = CINEMA_H`), che `Mail::draw()` non ripulisce perchè conta sul `fillScreen(GxEPD_WHITE)`
+del loop paged, e le righe delle mail finirebbero disegnate sopra l'immagine; uno più largo
 entrerebbe nella sidebar del calendario.
 
-**Il fallback e' monocromatico** (`FORMAT_BW_1BPP`, un solo piano, `data1` e `data2` a `nullptr`),
-mentre il descrittore dinamico scaricato e' a due piani su questi pannelli. Il formato viaggia
+**Il fallback è monocromatico** (`FORMAT_BW_1BPP`, un solo piano, `data1` e `data2` a `nullptr`),
+mentre il descrittore dinamico scaricato è a due piani su questi pannelli. Il formato viaggia
 dentro il `Descriptor`, quindi i due convivono senza rami nel chiamante: `drawTestBackground()`
 passa il puntatore e basta.

@@ -51,14 +51,13 @@ va validato con l'utente.
 Il cap a 60 è una scelta di prodotto, non vincolato all'API Gmail.
 
 **4. `MAIL_GOOGLE_FETCH_MIN` deve essere un `#define` SEPARATO da
-`CAL_GOOGLE_FETCH_MIN`, anche se attualmente l'utente lo tiene allineato.**
+`CAL_GOOGLE_FETCH_MIN`, anche se i due valori possono coincidere.**
 
 **Why:** richiesta esplicita "voglio che il tempo di refresh
 MAIL_GOOGLE_FETCH_MIN sia configurabile separatamente rispetto al tempo
-di refresh del calendario". Anche se nel `.ino` il valore corrente è
-identico (10), il knob deve restare indipendente per future regolazioni.
+di refresh del calendario". Anche se i due default coincidono (10), il knob deve restare indipendente per future regolazioni.
 
-**How to apply:** oggi sono due campi distinti di `Timings::Valori`
+**How to apply:** sono due campi distinti di `Timings::Valori`
 (`mail_min` e `goog_min`), entrambi regolabili da `/config`. Non
 collassarli in un alias, anche se sembra DRY: l'indipendenza concettuale è
 un requisito, e con lo sleep dinamico è anche realizzabile davvero (prima

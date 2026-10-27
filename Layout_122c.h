@@ -2,11 +2,10 @@
 #define LAYOUT_122C_H
 
 /**
- * Layout per pannello SOLUM Newton-Core 12.2" (960w x 768h, 3 colori nativi
- * bianco/nero/rosso, nessun giallo). Il driver assume un UC8179
- * dual-controller master/slave: assumption NON validata sul pannello, vedi
- * GxEPD2_SOLUM_ESL/README_122c.md. Con questa variante il firmware compila,
- * ma che il pannello risponda non è dimostrato.
+ * Layout per pannello SOLUM Newton PRO 12.2" (960w x 768h, bianco/nero/rosso
+ * sul vetro, quarto colore non determinato). Il driver pilota due controller
+ * SSD16xx da 960 x 384, uno per coda FFC: la seconda coda non risponde, quindi
+ * il pannello stampa una sola banda, vedi GxEPD2_SOLUM_ESL/README_122c.md.
  *
  * Convenzione dimensioni in questo header (uguale al gemello Layout_097c.h):
  *  - NwxMh (oppure Nw x Mh) = N px in larghezza (asse X) e M px in altezza (Y)

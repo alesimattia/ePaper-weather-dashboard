@@ -25,4 +25,4 @@ type: project
 
 **Verificato per esecuzione**, non solo per lettura: `test/test_timings.cpp` compila l'header vero con stub minimi di piattaforma e controlla pavimenti, vincoli incrociati, applicazione transazionale, round-trip su NVS, clamp al boot, NVS assente e schema mancante. Si lancia con `./test/esegui.sh`.
 
-**`applica()` e' transazionale per necessita', non per eleganza.** I vincoli legano piu' campi fra loro: allargare la fascia WiFi e spostare l'ora del cinema sono legittimi insieme e illegittimi presi uno alla volta. Applicandoli in sequenza, una richiesta valida verrebbe respinta a meta' a seconda dell'ordine dei campi.
+**`applica()` è transazionale per necessità, non per eleganza.** I vincoli legano più campi fra loro: allargare la fascia WiFi e spostare l'ora del cinema sono legittimi insieme e illegittimi presi uno alla volta. Applicandoli in sequenza, una richiesta valida verrebbe respinta a metà a seconda dell'ordine dei campi.

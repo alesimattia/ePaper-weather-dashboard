@@ -82,13 +82,13 @@ e un `.bin` qui non servirebbe a niente. Gli oggetti intermedi in
 - `Env.h` è gitignored e obbligatorio per compilare; quello attuale ha solo placeholder, quindi il
   firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
 
-**Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed e' il default di `build.ps1`.
+**Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed è il default di `build.ps1`.
 
-**Lo schema di partizioni deve essere `no_fs`**, ed e' il default dello script. Le CSV del core lo mostrano senza ambiguita': `huge_app.csv` ha la sola `app0` da 3 MB, `no_fs.csv` ha `app0` e `app1` da 1984 KB ciascuna, `default.csv` due slot da 1280 KB piu' SPIFFS. Servono **due** slot perche' l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]), e il firmware non usa nessun filesystem, quindi lo spazio di SPIFFS e' meglio darlo alle due slot. Con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce: il guasto si manifesta solo al primo aggiornamento via web.
+**Lo schema di partizioni deve essere `no_fs`**, ed è il default dello script. Le CSV del core lo mostrano senza ambiguità: `huge_app.csv` ha la sola `app0` da 3 MB, `no_fs.csv` ha `app0` e `app1` da 1984 KB ciascuna, `default.csv` due slot da 1280 KB più SPIFFS. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]), e il firmware non usa nessun filesystem, quindi lo spazio di SPIFFS è meglio darlo alle due slot. Con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce: il guasto si manifesta solo al primo aggiornamento via web.
 
-Il vincolo di dimensione e' quindi la slot da 1984 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero e' la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in piu' della 097c, che sono i buffer di page piu' alti (96 righe invece di 84), mentre il flash e' praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
+Il vincolo di dimensione è quindi la slot da 1984 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero è la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in più della 097c, che sono i buffer di page più alti (96 righe invece di 84), mentre il flash è praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 
-**Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (oggi `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
+**Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (ad esempio `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
 
 **Gli examples del submodule non li compila questo build** (Arduino concatena i `.ino` solo dalla root dello sketch). Si compilano a parte passando la libreria per quella build, senza installarla: comando e caveat in [[gxepd2_solum_esl_library]].
 
@@ -115,12 +115,12 @@ che perderebbe il quoting: INCLUDE, LIB e PATH non sopravvivono al processo. Lo 
   salvati **UTF-8 con BOM**, come `build.ps1`, più `[Console]::OutputEncoding` a UTF-8 nello script.
 
 **La suite gira interamente qui**, `test_timings` e `test_scheduler`. Il secondo non usa il fuso
-della libc ma le regole POSIX di `test\stub\fuso_posix.h`, ed e' cio' che lo rende eseguibile su
+della libc ma le regole POSIX di `test\stub\fuso_posix.h`, ed è ciò che lo rende eseguibile su
 Windows: il CRT non legge i campi di transizione di una stringa TZ POSIX (accetta solo
 `tzn[+|-]hh[dzn]` e poi applica le regole statunitensi), e vale anche per MinGW, che usa lo stesso
 CRT. Il confronto fra stub e libc dentro il test sta sotto `#ifndef _WIN32`, quindi **su questa
 macchina non viene compilato**: quel ramo lo verifica solo il Mac.
 
-Docker Desktop e' installato (daemon fermo) e resta la via per girare la suite su glibc vera:
+Docker Desktop è installato (daemon fermo) e resta la via per girare la suite su glibc vera:
 `docker run --rm -v A:\epd:/src gcc:14 sh -c "cd /src/test && ./esegui.sh"`. WSL2 Ubuntu 26.04
-esiste ma e' **senza compilatore**, e installarcelo ricadrebbe fuori da `A:\tmp\sandbox`.
+esiste ma è **senza compilatore**, e installarcelo ricadrebbe fuori da `A:\tmp\sandbox`.

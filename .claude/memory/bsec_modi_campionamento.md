@@ -1,6 +1,6 @@
 ---
-name: BSEC2 - modi di campionamento, warning positivi, e perche' la misura on-demand non si usa
-description: 300 s e' un modo non un intervallo; run() ritorna true quando non c'e' niente da leggere; perche' ULP plus e' stata valutata e scartata
+name: BSEC2 - modi di campionamento, warning positivi, e perchè la misura on-demand non si usa
+description: 300 s è un modo non un intervallo; run() ritorna true quando non c'è niente da leggere; perchè ULP plus è stata valutata e scartata
 type: reference
 ---
 
@@ -8,14 +8,14 @@ type: reference
 
 ## Due comportamenti del wrapper che non si vedono dall'API
 
-1. **`Bsec2::run()` ritorna `true` anche quando non c'e' niente da leggere.** Il corpo è tutto dentro `if (currTimeNs >= bmeConf.next_call)` e la funzione cade sul `return true` finale (`bsec2.cpp:146-209`); ritorna `false` solo su errore vero. Quindi "nessun dato" e "tutto bene" sono indistinguibili dal valore di ritorno: chi deve sapere se è arrivato un campione guarda `hasNewSample`, non `run()`.
+1. **`Bsec2::run()` ritorna `true` anche quando non c'è niente da leggere.** Il corpo è tutto dentro `if (currTimeNs >= bmeConf.next_call)` e la funzione cade sul `return true` finale (`bsec2.cpp:146-209`); ritorna `false` solo su errore vero. Quindi "nessun dato" e "tutto bene" sono indistinguibili dal valore di ritorno: chi deve sapere se è arrivato un campione guarda `hasNewSample`, non `run()`.
 2. **`bmeConf` è privato** (`bsec2.h:239`) e gatea `run()`. Nessuna API pubblica permette di sapere quando cadrà il prossimo campione: per questo `scadenzaIndoor()` nel `.ino` la deriva da `Indoor::sample().lastUpdateMs + 300 s`, che è l'unica informazione disponibile.
 
 ## I warning di BSEC sono positivi, e vanno filtrati con `!=`
 
 `Indoor::refresh()` logga quando `bsec.status != BSEC_OK`, **non** `< BSEC_OK`. I codici positivi sono warning — fra cui `BSEC_W_CALL_TIMING_VIOLATION` (100), che segnala un poll fuori tempo — e con un filtro sui soli negativi resterebbero invisibili. `detail::descriviStatoBsec()` li traduce in testo, altrimenti sul seriale comparirebbe un numero muto.
 
-## Perche' la misura on-demand ("ULP plus") non e' implementata
+## Perchè la misura on-demand ("ULP plus") non è implementata
 
 `BSEC_SAMPLE_RATE_ULP_MEASUREMENT_ON_DEMAND` (0.0f) chiederebbe un campione extra fuori cadenza, per mostrare un valore fresco invece di uno vecchio fino a 5 minuti. È stata valutata a fondo e **scartata**. Non reintrodurla senza aver risolto tutti e quattro i punti:
 

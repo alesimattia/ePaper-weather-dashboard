@@ -1,6 +1,6 @@
 ---
-name: Macro LOG/LOGV e perche' F() e' stato tolto
-description: Forma della macro, livello di verbosita' e il motivo non ovvio per cui il format string non va avvolto in F()
+name: Macro LOG/LOGV e perchè F() è stato tolto
+description: Forma della macro, livello di verbosità e il motivo non ovvio per cui il format string non va avvolto in F()
 type: project
 ---
 
