@@ -360,9 +360,10 @@ namespace Calendar
       }
 
       JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, http.getStream());
+      Net::BodyStream body(http.getStream());
+      DeserializationError err = deserializeJson(doc, body);
       http.end();
-      if (err){ 
+      if (err){
         LOG("OAuth", "token json parse: %s", err.c_str()); 
         return false; 
       }
@@ -448,7 +449,8 @@ namespace Calendar
       }
 
       JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, http.getStream());
+      Net::BodyStream body(http.getStream());
+      DeserializationError err = deserializeJson(doc, body);
       http.end();
       if (err) { LOG("Outlook", "events json parse: %s", err.c_str()); return false; }
 
@@ -577,7 +579,8 @@ namespace Calendar
       }
 
       JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, http.getStream());
+      Net::BodyStream body(http.getStream());
+      DeserializationError err = deserializeJson(doc, body);
       http.end();
       if (err) { LOG("Google", "events json parse: %s", err.c_str()); return false; }
 

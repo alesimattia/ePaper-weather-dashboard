@@ -438,7 +438,7 @@ static void prewarmCinemaServer()
  *      (PSRAM preferita, heap interno come fallback).
  *   3. HTTP GET -> verifica status 200 e Content-Length == Layout::CINEMA_TOTAL_SZ.
  *   4. Legge in stream i piani nell'ordine in cui il server li concatena via
- *      readBytes, direttamente nei buffer.
+ *      Net::BodyStream, direttamente nei buffer.
  *   5. Ripuntamento di g_cinema_desc al descrittore dinamico.
  *
  * In caso di qualunque errore (OOM, HTTP != 200, size mismatch, read short)
@@ -477,7 +477,8 @@ static bool fetchCinemaImage()
 	HTTPClient http;
 	// 45s: margine per il cold start del free tier render.com (una ventina di
 	// secondi) quando il ping di prewarmCinemaServer() non e' bastato a
-	// completare il boot dell'istanza prima di arrivare qui.
+	// completare il boot dell'istanza prima di arrivare qui. Vale anche come
+	// attesa massima senza dati durante la lettura del corpo.
 	http.setTimeout(CINEMA_HTTP_TIMEOUT_MS);
 	if (!Net::beginHttps(http, client, Layout::CINEMA_URL))
 	{
@@ -503,25 +504,13 @@ static bool fetchCinemaImage()
 		return false;
 	}
 
-	WiFiClient *stream = http.getStreamPtr();
-	// readBytes() blocca fino a riempimento del buffer richiesto, timeout
-	// (controllato da setTimeout) o EOF. Niente polling manuale di available()
-	// con delay(1): readBytes lo fa gia' internamente in modo equivalente.
-	stream->setTimeout(CINEMA_HTTP_TIMEOUT_MS);
+	// BodyStream attende le pause fra i blocchi del corpo: un piano resta corto
+	// solo a connessione chiusa, su errore TLS o dopo CINEMA_HTTP_TIMEOUT_MS
+	// senza dati, il timeout che http.setTimeout() ha dato allo stream.
+	Net::BodyStream body(http.getStream());
 	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
 	{
-		size_t read = 0;
-		uint32_t t0 = millis();
-		// Wall-clock guard 45s per piano: se readBytes ritorna in modo
-		// frazionario (n>0 ma < richiesto) e la rete è lenta, evita di
-		// accumulare timeout >45s totali sul singolo piano.
-		while (read < Layout::CINEMA_PLANE_SZ && (millis() - t0) < CINEMA_HTTP_TIMEOUT_MS)
-		{
-			int n = stream->readBytes(g_cinema_planes[p] + read, Layout::CINEMA_PLANE_SZ - read);
-			if (n <= 0)
-				break; // timeout interno o connessione chiusa
-			read += n;
-		}
+		size_t read = body.readBytes(g_cinema_planes[p], Layout::CINEMA_PLANE_SZ);
 		if (read != Layout::CINEMA_PLANE_SZ)
 		{
 			LOG("cinema", "piano %s letto parzialmente (%u/%u)",

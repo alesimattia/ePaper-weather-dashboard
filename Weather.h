@@ -181,7 +181,8 @@ namespace Weather
         http.end();
         return false;
       }
-      DeserializationError err = deserializeJson(doc, http.getStream(),
+      Net::BodyStream body(http.getStream());
+      DeserializationError err = deserializeJson(doc, body,
                                                  DeserializationOption::Filter(filter));
       http.end();
       if (err)

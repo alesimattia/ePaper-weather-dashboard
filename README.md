@@ -454,7 +454,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 
 - **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `pronto()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" in `/status`. Tuya fa lo stesso con `readyToPublish()`.
 - **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
-- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
+- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
 - **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
 - **Testo.** I testi ricevuti passano da [Graphics::foldToFontCharset()](Graphics.h): i font a 7 bit non disegnano le lettere accentate, che diventano vocale più apostrofo (`caffè` → `caffe'`).
 
@@ -1050,8 +1050,9 @@ La fascia tra fine wallpaper e banner meteo (y=`CINEMA_H`..`BANNER_Y`:
    `allocPlaneBuffer()` prova `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` se
    `psramFound()` è `true`, altrimenti `malloc()` sull'heap interno, e logga su Serial
    il segmento usato e la memoria libera residua.
-4. **Lettura**: `getStreamPtr()->readBytes()` in `Layout::CINEMA_PLANES` fasi
-   sequenziali direttamente nei buffer. Il formato binario è header-less (vedi
+4. **Lettura**: `Net::BodyStream::readBytes()` in `Layout::CINEMA_PLANES` fasi
+   sequenziali direttamente nei buffer, attendendo le pause fra i blocchi del corpo
+   fino a `CINEMA_HTTP_TIMEOUT_MS` senza dati. Il formato binario è header-less (vedi
    [webapp/README.md → Formato binario `/cinema/arduino`](webapp/README.md#formato-binario-cinemaarduino)):
    zero parsing lato ESP32, il body HTTP è già nella rappresentazione attesa dal driver.
 5. **Swap descrittore**: a download riuscito `g_cinema_desc` viene ripuntato al
