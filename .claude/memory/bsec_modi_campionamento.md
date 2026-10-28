@@ -9,7 +9,15 @@ type: reference
 ## Due comportamenti del wrapper che non si vedono dall'API
 
 1. **`Bsec2::run()` ritorna `true` anche quando non c'è niente da leggere.** Il corpo è tutto dentro `if (currTimeNs >= bmeConf.next_call)` e la funzione cade sul `return true` finale (`bsec2.cpp:146-209`); ritorna `false` solo su errore vero. Quindi "nessun dato" e "tutto bene" sono indistinguibili dal valore di ritorno: chi deve sapere se è arrivato un campione guarda `hasNewSample`, non `run()`.
-2. **`bmeConf` è privato** (`bsec2.h:239`) e gatea `run()`. Nessuna API pubblica permette di sapere quando cadrà il prossimo campione: per questo `scadenzaIndoor()` nel `.ino` la deriva da `Indoor::sample().lastUpdateMs + 300 s`, che è l'unica informazione disponibile.
+2. **`bmeConf` è privato** (`bsec2.h:239`) e gatea `run()`: prima di `next_call` la chiamata non fa nulla, e al primo `run()` dopo il boot `next_call` vale 0, quindi la misura parte subito. Il trigger e la lettura avvengono nella stessa chiamata: `bme68x_get_data()` attende il dato fino a 5 × 10 ms (`bme68x.c`).
+
+## Cadenza delle interrogazioni e scadenza del campione
+
+**La cadenza si conta dall'ultima interrogazione, non dal campione.** `Indoor::refresh()` registra l'istante di ogni chiamata e `Indoor::msUntilNextPoll()` restituisce 0 se il sensore non è mai stato interrogato, altrimenti il tempo a ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`. È la scadenza custom del task `bsec`. Interrogare più spesso non anticipa nessun campione, per il punto 2; contare dal campione invece bloccherebbe il task quando il campione non c'è, perchè nello scheduler la scadenza custom precede `maiEseguito` (vedi [[scheduler_task_table]]), e farebbe svegliare il dispositivo a ogni giro con il sensore guasto.
+
+**Il campione scade al secondo campione perso.** Se una chiamata non porta un campione nuovo e l'ultimo è più vecchio di `INDOOR_SAMPLE_MAX_AGE_MS` (2 × 300 s + 1 s), `valid` torna falso: il riquadro mostra "--" e Tuya si sospende, perchè `readyToPublish()` richiede `valid`. `refresh()` restituisce `true` anche in quel caso, perchè il dato da mostrare è cambiato e serve un ridisegno.
+
+**Senza sensore** il task è sospeso: il suo `pronto` è `Indoor::attivo()`, falso se `bsec.begin()` è fallito.
 
 ## I warning di BSEC sono positivi, e vanno filtrati con `!=`
 
@@ -22,7 +30,7 @@ type: reference
 1. **Il wrapper non la espone in modo utilizzabile.** `updateSubscription()` non tocca `bmeConf`, quindi la richiesta resterebbe in coda fino allo slot ULP regolare — cioè non servirebbe a niente. L'unico modo per farla rivalutare subito è un giro `getState()`/`setState()`, perché `setState` fa `memset(&bmeConf, 0)` (`bsec2.cpp:236`). È un effetto collaterale non documentato, usato come meccanismo.
 2. **Il verdetto non arriva dalla richiesta** ma dal `run()` successivo, che in caso di rifiuto ritorna `false` con `status` 101 (`MODEXCEEDULPTIMELIMIT`: una misura ULP è appena avvenuta o sta per avvenire) o 102 (`MODINSUFFICIENTWAITTIME`: troppo presto dalla precedente extra).
 3. **Bosch non documenta le finestre temporali** di quei rifiuti: né il README della libreria, né l'esempio ufficiale `basic_config_state_ulp_plus` (che la innesca da un pulsante), né i thread del forum danno numeri. L'esempio dice solo *"It will be rejected if the sensor is not already in ULP mode, or if the time difference between requests is too short"*.
-4. **Non compone bene con uno scheduler periodico.** Il task `bsec` ha una scadenza calcolata su `lastUpdateMs + 300 s`, mentre una misura extra produce un campione **fuori scadenza**: senza un flag che leghi le due cose il task non risulterebbe dovuto nel giro in cui la misura è stata chiesta, e il campione verrebbe raccolto fino a 5 minuti dopo. E un flag del genere ha bisogno del proprio tetto, perché "nessuna risposta" non è osservabile (punto 1 della sezione precedente): senza scadenza il sensore resterebbe dovuto a ogni giro e il dispositivo si sveglierebbe a `SLEEP_MIN_S` invece che ogni 300 s, dieci volte più spesso.
+4. **Non compone bene con uno scheduler periodico.** Il task `bsec` ha una scadenza calcolata sull'ultima interrogazione + 300 s, mentre una misura extra produce un campione **fuori scadenza**: senza un flag che leghi le due cose il task non risulterebbe dovuto nel giro in cui la misura è stata chiesta, e il campione verrebbe raccolto fino a 5 minuti dopo. E un flag del genere ha bisogno del proprio tetto, perchè "nessuna risposta" non è osservabile (punto 1 della sezione precedente): senza scadenza il sensore resterebbe dovuto a ogni giro e il dispositivo si sveglierebbe a `SLEEP_MIN_S` invece che ogni 300 s, dieci volte più spesso.
 
 Il beneficio, anche funzionando tutto, sarebbe stato "a volte più fresco" e non "sempre fresco": se BSEC ha bisogno di più di un `run()` per il ciclo dello heater, il campione arriva comunque al giro dopo. Sproporzionato rispetto al rischio.
 

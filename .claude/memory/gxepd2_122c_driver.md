@@ -275,15 +275,14 @@ pinout completo e caveat in [[waveshare_esp32_driver_board]]. Le code sono a 21 
 fisica (il conteggio dei contatti dalle foto FCC dà ~24 ma è una stima con errore di scala:
 prevale la misura sul cavo).
 
-**CS_S = GPIO33 è da sostituire.** Nello schematico della board quel GPIO non compare fra le net
-(ci sono 32, 34, 35 su pin consecutivi dell'header), quindi quasi certamente non è portato fuori:
-il candidato è **GPIO32**, output-capable, sull'header, non usato da nient'altro e adiacente al 35.
-Lo stato attuale è disallineato di proposito, in attesa di decisione: il cablaggio documentato dice
-ancora 33 in `README_122c.md`, `docs/122c/connessioni.html`, i due SVG di `docs/122c/`, i commenti
-d'esempio di `src/GxEPD2_SOLUM.h` e `src/GxEPD2_SOLUM_Pins.h`, e in `A:\epd\Layout_122c.h`
-(`PIN_CS_S`, che è firmware di produzione). Nel finder il valore è ancora 33 ma la sezione dei pin
-porta l'avvertenza: se la coda lunga non risponde, il pin è la prima cosa da verificare, prima del
-pannello.
+**CS_S = GPIO32.** Nello schematico della board GPIO33 non compare fra le net (ci sono 32, 34, 35
+su pin consecutivi dell'header), quindi non è portato fuori: il CS dello slave sta su **GPIO32**,
+output-capable, sull'header, non usato da nient'altro e adiacente al 35. Il valore è allineato in
+`A:\epd\Layout_122c.h` (`PIN_CS_S`), nel finder (`PIN_CS_OTHER`), negli snippet di `README_122c.md`,
+`src/GxEPD2_SOLUM.h` e `src/GxEPD2_SOLUM_Pins.h`, nella sezione Waveshare di
+`docs/122c/connessioni.html` e in `docs/122c/cablaggio_waveshare.svg`. Il Setup B (dev board
+generica, `cablaggio_devboard.svg` e relative tabelle) usa 33, che su una DevKitC esiste. Se la coda
+lunga non risponde, il cablaggio del 32 è la prima cosa da verificare, prima del pannello.
 
 **Sketch**. `examples/12_2c/dual_panel_finder` è una sonda **a SPI diretta** (nè GxEPD2 nè il
 driver custom, come `examples/097c/panel_diagnostic`), su una coda alla volta, ed è strutturata

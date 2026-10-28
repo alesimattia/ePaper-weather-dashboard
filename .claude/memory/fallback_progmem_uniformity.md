@@ -27,7 +27,7 @@ type: project
 **Guardia del descrittore.** Il wallpaper in `wallpaper/` definisce il proprio `_desc` solo
 dentro `#ifdef _GxEPDImage_H_`, cioè la include guard dell'header che definisce il namespace
 (`GxEPD2_SOLUM_ESL/src/GxEPDImage.h`), non quella di un driver: gli array raw restano sempre
-disponibili, il descrittore solo se il tipo esiste. La guardia la emette `epd_image_converter.pyw`,
+disponibili, il descrittore solo se il tipo esiste. La guardia la emette `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`,
 quindi va corretta lì oltre che nel file generato. Nominare un driver specifico romperebbe la build
 su tutte le altre varianti di display.
 

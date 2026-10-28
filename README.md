@@ -82,60 +82,129 @@ ogni modifica dei parametri.
 |----------|------------|--------|------------|------|
 | **SOLUM ESL 9.7"** | 960w × 672h | Bianco, nero, rosso (misurati). Un quarto colore non esiste | SSD1677 | Driver custom incluso come submodule (`GxEPD2_SOLUM_ESL/`). Selezione: `#define DISPLAY_VARIANT_097C` |
 | **SOLUM 12.2"** | 960w × 768h | Bianco, nero, rosso (serigrafia sul vetro) | **2 × SSD16xx**, 960 × 384 ciascuno | Driver nel submodule (`GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_122c_960x768.h`), **una sola banda pilotata**: la seconda coda FFC non risponde ([README_122c.md](GxEPD2_SOLUM_ESL/README_122c.md)). Stessa logica applicativa via `Layout_122c.h`. Selezione: `#define DISPLAY_VARIANT_122C` |
-| Good Display **GDEY0420F51** | 400w × 300h | B/N + rosso + giallo (nativi) | HX8717 | Supportato via `GxEPD2_4C` upstream; nel convertitore è disponibile il preset dimensionale 400w × 300h (no firmware completo) |
 
-Scheda di pilotaggio di riferimento: **Waveshare E-Paper ESP32 Driver Board**
-(ESP32-WROOM-32E, senza PSRAM).
-La piedinatura del bus HSPI (`SCK=13, MISO=12, MOSI=14, SS=15`) è
-board-specific e vive nel `.ino` (`hspi.begin(...)`): la board scambia SCK e
-MOSI rispetto al default HSPI. I pin del driver
-display (`CS=15, DC=27, RST=26, BUSY=25`) sono display-specific e vivono
-in `Layout::PIN_*` (uguali per le due varianti SOLUM, su questa board).
 
----
+### Pin della Waveshare ESP32 Driver Board
 
-## Struttura del repository
+La board monta un modulo ESP32-WROOM-32E senza PSRAM. Questa sezione serve a
+capire quali pin sono già impegnati e quali si possono usare per collegare
+altre periferiche. Prima i concetti che servono a leggere le tabelle, poi i bus
+SPI e I2C, poi la mappa pin per pin e infine una guida su quale pin scegliere.
+I numeri sono sempre quelli dei GPIO dell'ESP32, non le posizioni fisiche
+sull'header.
 
-```
-.
-├── GxEPD2_SOLUM_ESL/               # Submodule: libreria Arduino dei driver SOLUM (9.7" 672w x 960h native portrait, 12.2" 768w x 960h)
-│   ├── src/                            # Header-only: ombrello GxEPD2_SOLUM.h, pinout uniforme, GxEPDImage.h, driver 097c e 122c
-│   ├── examples/097c/panel_diagnostic/ # Diagnostica del pannello: solo SPI.h, nessuna libreria
-│   ├── examples/12_2c/dual_panel_finder/ # Sonda del 12.2"
-│   ├── docs/                           # Cataloghi SOLUM + schematico Waveshare V3 (PDF)
-│   ├── library.properties              # name=GxEPD2_SOLUM_ESL, depends=GxEPD2 (>=1.6.9)
-│   ├── LICENSE                         # GPL-3.0, ereditata da GxEPD2
-│   ├── README.md                       # Documentazione dedicata del driver
-│   ├── drawImage_overloads.md          # Lista signature drawImage* (EN)
-│   └── drawImage_overloads_it.md       # Idem in italiano
-├── ePaper-weather-dashboard.ino    # Sketch principale: tabella dei task + adattatori verso i moduli
-├── Timings.h                       # Tutti i tempi: default, pavimenti, override runtime su NVS
-├── Scheduler.h                     # Scheduler dei flussi temporizzati + light sleep dinamico
-├── Log.h                           # Macro LOG/LOGV con tag e livello di verbosità
-├── Clock.h                         # Fuso orario POSIX + sincronizzazione SNTP
-├── Layout.h                        # Dispatcher: include Layout_097c.h o Layout_122c.h via #define DISPLAY_VARIANT_*
-├── Layout_097c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 9.7" (960w x 672h)
-├── Layout_122c.h                   # Coordinate / pin / font / Panel typedef per SOLUM 12.2" (960w x 768h)
-├── Env.h                           # Segreti (WiFi, OWM, manutenzione, OAuth, Tuya) + posizione GPS (modello: Env_template.h)
-├── Weather.h                       # Fetch OWM + rendering banner meteo
-├── Calendar.h                      # Mese + lista eventi Outlook+Google
-├── Mail.h                          # Lettura ultime N mail Gmail via batch endpoint + UI griglia 2×2 / 2×3
-├── Indoor.h                        # Sensore BME680 via I2C (BSEC2 ULP, IAQ+T+RH, persistenza NVS)
-├── Tuya.h                          # Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT, esp-mqtt + mbedtls)
-├── Maintenance.h                   # Finestra di manutenzione: /update + /config, su rete di casa con AP di riserva
-├── Graphics.h                      # Utility di disegno condivise (drawFieldsetRect)
-├── icons.h                         # Bitmap icone meteo indicizzate per icon code OWM
-├── preview_097c.html               # Anteprima statica HTML del layout SOLUM 9.7" (960w x 672h)
-├── preview_122c.html               # Idem per il SOLUM 12.2" (960w x 768h)
-├── preview.svg                     # Anteprima del layout 097c renderizzata da GitHub nel README
-├── epd_image_converter.pyw         # Convertitore GUI Python -> array .h
-├── test/                           # Test su host della logica di Timings.h e Scheduler.h (./test/esegui.sh)
-├── wallpaper/
-│   └── img_la_grande_onda.h        # Fallback wallpaper offline (620x300 B/N) + descrittore
-├── webapp/                         # Webapp FastAPI cinema (vedi webapp/README.md)
-├── LICENSE
-└── README.md
-```
+#### Concetti
+
+- **Pin nativi e matrice GPIO.** Le periferiche interne dell'ESP32 (SPI, I2C,
+  UART) si possono collegare a quasi tutti i pin. Alcune hanno dei pin
+  **nativi**, collegati direttamente (IO_MUX): lì raggiungono la velocità
+  massima. Su qualunque altro pin il segnale passa dalla **matrice GPIO**, un
+  instradamento interno che funziona allo stesso modo ma limita la velocità
+  dell'SPI a circa 40 MHz. L'I2C non ha pin nativi e passa sempre dalla
+  matrice, senza nessuna perdita alle sue velocità.
+- **Bus hardware e software.** Un bus hardware lo gestisce un controller
+  dedicato del chip. Uno software (bit-banging) lo simula la CPU accendendo e
+  spegnendo i pin: è più lento e consuma CPU. Sull'ESP32 i controller hardware
+  bastano, il bus software non serve.
+- **Solo ingresso.** I GPIO 34-39 possono leggere un segnale ma non pilotarlo, e
+  non hanno resistenze di pull-up o pull-down interne: vanno bene per un BUSY o
+  un pulsante con resistenza esterna, non per un CS, un clock o un dato in
+  uscita.
+- **Strapping.** Alcuni pin (0, 2, 12 e in misura minore 5 e 15) vengono letti
+  dall'ESP32 nell'istante del reset per decidere come avviarsi. Se una
+  periferica li tiene al livello sbagliato all'accensione, l'ESP32 non parte o
+  entra in modalità di programmazione.
+- **ADC1, ADC2 e WiFi.** Sono i due convertitori per gli ingressi analogici. Il
+  WiFi **non occupa nessun pin**, perchè radio e antenna sono interne al
+  modulo, ma usa l'ADC2: mentre il WiFi è acceso i pin ADC2 non possono leggere
+  valori analogici. Restano normali pin digitali. I pin ADC1 leggono sempre.
+
+#### Bus SPI
+
+Segnali: **CLK** è il clock, **MOSI** i dati dall'ESP32 alla periferica,
+**MISO** i dati dalla periferica all'ESP32, **CS** seleziona la periferica (ne
+serve uno per ogni periferica sullo stesso bus).
+
+| Bus | Tipo | Oggetto Arduino | CLK | MISO | MOSI | CS | Velocità massima | Stato su questa board |
+|---|---|---|---|---|---|---|---|---|
+| SPI0, SPI1 | hardware, interno | nessuno | 6-11 | 6-11 | 6-11 | 6-11 | | **occupato** dalla flash del modulo, non utilizzabile |
+| SPI2 (**HSPI**), pin nativi | hardware | `SPIClass(HSPI)` | 14 | 12 | 13 | 15 | 80 MHz | vedi la riga sotto |
+| SPI2 (**HSPI**), come lo usa il display | hardware | `hspi` nel `.ino` | **13** | 12 (fittizio) | **14** | 15 | circa 40 MHz, usato a 10 MHz | **occupato** dal display |
+| SPI3 (**VSPI**), pin nativi | hardware | `SPI` (globale del core) | 18 | 19 | 23 | 5 | 80 MHz | **libero**, riservato a una periferica SPI aggiuntiva |
+| SPI software | software | librerie dedicate | qualunque I/O | qualunque I/O | qualunque I/O | qualunque I/O | pochi MHz | non serve |
+
+Il display usa l'HSPI, ma la board scambia CLK e MOSI rispetto ai pin nativi:
+il clock è sul 13 invece che sul 14, i dati sul 14 invece che sul 13. Per questo
+il segnale passa dalla matrice GPIO; a 10 MHz il margine sui circa 40 MHz della
+matrice è ampio. Il pannello non ha un'uscita dati, quindi il MISO sul 12 non
+riceve niente.
+
+#### Bus I2C
+
+Segnali: **SDA** sono i dati, **SCL** il clock. Più periferiche possono stare
+sugli stessi due pin, purchè abbiano indirizzi diversi.
+
+| Bus | Tipo | Oggetto Arduino | SDA | SCL | Velocità | Stato su questa board |
+|---|---|---|---|---|---|---|
+| I2C0 | hardware | `Wire` | 21 di default, modificabile | 22 di default, modificabile | 100 kHz standard, 400 kHz fast | **in uso** per il BME680 su 21 e 22, cablaggio consigliato |
+| I2C1 | hardware | `Wire1` | da scegliere, nessun default | da scegliere, nessun default | come I2C0 | **libero** |
+| I2C software | software | librerie dedicate | qualunque I/O | qualunque I/O | lenta | non serve |
+
+Il BME680 si sposta su altri pin cambiando `BME680_SDA_PIN` e `BME680_SCL_PIN`
+in [`Indoor.h`](Indoor.h). Display e sensore usano periferiche diverse su pin
+diversi, quindi la posizione del sensore non influisce sulla velocità del
+pannello.
+
+#### Mappa dei GPIO
+
+Stato:
+- **Occupato**: usato dalla board o dal pannello, non riassegnabile;
+- **Occupato sul 12.2"**: usato solo dalla variante a due controller, libero con il 9.7";
+- **Consigliato**: usato oggi dal BME680, spostabile su altri pin;
+- **Libero**: disponibile per nuove periferiche;
+- **Riservato**: libero, ma destinato a un uso previsto (il bus VSPI);
+- **Evitare**: pin di strapping;
+- **Assente**: la board non lo porta su nessun connettore.
+
+| GPIO | Direzione | Analogico | Uso attuale | Stato | Attenzione |
+|---|---|---|---|---|---|
+| 0 | I/O | ADC2 | | Evitare | strapping: basso al reset avvia la modalità di programmazione |
+| 1 | I/O | no | seriale USB, TX (UART0) | Occupato | log e upload |
+| 2 | I/O | ADC2 | | Evitare | strapping |
+| 3 | I/O | no | seriale USB, RX (UART0) | Occupato | log e upload |
+| 4 | I/O | ADC2 | | **Libero** | |
+| 5 | I/O | no | | Riservato | CS nativo del VSPI; strapping secondario, innocuo se non forzato al reset |
+| 6-11 | | | flash del modulo (SPI0, SPI1) | Occupato | non utilizzabili |
+| 12 | I/O | ADC2 | display: MISO dell'HSPI (non collegato al pannello) | Occupato | strapping: alto al reset cambia la tensione della flash |
+| 13 | I/O | ADC2 | display: CLK dell'HSPI | Occupato | è il MOSI nativo dell'HSPI, usato come clock |
+| 14 | I/O | ADC2 | display: MOSI (DIN) dell'HSPI | Occupato | è il CLK nativo dell'HSPI, usato come dati |
+| 15 | I/O | ADC2 | display: CS (del master sul 12.2") | Occupato | strapping secondario (messaggi di boot) |
+| 16 | I/O | no | | **Libero** | libero perchè il modulo non ha PSRAM |
+| 17 | I/O | no | | **Libero** | libero perchè il modulo non ha PSRAM |
+| 18 | I/O | no | | Riservato | CLK nativo del VSPI |
+| 19 | I/O | no | | Riservato | MISO nativo del VSPI |
+| 21 | I/O | no | BME680: SDA (I2C0) | Consigliato | default SDA di `Wire` |
+| 22 | I/O | no | BME680: SCL (I2C0) | Consigliato | default SCL di `Wire` |
+| 23 | I/O | no | | Riservato | MOSI nativo del VSPI |
+| 25 | I/O | ADC2 | display: BUSY (del master sul 12.2") | Occupato | risveglia l'MCU dal light sleep durante il refresh |
+| 26 | I/O | ADC2 | display: RST | Occupato | |
+| 27 | I/O | ADC2 | display: DC | Occupato | |
+| 32 | I/O | ADC1 | 12.2": CS del secondo controller (`PIN_CS_S`) | Occupato sul 12.2" | libero con il 9.7" |
+| 33 | | | | Assente | |
+| 34 | solo ingresso | ADC1 | | **Libero** | senza pull-up interno |
+| 35 | solo ingresso | ADC1 | 12.2": BUSY del secondo controller (`PIN_BUSY_S`) | Occupato sul 12.2" | libero con il 9.7" |
+| 36, 39 | | | | Assente | |
+
+#### Quale pin usare
+
+| Per collegare | Pin |
+|---|---|
+| un segnale digitale in ingresso e uscita | **4, 16, 17**; con il 9.7" anche **32** |
+| un segnale di sola lettura (pulsante, BUSY) | **34**; con il 9.7" anche **35** |
+| un ingresso analogico, anche col WiFi acceso | **34** (ADC1); con il 9.7" anche **32** e **35** |
+| una periferica I2C | in parallelo al BME680 su 21 e 22, se ha un indirizzo diverso; oppure `Wire1` su due pin liberi |
+| una periferica SPI | VSPI: CLK 18, MISO 19, MOSI 23, CS 5; un CS per ogni periferica in più, su un pin libero |
+| se il bus VSPI non serve | anche 5, 18, 19 e 23 come I/O |
 
 ---
 
@@ -379,9 +448,20 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 | Posta Gmail | `eseguiMail()` | [Mail::runFetch()](Mail.h), che chiama `refreshToken()`, `fetchMessageIds()` e `parseBatchPart()` | Celle della posta (mittente, oggetto troncato a 60 caratteri, data) |
 | Banner cinema | `eseguiCinema()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp, mostrato nel banner. Se manca, c'è il fallback PROGMEM |
 
+#### Isolamento dei produttori
+
+Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo la propria funzionalità:
+
+- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `pronto()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" in `/status`. Tuya fa lo stesso con `readyToPublish()`.
+- **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
+- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
+- **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
+- **Testo.** I testi ricevuti passano da [Graphics::foldToFontCharset()](Graphics.h): i font a 7 bit non disegnano le lettere accentate, che diventano vocale più apostrofo (`caffè` → `caffe'`).
+
 #### Produttori indiretti
 
-- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`calendarioPronto()`) e i calcoli di data in mail, calendario e meteo.
+- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`calendarioPronto()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
+- Il task `bsec` è sospeso senza sensore (`pronto` = `Indoor::attivo`) e interroga BSEC ogni 300 s dall'ultima chiamata ([Indoor::msUntilNextPoll()](Indoor.h)). Il suo `dopoIndoor()` chiede il ridisegno solo dentro la fascia WiFi: di notte il campione si acquisisce ma il pannello non si aggiorna.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
 - [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `dopoTuya()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `[TUYA ERR]`, tramite `Tuya::hasFailed()`.
 
@@ -438,6 +518,7 @@ Widget del mese e lista eventi Outlook + Google.
 - **Lista eventi**: 5 righe sotto il widget. Cache separate per sorgente
   (`outlookEvents[5]` + `googleEvents[5]`); al rendering le due cache sono fuse,
   ordinate per `startUtc` e ritagliate ai 5 eventi più vicini all'orario attuale.
+  Gli eventi già terminati (`endUtc` passato) si saltano.
   Per riga: titolo a sinistra (troncato), data e orario a destra. Riga rossa se
   l'evento cade oggi, nera altrimenti.
 - **Fetch**: `Calendar::Outlook` e `Calendar::Google`, namespace gemelli con la
@@ -445,12 +526,14 @@ Widget del mese e lista eventi Outlook + Google.
   (`outl_min` / `goog_min`). Flusso OAuth2 con refresh token, credenziali in
   `Env.h`; il token si rinfresca con 60 s di anticipo. Gli endpoint sono
   `graph.microsoft.com/v1.0/me/events?$filter=end/dateTime ge <now>` e
-  `googleapis.com/calendar/v3/calendars/primary/events?timeMin=<now>`: un evento
-  in corso resta in lista finchè non termina.
+  `googleapis.com/calendar/v3/calendars/primary/events?timeMin=<now>&fields=items(summary,start,end)`:
+  un evento in corso resta in lista finchè non termina. `fields=` tiene piccola la
+  risposta anche con eventi dalla descrizione lunga.
 - Il disegno non dipende dalla rete: senza fetch riuscito la lista mostra 5
-  placeholder `--`. L'epoch di riferimento per "oggi" arriva da
-  `Weather::slots[0].epoch` (fallback a `time(nullptr)`); `Calendar::draw()`
-  accetta solo un `utcEpoch`, il fuso lo applica `Clock`.
+  placeholder `--`. L'epoch di riferimento per "oggi" è l'orologio di sistema
+  quando è sincronizzato, altrimenti `Weather::slots[0].epoch`; senza nessuno dei
+  due il riquadro del mese mostra `--` invece di "Gennaio 1970".
+  `Calendar::draw()` accetta solo un `utcEpoch`, il fuso lo applica `Clock`.
 
 ### Mail (`Mail.h`)
 
@@ -462,14 +545,15 @@ Ultime mail della casella Gmail, in una griglia sotto al wallpaper cinema (4 su
 | `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
 | `Mail::runFetch()` | Fetch best-effort. Ritorna `true` se la cache è aggiornata; lo scheduler ne fa seguire il ridisegno. Cadenza e ritenti non sono suoi. |
 | `Mail::draw()` | Disegna la griglia nell'area `Layout::MAIL_*`, dentro il paged loop. |
-| `Mail::count()` / `Mail::at(i)` | Mail in cache (0..`Layout::MAIL_MAX`) e slot `i` (`MailMessage`: `sender`, `subject`, `receivedUtc`, `unread`). |
+| `Mail::isConfigured()` | Vero se le credenziali Google di `Env.h` sono configurate: è la precondizione del task `mail`. |
 
 **Cella**: indirizzo del mittente (solo `<email>`, il nome leggibile è scartato)
 in alto a sinistra con badge busta 20×20 se la mail è non letta, oggetto
 (`FONT_SMALL`, max 60 caratteri) sotto, orario `HH:MM` e data `dd/MM` a destra.
 Cella senza mail: placeholder `--`.
 
-**Fetch** (1 GET + 1 POST batch, 2 handshake TLS totali):
+**Fetch** (1 GET + 1 POST batch sulla stessa connessione TLS in HTTP/1.1 keep-alive;
+se il server la chiude dopo la lista, HTTPClient si riconnette da sè):
 
 1. Refresh token condiviso con `Calendar::Google`: `Mail.h` non ha una propria cache
    di access token, usa `Calendar::detail::refreshGoogleToken()` e
@@ -824,7 +908,14 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `WIFI_RITENTO_MS` | `300000` ms | Dopo un tentativo di connessione fallito nessun task di rete riprova prima di questo tempo. |
 | `PRIMO_FRAME_ATTESA_MS` | `15000` ms | Tempo massimo dal boot entro cui il primo frame viene disegnato comunque, con i placeholder `--`. |
 | `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
-| `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake TLS ha il suo timeout separato. |
+| `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. |
+| `TLS_HANDSHAKE_TIMEOUT_S` | `15` s | Tetto dell'handshake di ogni connessione HTTPS, applicato da `Net.h`. Il default del core è 120 s, e un server bloccato fermerebbe tutti i produttori successivi. |
+| `WIFI_FAST_CONNECT_TIMEOUT_MS` | `5000` ms | Tentativo di connessione su canale e BSSID dell'ultima connessione, prima del ripiego sulla scansione completa. |
+| `INDOOR_SAMPLE_MAX_AGE_MS` | 2 × 300 s + 1 s | Età oltre la quale il campione del sensore non si mostra nè si pubblica: tollera un campione perso. |
+| `WEATHER_MAX_AGE_S` | `3600` s | Età oltre la quale il meteo in cache diventa `--`. |
+| `CLOCK_RESYNC_INTERVAL_MS` | 1 h | Distanza minima fra due risincronizzazioni SNTP forzate all'apertura della radio. |
+| `DISPLAY_BUSY_SLEEP_SLICE_MS` | `5000` ms | Timer di sicurezza del light sleep durante l'attesa del BUSY del refresh; il risveglio vero è il fronte del BUSY. |
+| `MAINT_CLIENT_IDLE_MS` | `30000` ms | Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima richiesta HTTP è più recente di così, o finchè un dispositivo è associato all'AP di emergenza. |
 | `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
 | `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. |
@@ -1044,9 +1135,13 @@ Tuya se `TUYA_IGNORE_ACTIVE_HOUR` è a 1.
 
 ## Convertitore immagini Python
 
-[`epd_image_converter.pyw`](epd_image_converter.pyw) è una GUI Tkinter per
-convertire qualsiasi immagine (PNG/JPG/WEBP/BMP/GIF/TIFF) in un file `.h`
-pronto da includere nello sketch.
+[`GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`](GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw)
+è una GUI Tkinter per convertire qualsiasi immagine (PNG/JPG/WEBP/BMP/GIF/TIFF) in
+un file `.h` pronto da includere nello sketch, salvato con un dialog "Salva con
+nome" che propone la cartella dell'immagine sorgente. Lo script appartiene alla
+libreria; `tools/epd_image_converter.pyw` è un symlink che lo rende lanciabile anche
+da qui (su Windows serve `core.symlinks=true` al clone, altrimenti il link si
+materializza come file di testo con il percorso).
 
 ### Funzionalità principali
 
@@ -1080,7 +1175,7 @@ pip install Pillow numpy tkinterdnd2
 ```
 
 Eseguilo con doppio click sul file `.pyw` (niente finestra console su
-Windows) oppure `python epd_image_converter.pyw`.
+Windows) oppure `python tools/epd_image_converter.pyw`.
 
 ---
 

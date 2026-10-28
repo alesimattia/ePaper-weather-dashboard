@@ -15,6 +15,7 @@
 #include "Log.h"
 #include "Clock.h"
 #include "Indoor.h"
+#include "Net.h"
 
 /**
  * Modulo header-only di telemetria verso il cloud Tuya, protocollo TuyaLink.
@@ -136,7 +137,7 @@
  * (tuyalink_message_send), che le compone esattamente così.
  */
 #ifndef TUYA_REQUEST_ACK
-#define TUYA_REQUEST_ACK 1
+#define TUYA_REQUEST_ACK 0
 #endif
 
 /**
@@ -459,10 +460,7 @@ namespace Tuya
     failedLast = false;
     msgSeq     = 0;
 
-    enabled = strlen(TUYA_DEVICE_ID) >= 8 &&
-              strlen(TUYA_DEVICE_SECRET) >= 8 &&
-              strcmp(TUYA_DEVICE_ID, "paste_device_id_here") != 0 &&
-              strcmp(TUYA_DEVICE_SECRET, "paste_device_secret_here") != 0;
+    enabled = Net::isCredentialSet(TUYA_DEVICE_ID) && Net::isCredentialSet(TUYA_DEVICE_SECRET);
 
     if (!enabled)
     {

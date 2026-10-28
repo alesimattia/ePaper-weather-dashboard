@@ -83,6 +83,8 @@ namespace Maintenance
     inline uint32_t inizioAttesaMs   = 0;
     inline uint32_t apertaMs         = 0;   // istante in cui il server e' diventato raggiungibile
     inline uint32_t scadenzaMs       = 0;
+    inline uint32_t ultimaRichiestaMs = 0;  // ultima richiesta servita, per clientAttivo()
+    inline bool     richiestaServita  = false;
 
     /**
      * Ogni richiesta servita sposta la scadenza in avanti, con un tetto
@@ -132,8 +134,12 @@ namespace Maintenance
       return origine == String("http://") + server.header("Host");
     }
 
+    /** Ogni handler la chiama: oltre a spostare la scadenza registra l'ultima
+     *  richiesta, che clientAttivo() usa per tenere fermo lo scheduler. */
     inline void proroga()
     {
+      ultimaRichiestaMs = millis();
+      richiestaServita  = true;
       const uint32_t nuova = millis() + PROROGA_MS;
       const uint32_t tetto = apertaMs + finestraMs() * TETTO_FATT;
       const uint32_t limite = ((int32_t)(nuova - tetto) > 0) ? tetto : nuova;
@@ -397,6 +403,13 @@ namespace Maintenance
       out.printf("hostname: %s\n", MAINT_HOSTNAME);
       out.printf("uptime: %lu s\n", (unsigned long)(millis() / 1000UL));
       out.printf("heap libero: %lu byte\n", (unsigned long)ESP.getFreeHeap());
+      // Minimo dal boot, blocco contiguo e stack residuo del loop: sono le
+      // misure che confermano o smentiscono i margini stimati sul picco TLS.
+      // L'handler gira nel task del loop, quindi lo stack è il suo.
+      out.printf("heap minimo dal boot: %lu byte\n", (unsigned long)ESP.getMinFreeHeap());
+      out.printf("blocco contiguo massimo: %lu byte\n", (unsigned long)ESP.getMaxAllocHeap());
+      out.printf("stack minimo residuo del loop: %lu byte\n",
+                 (unsigned long)uxTaskGetStackHighWaterMark(nullptr));
       out.printf("finestra: ancora %lu s\n",
                  (unsigned long)secondiResidui());
       out.print("\n");
@@ -452,8 +465,19 @@ namespace Maintenance
         (unsigned long)(attesaStaMs() / 1000UL), MAINT_HOSTNAME);
   }
 
-  /** Dove sta il server in questo momento. */
-  inline Stato statoCorrente() { return detail::stato; }
+  /**
+   * Vero mentre qualcuno sta usando la finestra di manutenzione: un dispositivo
+   * associato all'access point di emergenza, oppure una richiesta servita da
+   * meno di MAINT_CLIENT_IDLE_MS. Il loop() del .ino tiene fermo lo scheduler
+   * finchè è vero, perchè un fetch o un refresh lascerebbe il web server senza
+   * risposta per decine di secondi. Il tetto assoluto della finestra resta.
+   */
+  inline bool clientAttivo()
+  {
+    using namespace detail;
+    if (stato == Stato::ServerAp && WiFi.softAPgetStationNum() > 0) return true;
+    return richiestaServita && (uint32_t)(millis() - ultimaRichiestaMs) < MAINT_CLIENT_IDLE_MS;
+  }
 
   inline bool finestraAperta()
   {

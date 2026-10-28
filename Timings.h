@@ -154,14 +154,21 @@
  *  speso prima ancora di eseguire. */
 #define FETCH_MAX_TENTATIVI 2
 
-/** Nome con cui il backoff interno di Mail e Calendar conosce la stessa
- *  soglia. Sparisce quando quel backoff passa allo scheduler. */
-#define MAX_CALENDAR_ATTEMPTS FETCH_MAX_TENTATIVI
-
 /** Timeout di un singolo tentativo di connessione della STA e passo del
  *  polling di attesa. */
 #define WIFI_CONNECT_TIMEOUT_MS 15000UL
 #define WIFI_ATTESA_POLL_MS 100
+
+/** Parte di WIFI_CONNECT_TIMEOUT_MS concessa al tentativo veloce sul canale e
+ *  sul BSSID dell'ultima connessione: se il router ha cambiato canale si
+ *  ripiega sulla scansione completa nel tempo che resta. */
+#define WIFI_FAST_CONNECT_TIMEOUT_MS 5000UL
+
+/** Tetto dell'handshake TLS di ogni connessione HTTPS, in secondi. Il default
+ *  del core è 120 s, e con i produttori in sequenza nello stesso loop un server
+ *  che accetta la connessione senza completare la negoziazione fermerebbe tutti
+ *  gli altri. A 80 MHz un handshake reale costa da 1 a 4 s. */
+#define TLS_HANDSHAKE_TIMEOUT_S 15
 
 /** Dopo un tentativo di connessione fallito nessun task di rete riprova
  *  prima di questo tempo: evita di pagare 15 s di attesa a ogni risveglio
@@ -177,9 +184,9 @@
 #define CINEMA_HTTP_TIMEOUT_MS 45000UL
 
 /** Attesa massima della RISPOSTA al ping di sveglia del server cinema, non
- *  della connessione: l'handshake TLS ha il suo timeout separato, lasciato al
- *  default di HTTPClient, perche' senza handshake completo la richiesta non
- *  parte affatto. Va tenuto sotto 65535: setTimeout() prende un uint16_t. */
+ *  della connessione: l'handshake ha il suo tetto, TLS_HANDSHAKE_TIMEOUT_S,
+ *  perchè senza handshake completo la richiesta non parte affatto. Va tenuto
+ *  sotto 65535: setTimeout() prende un uint16_t. */
 #define CINEMA_PREWARM_TIMEOUT_MS 1500
 
 /** Telemetria Tuya: attesa del CONNACK, che comprende l'handshake TLS, e del
@@ -205,6 +212,29 @@
 /** Margine con cui il risveglio per il poll BSEC cade DOPO il campione
  *  atteso, mai prima. */
 #define BSEC_MARGINE_POLL_MS 1000UL
+
+/** Età oltre la quale il campione del sensore non si mostra nè si pubblica:
+ *  un campione perso è tollerato, al secondo il dato vale come assente. */
+#define INDOOR_SAMPLE_MAX_AGE_MS (2UL * BSEC_PERIODO_ULP_S * 1000UL + BSEC_MARGINE_POLL_MS)
+
+/** Età oltre la quale il meteo in cache non si mostra più: con OpenWeather in
+ *  errore il banner passa ai placeholder invece di esporre dati vecchi. */
+#define WEATHER_MAX_AGE_S 3600L
+
+/** Distanza minima fra due risincronizzazioni SNTP forzate all'apertura della
+ *  radio. L'RTC in light sleep gira sull'oscillatore RC interno, che anticipa
+ *  di qualche secondo all'ora; il polling di lwIP ogni 3 h riesce solo se cade
+ *  in una finestra radio. */
+#define CLOCK_RESYNC_INTERVAL_MS (60UL * 60UL * 1000UL)
+
+/** Tetto di un singolo light sleep durante l'attesa del BUSY del pannello: il
+ *  risveglio vero è il fronte del BUSY, il timer è solo una guardia. */
+#define DISPLAY_BUSY_SLEEP_SLICE_MS 5000UL
+
+/** Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima
+ *  richiesta HTTP servita è più recente di così, per non bloccare il web
+ *  server mentre qualcuno usa le pagine. */
+#define MAINT_CLIENT_IDLE_MS 30000UL
 
 
 /** Distanza minima fra due esecuzioni di un task giornaliero. Evita il
@@ -277,6 +307,8 @@ static_assert(SLEEP_MAX_S == BSEC_PERIODO_ULP_S,
               "il tetto dello sleep e' il periodo ULP: piu' alto perde campioni");
 static_assert(FETCH_RITENTO_MS >= SLEEP_MIN_S * 1000UL,
               "un ritento piu' vicino del pavimento di sleep non e' onorabile");
+static_assert(WIFI_FAST_CONNECT_TIMEOUT_MS < WIFI_CONNECT_TIMEOUT_MS,
+              "il tentativo veloce deve lasciare tempo al ripiego sulla scansione completa");
 static_assert(CINEMA_PREWARM_TIMEOUT_MS < 65535,
               "HTTPClient::setTimeout() prende un uint16_t");
 static_assert(PRIMO_FRAME_ATTESA_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 1000UL,

@@ -38,7 +38,7 @@ Punti non ovvi, tutti verificati (dettaglio in `waveshare_esp32_driver_board.md`
 
 - **La board scambia SCK e MOSI rispetto al default HSPI**: il remap è un obbligo, `hspi.begin(13, 12, 14, 15)` più `display.epd2.selectSPI(hspi, ...)`. Non esiste una macro che lo abiliti: sta tutto in quelle due chiamate del `.ino`, che sono codice **board-level** e non vanno nei `Layout_*.h`. Unica eccezione: il driver 12.2" apre il bus da sè in `init()`, quindi `Layout_122c.h` gli passa sck/miso/mosi dentro `makePanel()`.
 - **MISO = GPIO12 è un dummy**: sul FPC a 24 pin non esiste SDO. Ogni comando di lettura del controller (`0x1B`, `0x27`, `0x2E`, `0x2F`) non torna niente, e ogni diagnostica che ci conti misura rumore. GPIO12 è anche un pin di strapping (MTDI).
-- **GPIO33 non è portato fuori**: il cablaggio documentato del secondo controller del 12.2" con `CS_S = GPIO33` è **da sostituire con GPIO32**. Liberi per un secondo controller: 32 (CS consigliato), 4/21/22; 34/35 sono input-only (solo BUSY); da evitare 0/2/12 (strapping).
+- **GPIO33 non è portato fuori**: per questo il CS del secondo controller del 12.2" sta su **GPIO32** (`PIN_CS_S` in `Layout_122c.h` e documenti del submodule). Per un altro CS resta libero il 4; 34/35 sono input-only (solo BUSY); da evitare 0/2/12 (strapping); 21/22 sono il cablaggio consigliato del BME680, spostabile su altri pin. Tabella completa dei pin nel `README.md`, sezione "Pin della Waveshare ESP32 Driver Board".
 - **Nessun socket microSD**: il commento "HSPI for EPD (and VSPI for SD)" degli esempi upstream descrive un pattern, non questo hardware.
 
 

@@ -1,19 +1,52 @@
 ---
 name: Orologio di sistema e SNTP
-description: Clock.h possiede fuso e sincronizzazione; due agganci, uno per proprietario della radio; chi dipende dall'ora assoluta e cosa succede senza
+description: Clock.h possiede fuso e sincronizzazione; due agganci, uno per proprietario della radio; risincronizzazione oraria contro la deriva dell'RC in light sleep, con misura nel log; chi dipende dall'ora assoluta e cosa succede senza
 type: project
 ---
 
 `Clock.h` possiede tutto quello che riguarda l'ora assoluta: il fuso POSIX e la
-sincronizzazione SNTP. Tre funzioni:
+sincronizzazione SNTP. Quattro funzioni:
 
-- `Clock::begin()` — `setenv("TZ", CLOCK_POSIX_TZ, 1)` + `tzset()`, nessuna
-  rete. Va in `setup()` prima di qualunque modulo che formatti orari locali;
-- `Clock::valido()` — `time(nullptr) >= TIME_VALID_EPOCH_MIN`;
-- `Clock::sincronizza(timeout_ms = TIME_SYNC_TIMEOUT_MS)` — no-op se l'ora è
+- `Clock::begin()`: `setenv("TZ", CLOCK_POSIX_TZ, 1)` + `tzset()`, nessuna
+  rete, più la registrazione della callback di sincronizzazione
+  (`sntp_set_time_sync_notification_cb`). Va in `setup()` prima di qualunque
+  modulo che formatti orari locali;
+- `Clock::valido()`: `time(nullptr) >= TIME_VALID_EPOCH_MIN`;
+- `Clock::sincronizza(timeout_ms = TIME_SYNC_TIMEOUT_MS)`: no-op se l'ora è
   già valida, altrimenti `configTzTime(CLOCK_POSIX_TZ, NTP_SERVER_1,
   NTP_SERVER_2)` più attesa, con backoff `TIME_SYNC_RETRY_MS` fra due
-  tentativi falliti.
+  tentativi falliti;
+- `Clock::resyncIfStale()`: con ora valida e ultima sincronizzazione più
+  vecchia di `CLOCK_RESYNC_INTERVAL_MS` (1 h) chiama `sntp_restart()`, non
+  bloccante. La chiama `wifiOn()` subito dopo la connessione.
+
+## Deriva dell'orologio in light sleep
+
+In light sleep l'ora la tiene l'RTC sull'oscillatore RC interno
+(`CONFIG_RTC_CLK_SRC_INT_RC=y`; il WROOM-32E non ha cristallo da 32 kHz e la
+board non porta fuori GPIO33). Senza `CONFIG_PM_ENABLE` l'IDF ricalibra l'RC a
+**ogni** ingresso in light sleep (`sleep_low_power_clock_calibration()` in
+`sleep_modes.c` di IDF 5.5), ma lo fa a chip caldo, subito dopo WiFi e refresh:
+durante il sonno il chip si raffredda e l'RC accelera, quindi l'orologio va
+avanti. Misure pubblicate: da +350 a +780 ppm su ESP32-C6 in light sleep
+(esp-idf issue #19248), fino a circa 3300 ppm su ESP32 (forum esp32.com).
+Stima per questo firmware: 1-12 s all'ora.
+
+Il polling di lwIP (`CONFIG_LWIP_SNTP_UPDATE_DELAY` 3 h, ritenti da 15 a 150 s)
+riesce solo se il suo timer cade in una finestra radio, e di notte la radio
+resta spenta. Per questo `resyncIfStale()` forza la richiesta all'apertura della
+radio. La callback misura la correzione: l'ora attesa è la base salvata alla
+richiesta più il tempo trascorso secondo `millis()`, cioè l'ora di sistema prima
+della correzione, e la differenza con l'ora ricevuta è la deriva accumulata dalla
+sincronizzazione precedente. Il log scrive
+`SNTP: correzione X ms dopo Y min (Z ppm)`: è la misura reale su questa board.
+Alternative scartate: la sorgente 8,5 MHz/256 (circa 20 ppm) va scelta in
+sdkconfig, che il core Arduino fornisce precompilato; la calibrazione dopo il
+risveglio (PR esp-idf #19250) non è nel core 3.3.11.
+
+I test su host compilano `Clock.h` con lo stub `test/stub/esp_sntp.h`, che con
+MSVC fornisce anche `timeval` e `gettimeofday`; `Clock.h` include `sys/time.h`
+solo se esiste.
 
 Soglie e server stanno in `Timings.h` con tutti gli altri tempi. `valido()` è
 l'**unica** definizione di "ora valida" del firmware: ci poggiano lo scheduler
@@ -48,12 +81,10 @@ appartiene a nessuno dei due.
   prima richiesta parte con un ritardo casuale fra 0 e 5 s. Un timeout di 5 s
   scade prima che il pacchetto sia uscito, dando un fallimento sistematico e
   inspiegabile.
-- **Una sync riuscita per boot basta**: `millis()` è `esp_timer_get_time()/1000`
-  e `time()` poggia sulla stessa base più l'offset di `settimeofday`; quella
-  base avanza in light sleep. `sntp` **non va mai fermato**: resta in polling
-  con `CONFIG_LWIP_SNTP_UPDATE_DELAY=10800000` e corregge il drift, che non è
-  trascurabile perchè il WROOM-32E non ha cristallo da 32 kHz e il core è su
-  `CONFIG_RTC_CLK_SRC_INT_RC=y`.
+- **`sincronizza()` si paga una volta per boot**: `millis()` è
+  `esp_timer_get_time()/1000` e `time()` poggia sulla stessa base più l'offset
+  di `settimeofday`; quella base avanza in light sleep. La deriva la correggono
+  `resyncIfStale()` e il polling di lwIP, quindi `sntp` **non va mai fermato**.
 - **Soglia 1700000000 e non 100000**: quest'ultima corrisponde a 27,7 h di
   uptime, oltre le quali un clock mai sincronizzato diventa indistinguibile da
   uno valido.
@@ -93,10 +124,11 @@ Nessun modulo usa `time()` per misurare intervalli: le cadenze girano su
 consumer sopra leggono l'ora solo come data e ora del giorno. È la premessa che
 rende sicuro sincronizzare a metà vita del dispositivo.
 
-La data sul pannello non dipende da questa sincronizzazione:
-`Weather::detail::renderFrame()` passa a `Calendar::draw()` l'epoch del campo
-`dt` di OpenWeather, non `time(nullptr)`, e `recordHistory()` usa la stessa
-sorgente.
+La data sul pannello: `Weather::detail::renderFrame()` passa a
+`Calendar::draw()` l'ora di sistema quando `Clock::valido()`, così il calendario
+non dipende dalla riuscita del meteo; senza orologio l'epoch del campo `dt`
+dell'ultimo meteo; senza nessuno dei due 0, e il riquadro del mese mostra "--"
+invece di "Gennaio 1970". `recordHistory()` usa il `dt` di OpenWeather.
 
 ## How to apply
 

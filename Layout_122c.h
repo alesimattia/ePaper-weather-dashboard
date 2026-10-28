@@ -60,13 +60,21 @@ namespace Layout
    * Driver Board, lo slave passa da un breakout esterno con CS e BUSY
    * propri e tutti gli altri segnali in parallelo. Schema e procedura di
    * verifica in GxEPD2_SOLUM_ESL/docs/122c/connessioni.html.
+   *
+   * CS_S sta su GPIO32 perchè la Waveshare V3 non porta fuori GPIO33: il 32 è
+   * l'unico pin d'uscita sull'header che lo schematico non usa altrove.
    */
   inline constexpr int PIN_CS_M   = 15;
-  inline constexpr int PIN_CS_S   = 33;
+  inline constexpr int PIN_CS_S   = 32;
   inline constexpr int PIN_DC     = 27;
   inline constexpr int PIN_RST    = 26;
   inline constexpr int PIN_BUSY_M = 25;
   inline constexpr int PIN_BUSY_S = 35;
+
+  /** BUSY che risveglia l'MCU dal light sleep durante l'attesa del refresh,
+   *  vedi waitBusyAsleep() nel .ino: è quello del master, che GxEPD2 legge
+   *  nella sua attesa. */
+  inline constexpr int BUSY_WAKE_PIN = PIN_BUSY_M;
 
   /**
    * Altezza della page del template GxEPD2_3C. Sta qui e non nel .ino perchè
@@ -204,6 +212,11 @@ namespace Layout
   inline constexpr int16_t BLOCK_FC0_X = FORECAST_RR_X;
   inline constexpr int16_t BLOCK_FC1_X = BLOCK_FC0_X + BLOCK_FC_W;
   inline constexpr int16_t BLOCK_FC2_X = BLOCK_FC1_X + BLOCK_FC_W;
+
+  /** Margine laterale della description di un blocco meteo dal bordo del suo
+   *  riquadro o del blocco accanto: oltre, il testo passa a FONT_SMALL e poi
+   *  viene troncato. */
+  inline constexpr int16_t DESC_SIDE_PAD = 4;
 
   /**
    * Baseline del blocco meteo. Sul 122c sono shiftate di +8 px rispetto al

@@ -14,6 +14,8 @@
 #include "Env.h"
 #include "Timings.h"
 #include "Log.h"
+#include "Clock.h"
+#include "Net.h"
 #include "icons.h"
 #include "Graphics.h"
 #include "Calendar.h"
@@ -42,9 +44,9 @@ extern void drawTestBackground();
  *
  * Endpoint unico: /data/3.0/onecall. Una singola richiesta restituisce
  * meteo corrente + hourly + daily; slots[0] viene riempito da `current`,
- * slots[1..3] da `hourly[3/6/9]` (step 3h). Alcuni campi extra (sunrise,
- * sunset, rain.1h, pop, daily.feels_like.morn/eve) vengono memorizzati
- * per un uso futuro ma non ancora visualizzati.
+ * slots[1..3] da `hourly[3/6/9]` (step 3h). I campi accessori (sunrise,
+ * sunset, rain.1h, pop, daily.feels_like.morn/eve) alimentano la riga
+ * pioggia dei blocchi, la colonna alba/tramonto e la barra morn/eve.
  *
  * Il WiFi NON è gestito qui: runFetch() presuppone che sia gia' connesso
  * (lo sketch .ino si occupa di wifiOn()/wifiOff() immediatamente intorno
@@ -90,14 +92,14 @@ namespace Weather
       time_t  epoch;              // orario locale dell'osservazione/previsione
       bool    valid;
 
-      // parametri aggiuntivi (memorizzati, non ancora mostrati)
+      // parametri della riga pioggia, vedi composeDescLine()
       float   precipitation_prob; // hourly[].pop [0..1]; 0 per slots[0]
       float   rain1h;             // hourly[].rain.1h (mm, previsti per l'ora); NaN se assente
     };
 
     inline WeatherSlot slots[4];
 
-    // parametri aggiuntivi (memorizzati, non ancora mostrati)
+    // colonna alba/tramonto e barra morn/eve, vedi renderSunColumn()
     inline time_t sunriseEpoch       = 0;     // current.sunrise (UTC epoch)
     inline time_t sunsetEpoch        = 0;     // current.sunset  (UTC epoch)
     inline float  dailyFeelsLikeMorn = NAN;   // daily[0].feels_like.morn (°C)
@@ -126,24 +128,10 @@ namespace Weather
     // =======================================================================
 
     /**
-     * Sottrazione signed per confronto rollover-safe di millis().
-     * @param now  valore attuale di millis()
-     * @param last valore precedente
-     * @param interval soglia in ms
-     * @return true se sono trascorsi almeno `interval` ms
-     * @since 20/04/26 Mattia Alesi
-     */
-    inline bool elapsed(uint32_t now, uint32_t last, uint32_t interval)
-    {
-      return (int32_t)(now - last) >= (int32_t)interval;
-    }
-
-    /**
      * Formatta un epoch UTC in "HH:MM" locale Europe/Rome (DST gestito
      * automaticamente dal TZ di sistema impostato da Clock::begin()).
      * @param epoch epoch UTC (o 0 per "--:--")
      * @param out   buffer di almeno 6 byte
-     * @modified 21/04/26 localtime_r al posto di gmtime_r(epoch+TZ_OFFSET)
      */
     inline void formatHHMM(time_t epoch, char* out)
     {
@@ -171,52 +159,17 @@ namespace Weather
 
     /**
      * Esegue una GET HTTPS verso OpenWeatherMap e deserializza la risposta JSON
-     * nel documento passato. Ritorna true solo se HTTP 200 e parsing ok.
-     *
-     * Nota: setInsecure() disabilita la validazione del certificato. Accettabile
-     * per dati meteo pubblici; se in futuro si vuole pinning aggiungere root CA.
-     */
-    inline bool httpGetJson(const String& url, JsonDocument& doc)
-    {
-      WiFiClientSecure client;
-      client.setInsecure();
-
-      HTTPClient http;
-      if (!http.begin(client, url))
-      {
-        LOG("OWM", "http.begin() failed");
-        return false;
-      }
-      int code = http.GET();
-      if (code != 200)
-      {
-        LOG("OWM", "fetch failed: http=%d", code);
-        http.end();
-        return false;
-      }
-      DeserializationError err = deserializeJson(doc, http.getStream());
-      http.end();
-      if (err)
-      {
-        LOG("OWM", "json parse error: %s", err.c_str());
-        return false;
-      }
-      return true;
-    }
-
-    /**
-     * Variante di httpGetJson che applica un DeserializationOption::Filter
-     * durante il parsing, cosi' che dal JSON ricevuto vengano conservati in
-     * memoria solo i campi marcati `true` nel documento filter. Utile con
-     * One Call 3.0 (payload ampio: current + hourly*48 + daily*8).
+     * applicando un DeserializationOption::Filter durante il parsing, cosi' che
+     * dal JSON ricevuto vengano conservati in memoria solo i campi marcati
+     * `true` nel documento filter. Utile con One Call 3.0 (payload ampio:
+     * current + hourly*48 + daily*8). Ritorna true solo se HTTP 200 e parsing
+     * ok. Certificato non verificato, accettabile per dati meteo pubblici.
      */
     inline bool httpGetJsonFiltered(const String& url, JsonDocument& doc, const JsonDocument& filter)
     {
       WiFiClientSecure client;
-      client.setInsecure();
-
       HTTPClient http;
-      if (!http.begin(client, url))
+      if (!Net::beginHttps(http, client, url))
       {
         LOG("OWM", "http.begin() failed");
         return false;
@@ -267,9 +220,11 @@ namespace Weather
      * perchè ne leggiamo morn/eve). Il Filter ArduinoJson sotto restringe
      * ulteriormente i campi conservati in memoria.
      *
-     * Oltre ai campi base memorizza alcuni parametri aggiuntivi (sunrise,
-     * sunset, rain.1h previsto da hourly, pop, daily.feels_like.morn/eve)
-     * non ancora mostrati.
+     * Oltre ai campi base memorizza i parametri accessori (sunrise, sunset,
+     * rain.1h previsto da hourly, pop, daily.feels_like.morn/eve) mostrati
+     * nella riga pioggia, nella colonna alba/tramonto e nella barra morn/eve.
+     * Le descrizioni passano da Graphics::foldToFontCharset(), perchè i font
+     * a 7 bit non disegnano le lettere accentate.
      *
      * Ritorna true solo con corrente e previsioni entrambe aggiornate: una
      * risposta parziale e' un fallimento, cosi' runFetch() non resetta i
@@ -294,7 +249,7 @@ namespace Weather
       filter["hourly"][0]["weather"][0]["icon"]        = true;
       filter["hourly"][0]["weather"][0]["description"] = true;
 
-      // parametri aggiuntivi
+      // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
       filter["current"]["sunrise"]             = true;
       filter["current"]["sunset"]              = true;
       filter["hourly"][0]["pop"]               = true;
@@ -316,11 +271,12 @@ namespace Weather
       s0.feelsLikeC = cur["feels_like"] | NAN;
       copyStr(s0.iconCode,    sizeof(s0.iconCode),    cur["weather"][0]["icon"]        | "");
       copyStr(s0.description, sizeof(s0.description), cur["weather"][0]["description"] | "");
+      Graphics::foldToFontCharset(s0.description);
       s0.epoch = (time_t)(cur["dt"] | 0UL);
       if (s0.epoch == 0) s0.epoch = (time_t)(millis() / 1000);  // fallback: uptime
       s0.valid = !isnan(s0.feelsLikeC);
 
-      // parametri aggiuntivi
+      // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
       s0.precipitation_prob = 0.0f;                 // campo `pop` non presente in `current`
       // rain1h preso da hourly[0] (pioggia prevista per l'ora corrente),
       // non da current.rain (pioggia caduta nell'ultima ora).
@@ -352,10 +308,11 @@ namespace Weather
         s.feelsLikeC = item["feels_like"] | NAN;
         copyStr(s.iconCode,    sizeof(s.iconCode),    item["weather"][0]["icon"]        | "");
         copyStr(s.description, sizeof(s.description), item["weather"][0]["description"] | "");
+        Graphics::foldToFontCharset(s.description);
         s.epoch = (time_t)(item["dt"] | 0UL);
         s.valid = !isnan(s.feelsLikeC);
 
-        // parametri aggiuntivi (memorizzati, non ancora mostrati)
+        // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
         s.precipitation_prob = item["pop"]        | 0.0f;
         s.rain1h             = item["rain"]["1h"] | NAN;
 
@@ -364,7 +321,7 @@ namespace Weather
         logSlot(tag, s);
       }
 
-      // parametri aggiuntivi (memorizzati, non ancora mostrati)
+      // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
       JsonObjectConst today = doc["daily"][0].as<JsonObjectConst>();
       if (!today.isNull())
       {
@@ -420,7 +377,6 @@ namespace Weather
      *                   allineare ° all'apice di "C".
      * @param centered   true = centra il blocco su anchorX; false = parte
      *                   dal bordo sinistro anchorX.
-     * @since 22/04/26
      */
     inline void drawTempWithDegree(const char* numStr, int16_t anchorX,
                                    int16_t baselineY, uint16_t color,
@@ -469,7 +425,6 @@ namespace Weather
      * @param s       slot meteo gia' popolato.
      * @param out     buffer di output.
      * @param outLen  dimensione del buffer out.
-     * @since 22/04/26
      */
     inline void composeDescLine(uint8_t slotIdx, const WeatherSlot& s,
                                 char* out, size_t outLen)
@@ -507,8 +462,10 @@ namespace Weather
      * @param slotIdx  indice dello slot in `slots[]`: 0 = corrente, 1..3 = previsioni.
      * @param blockX   x (px) del margine sinistro del blocco.
      * @param blockW   larghezza (px) del blocco.
+     * @param descMaxW larghezza (px) concessa alla description senza invadere
+     *                 i riquadri vicini.
      */
-    inline void renderBlock(uint8_t slotIdx, int16_t blockX, int16_t blockW)
+    inline void renderBlock(uint8_t slotIdx, int16_t blockX, int16_t blockW, int16_t descMaxW)
     {
       const int16_t centerX = blockX + blockW / 2;
       const WeatherSlot& s  = slots[slotIdx];
@@ -520,12 +477,24 @@ namespace Weather
 
       /** Description (nero, font tondo sans-serif). Se c'è pioggia
        *  prevista (pop>0 o rain1h>0) la description testuale viene
-       *  sostituita/arricchita con valori quantitativi — vedi
-       *  composeDescLine(). */
+       *  sostituita o arricchita con valori quantitativi, vedi
+       *  composeDescLine(). Un testo troppo largo passa a FONT_SMALL e, se
+       *  ancora non entra, viene troncato: "temporale con pioggia leggera"
+       *  in FONT_BODY misura 306 px. */
       display.setFont(Layout::FONT_BODY);
       char descBuf[48];
       if (s.valid) composeDescLine(slotIdx, s, descBuf, sizeof(descBuf));
       else         strcpy(descBuf, "--");
+      {
+        int16_t  dx1, dy1;
+        uint16_t dw, dh;
+        display.getTextBounds(descBuf, 0, 0, &dx1, &dy1, &dw, &dh);
+        if ((int16_t)dw > descMaxW)
+        {
+          display.setFont(Layout::FONT_SMALL);
+          Calendar::detail::truncateToWidth(descBuf, descMaxW);
+        }
+      }
       drawCentered(descBuf, centerX, Layout::DESC_BASELINE, GxEPD_BLACK);
 
       /** Temperatura percepita (rosso, font tondo sans-serif grande bold).
@@ -536,8 +505,8 @@ namespace Weather
       {
         char numStr[8];
         snprintf(numStr, sizeof(numStr), "%.0f", s.feelsLikeC);
-        // Bold18pt: raggio ° 3 px, cap-height effettiva ~18 px (era 22:
-        // sovrastimata, faceva galleggiare il cerchietto sopra l'apice di "C").
+        // Bold18pt: raggio ° 3 px, cap-height effettiva ~18 px, che allinea
+        // il cerchietto all'apice di "C".
         drawTempWithDegree(numStr, centerX, Layout::TEMP_BASELINE, GxEPD_RED, 3, 18, true);
       }
       else
@@ -565,7 +534,6 @@ namespace Weather
      * @param baselineY baseline del testo (l'icona è posizionata con il
      *                  bordo inferiore grosso modo allineato alla baseline).
      * @param color     colore del testo (icona sempre GxEPD_BLACK).
-     * @since 21/04/26 Mattia Alesi
      */
     inline void drawIndoorRow(const uint8_t* icon, const char* txt,
                               int16_t startX, int16_t baselineY, uint16_t color)
@@ -941,11 +909,6 @@ namespace Weather
      * bordo superiore del riquadro (via Graphics::drawFieldsetRect).
      *
      * @param rrX  x (px) del bordo sinistro del riquadro Indoor.
-     *
-     * @since 22/04/26
-     * @modified 22/04/26 (v3) ridotto a 1 colonna; colonna DX con
-     *                    sunrise/sunset/placeholder spostata nel
-     *                    riquadro Weather (vedi renderSunColumn).
      */
     inline void renderIndoorBox(int16_t rrX)
     {
@@ -965,8 +928,8 @@ namespace Weather
         if (s.valid)
         {
           snprintf(buf, sizeof(buf), "%.1f", s.temperature);
-          // FreeSans18pt7b: raggio ° 2 px, cap-height effettiva ~16 px (era 20:
-          // sovrastimata, faceva galleggiare il cerchietto sopra l'apice di "C").
+          // FreeSans18pt7b: raggio ° 2 px, cap-height effettiva ~16 px, che
+          // allinea il cerchietto all'apice di "C".
           drawTempWithDegree(buf, textStartX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 16, false);
         }
         else
@@ -1052,12 +1015,8 @@ namespace Weather
      *   2. sunset     (nera, "HH:MM")            avvicinata a Row 1
      *   3. temp_range (@widget slider-temp-range)
      *   4. mini-chart (@widget storico-temperature)
-     *
-     * @param weatherRrX  x (px) del bordo sinistro del riquadro Weather
-     *                    (usato solo per compatibilita' di firma; la
-     *                    centratura usa Layout::SUN_COL_CENTER_X).
      */
-    inline void renderSunColumn(int16_t /*weatherRrX*/)
+    inline void renderSunColumn()
     {
       // FONT_BODY (12pt): stesso font dei titoli fieldset Indoor/Weather/Forecast,
       // per uniformita' visiva delle scritte HH:MM di alba e tramonto.
@@ -1140,9 +1099,6 @@ namespace Weather
      *   - Indoor   : BME680 + sunrise/sunset (2 colonne x 4 righe)
      *   - Weather  : meteo corrente (1 slot)
      *   - Forecast : 3 previsioni future
-     *
-     * @modified 22/04/26 Indoor estratto in riquadro dedicato, titoli
-     *                    fieldset, raggio bordi aumentato a 18.
      */
     inline void drawBanner()
     {
@@ -1177,12 +1133,20 @@ namespace Weather
 
       // Contenuti dei riquadri. Baseline ICON_Y/DESC/TEMP/TIME invariate
       // per current e forecast.
+      // Larghezza concessa alle description: il blocco corrente parte a
+      // sinistra del riquadro Weather, quindi il limite è la distanza fra il
+      // suo centro e il bordo del riquadro; le previsioni sono affiancate e
+      // si dividono il riquadro Forecast.
+      const int16_t currentCenterX = Layout::BLOCK_CURRENT_X + Layout::BLOCK_CURRENT_W / 2;
+      const int16_t currentDescW   = 2 * (currentCenterX - (Layout::WEATHER_RR_X + Layout::DESC_SIDE_PAD));
+      const int16_t forecastDescW  = Layout::BLOCK_FC_W - 2 * Layout::DESC_SIDE_PAD;
+
       renderIndoorBox(Layout::INDOOR_RR_X);
-      renderBlock(0, Layout::BLOCK_CURRENT_X, Layout::BLOCK_CURRENT_W);
-      renderSunColumn(Layout::WEATHER_RR_X);
-      renderBlock(1, Layout::BLOCK_FC0_X, Layout::BLOCK_FC_W);
-      renderBlock(2, Layout::BLOCK_FC1_X, Layout::BLOCK_FC_W);
-      renderBlock(3, Layout::BLOCK_FC2_X, Layout::BLOCK_FC_W);
+      renderBlock(0, Layout::BLOCK_CURRENT_X, Layout::BLOCK_CURRENT_W, currentDescW);
+      renderSunColumn();
+      renderBlock(1, Layout::BLOCK_FC0_X, Layout::BLOCK_FC_W, forecastDescW);
+      renderBlock(2, Layout::BLOCK_FC1_X, Layout::BLOCK_FC_W, forecastDescW);
+      renderBlock(3, Layout::BLOCK_FC2_X, Layout::BLOCK_FC_W, forecastDescW);
     }
 
     /**
@@ -1198,11 +1162,13 @@ namespace Weather
     {
       display.setFullWindow();
       /**
-       * Epoch di riferimento per il calendario: se il meteo corrente è valido
-       * (modifica 20/04/26: ripreso da slots[0] per garantire data reale),
-       * lo usiamo come "ora"; altrimenti Calendar::draw ripieghera' su time().
+       * Epoch di riferimento per il calendario: l'orologio di sistema quando è
+       * sincronizzato, così il calendario non dipende dalla riuscita del
+       * meteo; senza orologio l'ora dell'ultimo meteo, che è comunque reale;
+       * senza nessuno dei due 0, e Calendar::draw() mostra il riquadro vuoto.
        */
-      time_t calEpoch = slots[0].valid ? slots[0].epoch : 0;
+      const time_t calEpoch = Clock::valido() ? time(nullptr)
+                                              : (slots[0].valid ? slots[0].epoch : 0);
 
       display.firstPage();
       do
@@ -1210,8 +1176,8 @@ namespace Weather
         display.fillScreen(GxEPD_WHITE);
         drawBackground();
         /**
-         * Colonna placeholder bianca a destra (25%): copre l'immagine e
-         * riserva lo spazio per elementi che verranno aggiunti piu' avanti.
+         * Sidebar bianca a destra: copre l'immagine e fa da fondo al
+         * calendario e alla lista eventi.
          */
         display.fillRect(Layout::SIDEBAR_X, 0, Layout::SIDEBAR_W, Layout::BANNER_Y, GxEPD_WHITE);
         /**
@@ -1231,7 +1197,37 @@ namespace Weather
         drawBanner();
       } while (display.nextPage());
     }
+
+    /**
+     * Invalida il meteo in cache quando l'osservazione corrente è più vecchia
+     * di WEATHER_MAX_AGE_S: con OpenWeather in errore il banner passa ai "--"
+     * invece di mostrare dati vecchi. Lo storico del grafico resta in memoria
+     * e ricompare con il primo fetch riuscito. Senza orologio l'età non è
+     * calcolabile e la cache resta com'è.
+     */
+    inline void expireIfStale()
+    {
+      if (!slots[0].valid || !Clock::valido()) return;
+      const time_t age = time(nullptr) - slots[0].epoch;
+      if (age <= (time_t)WEATHER_MAX_AGE_S) return;
+      for (auto& s : slots) s.valid = false;
+      sunriseEpoch       = 0;
+      sunsetEpoch        = 0;
+      dailyFeelsLikeMorn = NAN;
+      dailyFeelsLikeEve  = NAN;
+      LOG("OWM", "meteo vecchio di %ld min: mostro i placeholder", (long)(age / 60));
+    }
   } // namespace detail
+
+  /**
+   * Vero se Env.h contiene una API key OpenWeather. È la precondizione del
+   * task meteo nel .ino: senza chiave ogni slot spenderebbe un handshake per un
+   * 401 certo.
+   */
+  inline bool isConfigured()
+  {
+    return Net::isCredentialSet(OWM_API_KEY);
+  }
 
   // =========================================================================
   // API pubblica
@@ -1250,11 +1246,11 @@ namespace Weather
       s.epoch = 0;
       s.iconCode[0] = '\0';
       s.description[0] = '\0';
-      // parametri aggiuntivi (memorizzati, non ancora mostrati)
+      // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
       s.precipitation_prob = 0.0f;
       s.rain1h             = NAN;
     }
-    // parametri aggiuntivi (memorizzati, non ancora mostrati)
+    // parametri accessori (riga pioggia, alba/tramonto, barra morn/eve)
     sunriseEpoch       = 0;
     sunsetEpoch        = 0;
     dailyFeelsLikeMorn = NAN;
@@ -1273,6 +1269,9 @@ namespace Weather
      * attende il primo esito di rete oppure PRIMO_FRAME_ATTESA_MS.
      */
     needsRefresh = true;
+
+    if (!isConfigured())
+      LOG("OWM", "API key assente in Env.h: meteo disattivato");
   }
 
   /**
@@ -1311,20 +1310,21 @@ namespace Weather
    *
    * Non decide se sia il momento: quello lo fa lo scheduler, che chiama
    * questa funzione solo quando sporco() e' vero, il rate limit del pannello
-   * e' scaduto e il primo frame e' consentito.
+   * e' scaduto e il primo frame e' consentito. Prima di disegnare scarta il
+   * meteo troppo vecchio, vedi detail::expireIfStale().
    */
   inline void render()
   {
     using namespace detail;
+    expireIfStale();
     renderFrame();
     needsRefresh = false;
   }
 
   /**
-   * Forza il refresh del display al prossimo giro di render(). Usato dai
-   * moduli esterni (es. Indoor) per notificare l'arrivo di nuovi dati
-   * da ridisegnare senza accoppiamento diretto al flag interno.
-   * @since 21/04/26 Mattia Alesi
+   * Forza il refresh del display al prossimo giro di render(). Usato dal
+   * .ino per notificare l'arrivo di nuovi dati da ridisegnare senza
+   * accoppiamento diretto al flag interno.
    */
   inline void markDirty()
   {

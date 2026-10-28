@@ -9,10 +9,10 @@ codice su una pagina Microsoft, quindi bastano la libreria standard e nessuna
 dipendenza esterna.
 
 Uso:
-    python3 msgraph_oauth_setup.py
+    python3 tools/msgraph_oauth_setup.py
 
-Nessun argomento e nessun percorso assoluto: lo script lavora sulla cartella in
-cui e' posizionato. Il client id viene riusato dall'header se gia' presente,
+Nessun argomento e nessun percorso assoluto: lo script sta in tools/ e lavora
+sulla cartella superiore, la root del progetto. Il client id viene riusato dall'header se gia' presente,
 altrimenti viene chiesto una volta. I valori non vengono stampati.
 
 Requisiti dell'app su https://entra.microsoft.com (App registrations):
@@ -35,11 +35,12 @@ import urllib.request
 from pathlib import Path
 
 # --- Configurazione -------------------------------------------------------
-# Tutto e' relativo alla cartella dello script, cosi' spostarlo altrove lo fa
-# lavorare sul progetto che lo ospita senza modifiche.
+# Tutto è relativo alla root del progetto, la cartella superiore a tools/, così
+# il comportamento non dipende dalla cartella da cui si lancia lo script.
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
 
-# Header di configurazione da aggiornare, cercato accanto allo script.
+# Header di configurazione da aggiornare, cercato nella root del progetto.
 ENV_FILENAME = "Env.h"
 
 # Tenant dell'authority. Deve restare uguale a quello che il firmware usa per
@@ -64,8 +65,8 @@ TOKEN_URL = f"{AUTHORITY}/oauth2/v2.0/token"
 
 
 def percorso_header():
-    """Header di configurazione accanto allo script."""
-    percorso = SCRIPT_DIR / ENV_FILENAME
+    """Header di configurazione nella root del progetto."""
+    percorso = PROJECT_DIR / ENV_FILENAME
     if not percorso.exists():
         sys.exit(f"{percorso} non esiste: crealo (di solito copiando il "
                  f"template accanto) e rilancia.")
@@ -107,7 +108,7 @@ def aggiorna_header(percorso, valori):
         sys.exit(f"Queste macro non sono state trovate in {percorso.name}: "
                  + ", ".join(mancanti) + "\nAggiungile e rilancia.")
 
-    fd, tmp = tempfile.mkstemp(dir=str(SCRIPT_DIR), prefix=f".{ENV_FILENAME}.")
+    fd, tmp = tempfile.mkstemp(dir=str(percorso.parent), prefix=f".{ENV_FILENAME}.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(testo)

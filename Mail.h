@@ -12,6 +12,7 @@
 #include "Env.h"
 #include "Timings.h"
 #include "Log.h"
+#include "Net.h"
 #include "Calendar.h" // riusa Calendar::detail::refreshGoogleToken / cachedGoogleToken
                       // e include transitivamente Layout.h + display globale
 #include "icons.h"    // INDOOR_ICON_MAIL (busta 20x20)
@@ -264,6 +265,8 @@ namespace Mail
           out.subject[MAIL_SUBJECT_LEN - 1] = '\0';
         }
       }
+      Graphics::foldToFontCharset(out.sender);
+      Graphics::foldToFontCharset(out.subject);
       out.valid = (out.sender[0] || out.subject[0]);
       return out.valid;
     }
@@ -272,15 +275,17 @@ namespace Mail
      * GET autenticata users/me/messages?... popola ids[] con fino a
      * MAIL_MAX_MESSAGES id. Usa fields=messages(id) per ridurre il payload.
      * Ritorna true anche se la lista e' vuota (outCount=0).
+     *
+     * Client e richiesta arrivano da runFetch() e restano aperti per il batch,
+     * che va sullo stesso host: una sola negoziazione TLS per fetch. Il corpo
+     * si legge con getString() perchè Gmail in HTTP/1.1 risponde chunked, e
+     * lo stream grezzo conterrebbe le intestazioni dei chunk.
      */
-    inline bool fetchMessageIds(String ids[], size_t &outCount)
+    inline bool fetchMessageIds(HTTPClient &http, WiFiClientSecure &client,
+                                String ids[], size_t &outCount)
     {
       outCount = 0;
 
-      WiFiClientSecure client;
-      client.setInsecure();
-
-      HTTPClient http;
       String url;
       url.reserve(240);
       url  = MAIL_GMAIL_HOST;
@@ -313,13 +318,15 @@ namespace Mail
         return false;
       }
 
+      const String body = http.getString();
+      http.end();
+
       JsonDocument filter;
       filter["messages"][0]["id"] = true;
 
       JsonDocument doc;
       DeserializationError err =
-          deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-      http.end();
+          deserializeJson(doc, body, DeserializationOption::Filter(filter));
       if (err)
       {
         LOG("Mail", "list json parse: %s", err.c_str());
@@ -348,17 +355,16 @@ namespace Mail
      * Una sola POST multipart al batch endpoint. Riduce N GET metadata
      * a 1 handshake TLS. Sub-response per-mail possono fallire singolarmente
      * senza bloccare le altre (best-effort: outCount puo' essere < n).
+     * Riusa la connessione aperta da fetchMessageIds() quando il server l'ha
+     * tenuta viva; altrimenti HTTPClient si riconnette da sè.
      */
-    inline bool fetchMessagesBatch(const String ids[], size_t n,
+    inline bool fetchMessagesBatch(HTTPClient &http, WiFiClientSecure &client,
+                                   const String ids[], size_t n,
                                    MailMessage outMsgs[], size_t &outCount)
     {
       outCount = 0;
       if (n == 0) return true;
 
-      WiFiClientSecure client;
-      client.setInsecure();
-
-      HTTPClient http;
       if (!http.begin(client, MAIL_GMAIL_BATCH_URL))
       {
         LOG("Mail", "batch http.begin failed");
@@ -444,22 +450,19 @@ namespace Mail
     }
   } // namespace detail
 
+  /** Vero se le credenziali Google di Env.h sono configurate: Mail usa le
+   *  stesse di Calendar::Google. È la precondizione del task mail nel .ino. */
+  inline bool isConfigured() { return Calendar::Google::isConfigured(); }
+
   /** Azzera la cache. Una tantum in setup(). */
   inline void begin()
   {
     using namespace detail;
     for (size_t i = 0; i < MAX_MESSAGES; ++i) messages[i].valid = false;
     messagesCount = 0;
+    if (!isConfigured())
+      LOG("Mail", "credenziali Google assenti in Env.h: posta disattivata");
   }
-
-  /** Numero di mail attualmente in cache (0..MAX_MESSAGES). */
-  inline size_t count() { return detail::messagesCount; }
-
-  /**
-   * Accesso read-only allo slot i (i < count()). Pensato per la futura UI;
-   * il chiamante deve verificare count() prima.
-   */
-  inline const MailMessage &at(size_t i) { return detail::messages[i]; }
 
   // ==========================================================================
   // Rendering UI
@@ -467,28 +470,6 @@ namespace Mail
 
   namespace detail
   {
-    /**
-     * Disegna l'orario o la data della mail nella colonna destra della cella.
-     * Mail ricevuta oggi -> "HH:MM"; altrimenti -> "dd/MM". Stessa convenzione
-     * del calendario per coerenza visiva.
-     */
-    inline void formatMailWhen(time_t whenUtc, const struct tm& today, char* buf, size_t bufLen)
-    {
-      if (whenUtc <= 0)
-      {
-        snprintf(buf, bufLen, "--:--");
-        return;
-      }
-      struct tm tmL;
-      localtime_r(&whenUtc, &tmL);
-      bool isToday = (tmL.tm_year == today.tm_year) &&
-                     (tmL.tm_yday == today.tm_yday);
-      if (isToday)
-        snprintf(buf, bufLen, "%02d:%02d", tmL.tm_hour, tmL.tm_min);
-      else
-        snprintf(buf, bufLen, "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
-    }
-
     /**
      * Disegna una singola cella mail.
      *
@@ -507,7 +488,7 @@ namespace Mail
      * MAIL_ROW_H - 36 px di "vuoto" in basso ad ogni cella: questo crea
      * la separazione visiva richiesta fra le entry.
      */
-    inline void drawMailCell(int idx, const MailMessage& m, const struct tm& today)
+    inline void drawMailCell(int idx, const MailMessage& m)
     {
       /**
        * Ordinamento column-major: la cache e' ordinata cronologicamente
@@ -546,7 +527,6 @@ namespace Mail
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
         snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
       }
-      (void)today; // riservato per future logiche "oggi vs altri giorni"
 
       display.setFont(Layout::FONT_BODY);
       int16_t x1, y1; uint16_t tw, th, dw, dh;
@@ -620,17 +600,12 @@ namespace Mail
    */
   inline void draw()
   {
-    // Riferimento "oggi" locale (riservato per future logiche di formato data).
-    struct tm today{};
-    time_t nowUtc = time(nullptr);
-    if (nowUtc >= TIME_VALID_EPOCH_MIN) localtime_r(&nowUtc, &today);
-
     for (size_t i = 0; i < MAX_MESSAGES; ++i)
     {
       // Cella vuota: usa MailMessage{} con valid=false. Mostra "--".
       const MailMessage empty{};
       const MailMessage& m = (i < detail::messagesCount) ? detail::messages[i] : empty;
-      detail::drawMailCell((int)i, m, today);
+      detail::drawMailCell((int)i, m);
     }
   }
 
@@ -646,8 +621,9 @@ namespace Mail
    *     riscritta solo se l'intero flusso (refresh+list+batch) ha successo.
    *     Su transitorio (es. WiFi che cade tra list e batch) la cache
    *     precedente resta intatta.
-   *   - Mai chiamate ricorsive, mai blocchi senza timeout: HTTPClient ha il
-   *     suo timeout interno e MAIL_FETCH_BUDGET_MS limita il wall-clock end-to-end.
+   *   - Mai chiamate ricorsive, mai blocchi senza timeout: connessione e
+   *     letture hanno quello di HTTPClient, l'handshake TLS_HANDSHAKE_TIMEOUT_S,
+   *     e MAIL_FETCH_BUDGET_MS limita il tempo totale fra un passo e l'altro.
    *
    * Presuppone il WiFi gia' connesso e non decide quando tocca a lui: cadenza,
    * ritenti e backoff sono dello scheduler, che chiama questa funzione solo
@@ -673,9 +649,17 @@ namespace Mail
       return false;
     }
 
+    // Un solo client e una sola richiesta per lista e batch, in HTTP/1.1 con
+    // keep-alive: le due chiamate vanno allo stesso host e la seconda riusa
+    // la negoziazione TLS della prima.
+    WiFiClientSecure client;
+    Net::prepareTlsClient(client);
+    HTTPClient http;
+    http.setReuse(true);
+
     String ids[MAX_MESSAGES];
     size_t n = 0;
-    if (!fetchMessageIds(ids, n))
+    if (!fetchMessageIds(http, client, ids, n))
     {
       // Cache NON toccata: lo stato precedente viene preservato finche'
       // un fetch successivo non ha successo.
@@ -708,7 +692,7 @@ namespace Mail
      */
     MailMessage tmp[MAX_MESSAGES] = {};
     size_t tmpCount = 0;
-    if (!fetchMessagesBatch(ids, n, tmp, tmpCount))
+    if (!fetchMessagesBatch(http, client, ids, n, tmp, tmpCount))
     {
       // Batch fallito: cache esistente NON sovrascritta, resta valido
       // l'ultimo snapshot.

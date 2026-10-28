@@ -79,16 +79,27 @@ e un `.bin` qui non servirebbe a niente. Gli oggetti intermedi in
   è configurata": non reintrodurla.
 - `arduino-cli` rifiuta lo sketch se la cartella non si chiama come il `.ino`, e non basta passare il
   path del `.ino`: serve la junction.
-- `Env.h` è gitignored e obbligatorio per compilare; quello attuale ha solo placeholder, quindi il
-  firmware compila ma non funziona in campo finchè non ci sono credenziali vere.
+- `Env.h` è gitignored e obbligatorio per compilare; se `build.ps1` lo rigenera dal template il
+  firmware compila e gira, ma ogni produttore con credenziali al placeholder resta sospeso (vedi
+  [[scheduler_task_table]]). `Env.h` non va letto per valore: contiene credenziali vere, e si
+  verifica solo se le macro coincidono con il template.
 
 **Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed è il default di `build.ps1`.
+
+**La build che va sulla board la fa il Mac** con la configurazione di `.vscode/arduino.json`:
+`PartitionScheme=no_fs`, `CPUFreq=80`, `EraseFlash=all`, `PSRAM=disabled`, `LoopCore=1`,
+`EventsCore=1` e altre. `build.ps1` usa i default della board (CPU a 240 MHz), quindi una verifica
+fedele si fa con `arduino-cli compile -b "esp32:esp32:esp32:<stringa configuration di
+arduino.json>"` e un build path separato (`A:\tmp\arduino-build\ePaper-weather-dashboard-mac`).
+`arduino-cli board details` conferma che tutte quelle opzioni, `ZigbeeMode` compresa, esistono per
+la board. `EraseFlash=all` cancella anche la NVS a ogni flash via seriale: calibrazione BSEC e
+cadenze di `/config` ripartono dai default (scelta dell'utente).
 
 **Lo schema di partizioni deve essere `no_fs`**, ed è il default dello script. Le CSV del core lo mostrano senza ambiguità: `huge_app.csv` ha la sola `app0` da 3 MB, `no_fs.csv` ha `app0` e `app1` da 1984 KB ciascuna, `default.csv` due slot da 1280 KB più SPIFFS. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]), e il firmware non usa nessun filesystem, quindi lo spazio di SPIFFS è meglio darlo alle due slot. Con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce: il guasto si manifesta solo al primo aggiornamento via web.
 
 Il vincolo di dimensione è quindi la slot da 1984 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero è la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in più della 097c, che sono i buffer di page più alti (96 righe invece di 84), mentre il flash è praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 
-**Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (ad esempio `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
+**Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (ad esempio `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`, raggiungibile anche dal symlink `tools/epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
 
 **Gli examples del submodule non li compila questo build** (Arduino concatena i `.ino` solo dalla root dello sketch). Si compilano a parte passando la libreria per quella build, senza installarla: comando e caveat in [[gxepd2_solum_esl_library]].
 
@@ -106,6 +117,8 @@ che perderebbe il quoting: INCLUDE, LIB e PATH non sopravvivono al processo. Lo 
 `test\esegui.ps1`, runner Windows accanto a `esegui.sh`, con artefatti in `A:\tmp\epd-test`.
 
 - Riga verificata: `cl /nologo /std:c++20 /Zc:preprocessor /EHsc /W4 /I test\stub /I . test_timings.cpp`.
+- `Scheduler.h` include `Clock.h`, che usa SNTP: lo stub `test\stub\esp_sntp.h` fornisce le due
+  funzioni usate e, con MSVC dove `sys/time.h` non esiste, anche `timeval` e `gettimeofday`.
 - **`/Zc:preprocessor` non è opzionale**: `Log.h` usa `__VA_OPT__` e il preprocessore tradizionale
   di MSVC si ferma con errore di sintassi, non con un avviso. Misurato: senza il flag, C2146 +
   C3861 su ogni chiamata di `LOG`.

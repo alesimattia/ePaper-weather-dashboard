@@ -17,8 +17,6 @@
  * tutto bianco come fallback per far compilare lo sketch.
  *
  * Usato da: Weather.h (funzione renderBlock)
- *
- * @since 20/04/26 Mattia Alesi
  */
 
 /** Placeholder ICON_SIZE x ICON_SIZE tutto bianco. Sostituire con icone reali. */
@@ -52,7 +50,6 @@ inline const uint8_t* iconFromCode(const char* code)
 // Le bitmap qui sotto sono dimensionate "in chiaro" come 20x20 (3 byte
 // per riga * 20 righe = 60 byte) perche' i loro contenuti dipendono dal
 // layout grafico fisico delle icone, non dalla dimensione astratta.
-// @since 21/04/26 Mattia Alesi
 // ===========================================================================
 
 /**
@@ -114,7 +111,6 @@ static const uint8_t INDOOR_ICON_HUMIDITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM 
  * Quadrante semicircolare con lancetta centrale: cornice semicerchio
  * in alto, linea orizzontale base, lancetta diagonale che parte dal
  * centro basso verso il settore destro del quadrante.
- * @since 22/04/26
  */
 static const uint8_t INDOOR_ICON_PRESSURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
@@ -144,7 +140,6 @@ static const uint8_t INDOOR_ICON_PRESSURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM 
  * verso l'alto. La riga piu' larga (20 px) è in cima, la piu' stretta
  * (2 px) è in basso: rappresenta il sole che sorge emanando raggi
  * crescenti. Spaziatura verticale di 1 riga vuota fra linee.
- * @since 22/04/26
  */
 static const uint8_t INDOOR_ICON_SUNRISE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0xFF, 0xFF, 0xF0,   // riga  0: XXXXXXXXXXXXXXXXXXXX (w=20)
@@ -174,7 +169,6 @@ static const uint8_t INDOOR_ICON_SUNRISE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM =
  * di orizzonte immediatamente sotto la base. Il semicerchio è riempito e
  * copre la meta' superiore, la linea di orizzonte è una singola riga a
  * larghezza massima che si appoggia contro la base del sole.
- * @since 22/04/26
  */
 static const uint8_t INDOOR_ICON_SUNSET[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
@@ -229,9 +223,8 @@ static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::INDOOR_ICON_SIZE * 3] PROGM
 
 /**
  * Icona mail (busta schiacciata 20w x 14h visibili, contorno nero).
- * Cornice bitmap resta 20x20 ma il contenuto e' compresso verticalmente di
- * 2 px rispetto alla versione precedente (era 16h tall): ora rettangolo
- * 18w x 14h centrato verticalmente (rows 3..16), patta a V che converge
+ * La cornice bitmap è 20x20 e il contenuto è un rettangolo 18w x 14h
+ * centrato verticalmente (rows 3..16), con una patta a V che converge
  * piu' rapidamente (2 cols/row) all'apex su row 7. Usata da Mail.h come
  * badge "unread" inline accanto al mittente di ogni mail non letta.
  */

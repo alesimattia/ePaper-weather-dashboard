@@ -16,13 +16,19 @@
  * Lo stato del calibratore viene salvato su NVS (namespace "bme680") ogni 6 ore 
  * e ripristinato all'avvio, azzerando il warm-up dopo un power cycle.
  *
- * Lo sketch chiama refresh() ad ogni giro di loop() e, quando la
- * funzione ritorna true (nuovo campione BSEC pronto), invoca
- * Weather::markDirty() per innescare il refresh del display.
+ * Lo scheduler chiama refresh() alla scadenza di msUntilNextPoll() e, quando
+ * la funzione ritorna true (nuovo campione o campione scaduto), il .ino chiede
+ * il ridisegno del display, solo dentro la fascia WiFi.
  */
 #define BME680_I2C_ADDR   0x77
 #define BME680_SDA_PIN    21
 #define BME680_SCL_PIN    22
+
+/** Clock dell'I2C in fast mode: il BME680 regge fino a 3,4 MHz e il
+ *  controller I2C dell'ESP32 fino a 1 MHz, quindi 400 kHz sta dentro entrambi
+ *  e porta la lettura di un campione da circa 3 ms a meno di 1 ms. Richiede
+ *  fili corti e le pull-up della breakout; con un bus lungo si torna a 100000. */
+#define BME680_I2C_CLOCK_HZ 400000UL
 
 namespace Indoor
 {
@@ -84,15 +90,35 @@ namespace Indoor
     inline bool     hasNewSample     = false;
     inline uint32_t lastStateSaveMs  = 0;
 
+    /** Istante dell'ultima chiamata a refresh(): la cadenza delle
+     *  interrogazioni si conta da qui e non dal campione, così un sensore che
+     *  smette di rispondere non fa svegliare il dispositivo a ogni giro. */
+    inline uint32_t lastPollMs       = 0;
+    inline bool     everPolled       = false;
+
     /**
-     * Sottrazione signed per confronto rollover-safe di millis().
-     * Replica il pattern gia' usato in Weather per mantenere coerenza
-     * sulla gestione del wrap a 32 bit (~49 giorni).
-     * @since 21/04/26 Mattia Alesi
+     * Sottrazione signed per confronto rollover-safe di millis(), robusta al
+     * wrap a 32 bit (~49 giorni).
      */
     inline bool elapsed(uint32_t now, uint32_t last, uint32_t interval)
     {
       return (int32_t)(now - last) >= (int32_t)interval;
+    }
+
+    /**
+     * Invalida il campione quando è più vecchio di INDOOR_SAMPLE_MAX_AGE_MS,
+     * cioè al secondo campione perso: da lì il riquadro mostra "--" e Tuya
+     * smette di pubblicare, invece di esporre un valore vecchio come attuale.
+     * @return true se il campione è appena scaduto.
+     */
+    inline bool expireIfStale()
+    {
+      if (!current.valid || !elapsed(millis(), current.lastUpdateMs, INDOOR_SAMPLE_MAX_AGE_MS))
+        return false;
+      current.valid = false;
+      LOG("BME680", "nessun campione da %lu s: dato scaduto",
+          (unsigned long)((millis() - current.lastUpdateMs) / 1000UL));
+      return true;
     }
 
     /**
@@ -166,7 +192,6 @@ namespace Indoor
     /**
      * Salva il blob dello stato BSEC in NVS. Chiamata solo quando
      * l'accuratezza è almeno 1 (evita di persistere stati transitori).
-     * @since 21/04/26 Mattia Alesi
      */
     inline void saveBsecState()
     {
@@ -239,8 +264,13 @@ namespace Indoor
     bsecOk          = false;
     hasNewSample    = false;
     lastStateSaveMs = 0;
+    lastPollMs      = 0;
+    everPolled      = false;
 
     Wire.begin(BME680_SDA_PIN, BME680_SCL_PIN);
+    // Bsec2 e Bme68x usano l'oggetto Wire senza reinizializzarlo, quindi il
+    // clock impostato qui resta quello del bus.
+    Wire.setClock(BME680_I2C_CLOCK_HZ);
 
     if (!bsec.begin(BME680_I2C_ADDR, Wire)) {
       LOG("BME680", "init failed (bsec=%d, sensor=%d)",
@@ -273,22 +303,41 @@ namespace Indoor
     LOG("BME680", "init ok, ULP 5 min");
   }
 
-  /** Vero quando il sensore e' stato inizializzato con successo. */
+  /** Vero quando il sensore e' stato inizializzato con successo. È l'hook
+   *  pronto() del task del sensore nel .ino: senza sensore il task è sospeso. */
   inline bool attivo() { return detail::bsecOk; }
 
   /**
-   * Polling non bloccante da chiamare ad ogni giro di loop().
-   * BSEC temporizza internamente i 5 min, quindi la chiamata è a
-   * costo trascurabile quando nessun sample è dovuto.
-   * @return true se un nuovo campione è stato prodotto in questa
-   *         chiamata: il chiamante usa il valore per innescare un
-   *         refresh del display via Weather::markDirty().
+   * Millisecondi alla prossima interrogazione utile, 0 se il sensore non è
+   * ancora stato interrogato. Bsec2::run() lavora solo quando arriva il suo
+   * next_call, ogni 300 s in ULP, e prima non fa nulla: interrogare più spesso
+   * non anticipa nessun campione, quindi la cadenza si conta dall'ultima
+   * chiamata, che il campione arrivi o no.
+   * Usato dal .ino come scadenza custom del task del sensore.
+   */
+  inline uint32_t msUntilNextPoll()
+  {
+    using namespace detail;
+    if (!everPolled) return 0;
+    const uint32_t due = lastPollMs + (uint32_t)BSEC_PERIODO_ULP_S * 1000UL + BSEC_MARGINE_POLL_MS;
+    const int32_t d = (int32_t)(due - millis());
+    return d <= 0 ? 0 : (uint32_t)d;
+  }
+
+  /**
+   * Interroga il sensore. Lo scheduler la chiama alla scadenza data da
+   * msUntilNextPoll().
+   * @return true quando il dato da mostrare è cambiato: un nuovo campione,
+   *         oppure il campione precedente appena scaduto. Il chiamante usa il
+   *         valore per chiedere il ridisegno.
    */
   inline bool refresh()
   {
     using namespace detail;
     if (!bsecOk) return false;
 
+    lastPollMs = millis();
+    everPolled = true;
     hasNewSample = false;
     if (!bsec.run())
     {
@@ -301,10 +350,10 @@ namespace Indoor
       if (bsec.status != BSEC_OK || bsec.sensor.status != BME68X_OK)
         LOG("BME680", "run: bsec=%d (%s), sensor=%d",
             bsec.status, detail::descriviStatoBsec(bsec.status), bsec.sensor.status);
-      return false;
+      return expireIfStale();
     }
 
-    if (!hasNewSample) return false;
+    if (!hasNewSample) return expireIfStale();
 
     LOGV("BME680", "T=%.1fC RH=%u%% P=%umBar IAQ=%u acc=%u",
          current.temperature, (unsigned)current.humidity,
@@ -325,8 +374,8 @@ namespace Indoor
   }
 
   /**
-   * Ultimo campione valido (riferimento a cache interna).
-   * @since 21/04/26 Mattia Alesi
+   * Ultimo campione (riferimento a cache interna); valid è falso finchè non
+   * ne arriva uno e dopo che è scaduto.
    */
   inline const Sample& sample()
   {
@@ -347,10 +396,8 @@ namespace Indoor
    *   251.. 350   |  "Pessima"  |  gravemente inquinata
    *    > 350      |  "Nociva"   |  aria nociva
    *
-   * Usato da: Weather.h (renderIndoorSubColumn) per mostrare la
+   * Usato da: Weather.h (renderIndoorBox) per mostrare la
    * condizione accanto al valore numerico IAQ.
-   *
-   * @since 21/04/26 Mattia Alesi
    */
   inline const char* iaqLabel(uint16_t iaq)
   {

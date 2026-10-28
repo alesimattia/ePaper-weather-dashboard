@@ -321,6 +321,26 @@ int main()
        "  e il task e' dovuto subito, senza aver perso lo slot");
   }
 
+  // Scadenza custom: precede ogni altra regola, maiEseguito compreso. È la
+  // regola per cui il sensore restava fermo quando la sua scadenza custom non
+  // valeva 0 al boot: un task locale gira solo con scadenza 0.
+  {
+    static uint32_t scadenzaFinta = 0;
+    Scheduler::Task b {};
+    b.tag = "b"; b.cadenza = Scheduler::Cadenza::PERIODICA; b.richiedeRadio = false;
+    b.intervalloMin = &Timings::Valori::displayRefreshMin;
+    b.intervalloRitentoMs = FETCH_RITENTO_MS; b.maxTentativi = 0;
+    b.esegui = esitoOk;
+    b.msAllaScadenzaCustom = []() { return scadenzaFinta; };
+
+    scadenzaFinta = 300000u;
+    ok(b.stato.maiEseguito && !Scheduler::dovuto(b, g_msFinto, oggiLocale(), 0),
+       "scadenza custom a 300 s: non dovuto anche se mai eseguito");
+    scadenzaFinta = 0;
+    ok(Scheduler::dovuto(b, g_msFinto, oggiLocale(), 0),
+       "  a 0 dovuto subito, che e' cio' che il sensore deve dare al boot");
+  }
+
   // ---- cambio dell'ora legale --------------------------------------------
   {
     impostaOra(2026, 10, 24, 23, 30);          // sabato prima del cambio del 25 ottobre

@@ -66,15 +66,17 @@ il 33 fosse instradato starebbe con ogni probabilità in quella sequenza. Confid
 totale, perchè l'estrazione dello schematico è mutilata; la conferma fisica costa dieci secondi
 (serigrafia dell'header, o continuità fra pin header e pin del modulo).
 
-Conta perchè il cablaggio del secondo controller del 12.2" era documentato con **CS_S = GPIO33**, che
-su questa board non esiste: va sostituito.
+Per questo il CS del secondo controller del 12.2" sta su **GPIO32**: `PIN_CS_S` in `Layout_122c.h`,
+gli snippet del submodule e lo schema Waveshare di `docs/122c/`. Il Setup B del submodule (dev
+board generica, es. DevKitC) usa ancora 33, che lì esiste.
 
 ## GPIO liberi per un secondo controller
 
 | Uso | Pin | Perchè |
 |---|---|---|
-| **CS_S consigliato** | **32** | output-capable, sull'header, **una sola occorrenza nello schematico** cioè non usato da nient'altro, e adiacente al 35 |
-| CS_S alternative | 4, 21, 22 | liberi e output-capable (16/17 pure, essendo WROOM senza PSRAM, ma tenerli di riserva) |
+| **CS_S (in uso)** | **32** | output-capable, sull'header, **una sola occorrenza nello schematico** cioè non usato da nient'altro, e adiacente al 35 |
+| CS_S alternative | 4 | libero e output-capable (16/17 pure, essendo WROOM senza PSRAM, ma tenerli di riserva) |
+| cablaggio consigliato del BME680 | 21, 22 | liberi sulla board e default `Wire` del core; il firmware ci mette SDA e SCL del BME680 (`BME680_SDA_PIN` / `BME680_SCL_PIN` in `Indoor.h`), ma è solo il cablaggio consigliato: l'I2C dell'ESP32 si instrada su qualunque pin I/O, quindi il sensore si sposta se servono questi pin |
 | BUSY_S | 35 oppure 34 | **input-only**: giusti per un BUSY, inutilizzabili per un CS |
 | da evitare | 0, 2, 12 | pin di strapping (boot mode, flash voltage) |
 | liberi ma da tenere di riserva | 5, 18, 19, 23 | sono i pin VSPI: liberi su questa board, ma è il bus che si usa per aggiungere periferiche SPI (una SD, per esempio), quindi conviene non occuparli |

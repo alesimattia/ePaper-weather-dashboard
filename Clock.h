@@ -3,7 +3,13 @@
 
 #include <Arduino.h>
 #include <time.h>
+// Assente solo sul toolset MSVC dei test su host, dove lo stub di esp_sntp.h
+// fornisce timeval e gettimeofday.
+#if __has_include(<sys/time.h>)
+  #include <sys/time.h>
+#endif
 #include <stdint.h>
+#include <esp_sntp.h>
 
 #include "Timings.h"
 #include "Log.h"
@@ -50,9 +56,62 @@
 
 namespace Clock
 {
+  namespace detail
+  {
+    /** Scritti dalla callback di SNTP, che gira nel task di lwIP, e letti dal
+     *  loop: valori a 32 bit e bool, quindi load e store atomici. */
+    inline volatile bool     everSynced = false;
+    inline volatile uint32_t lastSyncMs = 0;
+
+    /** Base della misura di deriva, scritta dal loop prima di sntp_restart() e
+     *  letta dalla callback dopo: le due cose sono sequenziali. */
+    inline volatile bool measuring      = false;
+    inline int64_t       expectedBaseUs = 0;
+    inline uint32_t      expectedBaseMs = 0;
+    inline int64_t       prevSyncUs     = 0;
+
+    /** Microsecondi Unix di una struct timeval. */
+    inline int64_t toUs(const struct timeval& tv)
+    {
+      return (int64_t)tv.tv_sec * 1000000LL + (int64_t)tv.tv_usec;
+    }
+
+    /**
+     * Callback di sincronizzazione avvenuta, invocata da lwIP dopo aver
+     * impostato l'ora. Se la sincronizzazione l'ha chiesta resyncIfStale(),
+     * confronta l'ora ricevuta con quella attesa, cioè con l'ora di sistema
+     * prima della correzione: base della richiesta più il tempo trascorso, che
+     * millis() conta sulla stessa base dei tempi. La differenza è la deriva
+     * accumulata dall'RC in light sleep dalla sincronizzazione precedente.
+     */
+    inline void onTimeSync(struct timeval* tv)
+    {
+      const uint32_t nowMs = millis();
+      const int64_t receivedUs = toUs(*tv);
+      if (measuring && everSynced)
+      {
+        const int64_t expectedUs = expectedBaseUs + (int64_t)(uint32_t)(nowMs - expectedBaseMs) * 1000LL;
+        const int64_t correctionUs = receivedUs - expectedUs;
+        const int64_t spanUs = expectedUs - prevSyncUs;
+        const long ppm = spanUs > 0 ? (long)(correctionUs * 1000000LL / spanUs) : 0;
+        LOG("Time", "SNTP: correzione %+lld ms dopo %lld min (%+ld ppm)",
+            (long long)(correctionUs / 1000LL), (long long)(spanUs / 60000000LL), ppm);
+      }
+      else
+      {
+        LOGV("Time", "SNTP: sincronizzazione periodica");
+      }
+      measuring  = false;
+      prevSyncUs = receivedUs;
+      lastSyncMs = nowMs;
+      everSynced = true;
+    }
+  }
+
   /**
    * Applica la stringa POSIX TZ al processo: da qui in avanti localtime_r()
-   * ritorna componenti in Europe/Rome con DST automatico. Idempotente.
+   * ritorna componenti in Europe/Rome con DST automatico. Registra anche la
+   * callback di sincronizzazione, che deve esistere prima del primo SNTP.
    *
    * Va chiamata in setup() PRIMA di qualsiasi modulo che formatti orari locali
    * (Weather::begin, Calendar::Outlook::begin, ecc.). Non tocca la rete.
@@ -61,6 +120,7 @@ namespace Clock
   {
     setenv("TZ", CLOCK_POSIX_TZ, 1);
     tzset();
+    sntp_set_time_sync_notification_cb(detail::onTimeSync);
   }
 
   /**
@@ -142,6 +202,36 @@ namespace Clock
         t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec);
     return true;
+  }
+
+  /**
+   * Forza una nuova sincronizzazione se l'ultima è più vecchia di
+   * CLOCK_RESYNC_INTERVAL_MS. Va chiamata da chi ha appena portato su la radio,
+   * cioè wifiOn() nel .ino: il polling di lwIP ogni 3 h riesce solo se cade
+   * dentro una finestra radio, mentre qui la richiesta parte quando la rete
+   * c'è. Non blocca: lwIP manda la richiesta entro pochi secondi e la risposta
+   * arriva mentre girano i fetch.
+   */
+  inline void resyncIfStale()
+  {
+    using namespace detail;
+    if (!valido() || !everSynced) return;
+    // Una richiesta precedente rimasta senza risposta non blocca questa: la
+    // base si aggiorna e la misura resta corretta.
+    if ((uint32_t)(millis() - lastSyncMs) < CLOCK_RESYNC_INTERVAL_MS) return;
+
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+    expectedBaseUs = toUs(now);
+    expectedBaseMs = millis();
+    measuring = true;
+    if (!sntp_restart())
+    {
+      measuring = false;
+      LOG("Time", "SNTP non attivo: risincronizzazione non avviata");
+      return;
+    }
+    LOGV("Time", "SNTP: risincronizzazione avviata");
   }
 }
 

@@ -25,6 +25,16 @@ Ognuna rompe l'upload se ignorata, e nessuna dà un errore chiaro:
 
 **La finestra fa partire anche l'orologio.** `apri(Stato::ServerSta)` e il ramo `ServerAp` quando la STA sale chiamano `Clock::sincronizza(0)`, non bloccante. Sta lì e non altrove perchè sono i due punti in cui la macchina a stati **sa** di avere la rete di casa con un indirizzo, e perchè in questa finestra la radio non è dello scheduler: `wifiOn()` non viene mai chiamata e senza quell'aggancio nessuno sincronizzerebbe. Bloccare è escluso: il loop gira ogni ~10 ms e l'attesa congelerebbe web server e access point durante un upload.
 
+## Lo scheduler aspetta mentre un client è collegato
+
+Il web server è servito dallo stesso `loop()` che esegue fetch e refresh: un fetch (fino a 45 s per il cinema) o un refresh (24 s) lo lasciano senza risposta. Per questo `loop()` chiama `Scheduler::giro(ESTERNA)` solo se `Maintenance::clientAttivo()` è falsa. È vera con almeno un dispositivo associato all'AP di emergenza (`WiFi.softAPgetStationNum()`), oppure con una richiesta servita da meno di `MAINT_CLIENT_IDLE_MS` (30 s). Sulla rete di casa il PC è collegato al router, non all'ESP, e il web server chiude la connessione dopo ogni richiesta, quindi la richiesta recente è l'unico segnale disponibile; l'istante lo registra `proroga()`, che ogni handler chiama. Il tetto assoluto della finestra resta, quindi i fetch non restano sospesi oltre quello. Una richiesta che arriva mentre un fetch è già partito aspetta comunque la fine di quel fetch.
+
+## Diagnostica e rollback
+
+`/status` mostra anche heap minimo dal boot (`ESP.getMinFreeHeap()`), blocco contiguo massimo (`ESP.getMaxAllocHeap()`) e stack minimo residuo del loop (`uxTaskGetStackHighWaterMark`, l'handler gira nel task del loop). Sono le misure che confermano i margini stimati: picco circa 93 KB nel giorno del cinema (piani 46,8 KB + sessione TLS circa 33 KB + JSON + String) contro 150-180 KB di heap libero stimato, stack del loop da 8192 byte. La stessa terna esce in `LOGV` prima del light sleep nei giri che hanno eseguito qualcosa.
+
+**Rollback dell'app: il bootloader lo supporta, il core lo annulla.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, ma `initArduino()` conferma la nuova immagine all'avvio, prima di `setup()`, tramite gli hook deboli `verifyRollbackLater()` (default false) e `verifyOta()` (default true) in `esp32-hal-misc.c`. Un firmware caricato da `/update` che va in crash dopo l'avvio quindi non torna alla versione precedente e richiede il cavo seriale. Per scelta dell'utente resta così; per attivarlo basterebbe ridefinire `verifyRollbackLater()` a true e chiamare `esp_ota_mark_app_valid_cancel_rollback()` quando il firmware ha dimostrato di funzionare, accettando che una mancanza di corrente prima di quel punto riporti alla versione precedente.
+
 ## Costi misurati
 
 mDNS pesa **~34 KB di flash** (spegnibile con `MAINT_MDNS 0`, resta l'IP). Basic Auth ~344 byte. Con tutto attivo il firmware sta al 67% (9.7") e 69% (12.2") dello slot.

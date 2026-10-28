@@ -9,8 +9,12 @@
  * Qui vivono i segreti (password, API key, client secret, refresh
  * token) + la posizione GPS (dato personale sensibile). Le restanti
  * costanti di dominio stanno nei moduli consumer:
- *   - Clock.h:    CLOCK_POSIX_TZ (fuso + DST automatico),
- *                 CAL_MSGRAPH_TENANT_ID (tenant Azure AD)
+ *   - Clock.h:    CLOCK_POSIX_TZ (fuso + DST automatico)
+ *   - Calendar.h: CAL_MSGRAPH_TENANT_ID (tenant Azure AD)
+ *
+ * Un valore lasciato al placeholder (vuoto, oppure che inizia con "paste_" o
+ * con "0000000") disattiva il solo produttore che lo usa: il resto del
+ * firmware funziona e il log di boot lo segnala.
  */
 
 #define WIFI_SSID       "my_wifi"
@@ -22,14 +26,14 @@
 #define LON             10.0000f
 
 /**
- * Credenziali della rete AP di emergenza. La finestra di manutenzione si apre
- * sulla rete di casa; questo access point serve solo quando la STA non sale
- * entro MAINT_STA_TIMEOUT_S, ed e' l'unica via di recupero per un pannello a
- * muro con credenziali WiFi sbagliate.
- * La password deve essere lunga almeno 8 caratteri perchè WPA2 lo richiede.
+ * Credenziali della rete AP nel caso di rete internet assente.
+ * La pagina di manutenzione è accessibile dalla LAN di WIFI_SSID; 
+ * questo access point serve solo quando la STA non riesce a collegarsi a WIFI_SSID
+ * entro MAINT_STA_TIMEOUT_S (fuori range, credenziali errate)
+ * WPA2 richiede password di almeno 8 caratteri.
  */
 #define OTA_AP_SSID     "ePaper-OTA"
-#define OTA_AP_PASSWORD "epaper"
+#define OTA_AP_PASSWORD "epaperota"
 
 /**
  * Password della finestra di manutenzione (Basic Auth su /update, /config e

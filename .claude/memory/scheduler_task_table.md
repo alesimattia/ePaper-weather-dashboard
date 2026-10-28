@@ -10,13 +10,13 @@ type: project
 
 | # | task | radio | cadenza | perché lì |
 |---|---|---|---|---|
-| 0 | meteo | sì | `owm_min` | `datiIncompleti` = corrente senza previsioni ⇒ ritenta invece di chiudere lo slot |
-| 1 | mail | sì | `mail_min` | prima di Google: condividono la cache del token OAuth, chi gira per primo paga il refresh |
-| 2 | google | sì | `goog_min` | il token è quello appena rinfrescato da mail |
-| 3 | outlook | sì | `outl_min` | |
+| 0 | meteo | sì | `owm_min` | `pronto` = `weatherReady()`; `datiIncompleti` = corrente senza previsioni ⇒ ritenta invece di chiudere lo slot |
+| 1 | mail | sì | `mail_min` | `pronto` = `mailReady()`; prima di Google: condividono la cache del token OAuth, chi gira per primo paga il refresh |
+| 2 | google | sì | `goog_min` | `pronto` = `googleReady()` (orologio + credenziali); il token è quello appena rinfrescato da mail |
+| 3 | outlook | sì | `outl_min` | `pronto` = `outlookReady()` (orologio + credenziali) |
 | 4 | tuya | sì | `tuya_min` | `pronto` = credenziali + campione BSEC valido + orologio sincronizzato; `maxTentativi = 0`; `ignoraFascia = TUYA_IGNORE_ACTIVE_HOUR`; prima del cinema, così il suo handshake TLS è altra copertura del boot di render |
 | 5 | cinema | sì | GIORNALIERA `cine_h` | ultimo: è l'unico che può pagare il cold start, e il tempo degli altri è la copertura. Il suo `prima()` è il ping di sveglia |
-| 6 | bsec | no | custom, dal sensore | **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
+| 6 | bsec | no | custom, `Indoor::msUntilNextPoll()` | `pronto` = `Indoor::attivo` (senza sensore il task è sospeso); `dopo` = `dopoIndoor()`, che chiede il ridisegno solo dentro la fascia WiFi; **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
 | 7 | display | no | `disp_min` come **rate limit** | `pronto` = `Weather::sporco() && primoFrameConsentito()` |
 
 **Il giro ha due fasi**, e in ciascuna i `prima()` di *tutti* i task dovuti girano prima di *qualunque* `esegui()`. È questo che dà al ping del cinema la sua copertura: parte all'inizio, e render fa boot mentre l'ESP32 è occupato con gli altri fetch.
@@ -27,7 +27,11 @@ type: project
 
 **L'orologio non è dello scheduler, e non è di nessun ramo del `loop()`.** Sta in `Clock.h`, e lo fa partire chi constata di avere la rete: `wifiOn()` nella forma bloccante, la macchina a stati di `Maintenance` in quella non bloccante quando la STA sale. In modalità `ESTERNA` lo scheduler non chiama `wifiOn()`, quindi senza quel secondo aggancio nella finestra di manutenzione nessuno sincronizzerebbe: è il difetto che quella scelta ripara.
 
-**Chi dipende dall'ora assoluta lo dichiara con `pronto()`.** I due task calendario hanno `pronto = calendarioPronto`, cioè `Clock::valido()`: senza orologio le loro query filtrano da `1970-01-01` e, ordinando per data, riportano i **primi** eventi del calendario invece dei prossimi. Una risposta così è HTTP 200, quindi senza la precondizione lo scheduler la registrerebbe come successo e chiuderebbe lo slot per la cadenza piena. Con `pronto()` falso il task vale `MAI`: sospeso, slot intatto, nessuna radio accesa per lui, e dovuto da sé appena l'ora diventa vera. Non può andare in stallo perchè meteo e mail non hanno quella precondizione e continuano ad aprire la finestra radio, dove la sincronizzazione avviene.
+**Chi dipende dall'ora assoluta lo dichiara con `pronto()`.** I due task calendario hanno `pronto = calendarioPronto`, cioè `Clock::valido()`: senza orologio le loro query filtrano da `1970-01-01` e, ordinando per data, riportano i **primi** eventi del calendario invece dei prossimi. Una risposta così è HTTP 200, quindi senza la precondizione lo scheduler la registrerebbe come successo e chiuderebbe lo slot per la cadenza piena. Con `pronto()` falso il task vale `MAI`: sospeso, slot intatto, nessuna radio accesa per lui, e dovuto da sé appena l'ora diventa vera. Non può andare in stallo perchè meteo e mail non dipendono dall'orologio e continuano ad aprire la finestra radio, dove la sincronizzazione avviene; se anche loro sono sospesi per credenziali assenti, la sincronizzazione la fa la finestra di manutenzione al boot.
+
+**La scadenza custom precede ogni altra regola** di `msAllaScadenza()`, `maiEseguito` compreso, e un task locale gira solo con scadenza 0. Una scadenza custom deve quindi valere 0 quando il task va eseguito la prima volta: se dipendesse da un dato che solo l'esecuzione produce, il task non partirebbe mai. `test_scheduler.cpp` fissa la regola.
+
+**Credenziali.** Un produttore con i valori di `Env.h` lasciati al template è sospeso dal suo `pronto()`, che consulta `isConfigured()` del modulo (`Net::isCredentialSet()`: vuoto o prefisso `paste_`/`0000000`). Una chiave presente ma rifiutata invece fa fallire il task alla sua cadenza, come qualunque guasto; gli altri proseguono. Con tutti i produttori di rete sospesi l'orologio si sincronizza comunque nella finestra di manutenzione al boot.
 
 **Il ridisegno non è dello scheduler**: il flag vive in `Weather::detail::needsRefresh` (unico), e i task lo chiedono nel proprio `dopo(Esito)`. Il display ha un `dopo` vuoto apposta, altrimenti si auto-sporcherebbe a ogni giro.
 

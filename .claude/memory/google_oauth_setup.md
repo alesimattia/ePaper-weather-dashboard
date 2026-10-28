@@ -4,27 +4,27 @@ description: google_oauth_setup.py scrive le 3 macro GOOGLE_* in Env.h; requisit
 type: project
 ---
 
-`google_oauth_setup.py` (root del progetto) produce le credenziali Google che
+`tools/google_oauth_setup.py` produce le credenziali Google che
 `Env.h` richiede: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
 `GOOGLE_REFRESH_TOKEN`. Si lancia senza argomenti e **non stampa i valori**: apre
 il browser, riceve il callback su loopback e riscrive Env.h da sé.
 
 ```
-/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 google_oauth_setup.py
+/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 tools/google_oauth_setup.py
 ```
 
 **L'interprete è obbligatorio**: il `python3` di default (Homebrew) non ha
 tkinter/Pillow/numpy né le dipendenze installate. `google-auth-oauthlib` è
-installato nel framework 3.13. Stesso interprete di `epd_image_converter.pyw`.
+installato nel framework 3.13. Stesso interprete di `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`.
 
 ## Contratto dello script
 
-Tutto è relativo a `SCRIPT_DIR = Path(__file__).resolve().parent`, quindi copiato
-altrove agisce sul progetto che lo ospita. Si adatta toccando solo tre costanti in
+Tutto è relativo a `PROJECT_DIR`, la cartella superiore a `tools/` (`Env.h` e il
+`client_secret_*.json` stanno nella root), quindi va lanciato da qualunque cwd. Si adatta toccando solo tre costanti in
 testa: `ENV_FILENAME`, `SCOPES`, `MACRO`.
 
 - credenziale da due provenienze, stesso percorso di codice (`from_client_config`):
-  il `client_secret_*.json` della cartella se c'è, **altrimenti `GOOGLE_CLIENT_ID`
+  il `client_secret_*.json` della root se c'è, **altrimenti `GOOGLE_CLIENT_ID`
   e `GOOGLE_CLIENT_SECRET` già scritti nell'header** — dopo la prima
   configurazione il JSON è quindi superfluo e il token resta rigenerabile. Con
   due JSON si ferma (sceglierne uno userebbe il progetto sbagliato); senza JSON e
@@ -37,7 +37,7 @@ testa: `ENV_FILENAME`, `SCOPES`, `MACRO`.
   appendere righe;
 - scrittura **atomica**: tempfile nella stessa dir + `os.replace`, così
   un'interruzione non lascia un Env.h troncato (che bloccherebbe la build);
-- `client_secret_*` è in `.gitignore` (Env.h ci era già).
+- il JSON resta nella root perchè lì lo copre il `/*.json` del `.gitignore`, come `Env.h`.
 
 `prompt="consent"` e `access_type="offline"` sono entrambi obbligatori: senza, a un
 consenso già dato Google restituisce solo l'access token e il refresh resta vuoto.
@@ -107,7 +107,7 @@ dipende solo dallo stato *Testing*.
 
 ## Gemello per Outlook
 
-`msgraph_oauth_setup.py` fa lo stesso per `MSGRAPH_CLIENT_ID` /
+`tools/msgraph_oauth_setup.py` fa lo stesso per `MSGRAPH_CLIENT_ID` /
 `MSGRAPH_REFRESH_TOKEN` con **device code flow** e **sola stdlib** (nessun MSAL):
 l'app Azure è un client pubblico senza secret, quindi non serve né un JSON da
 scaricare né un redirect su loopback. `TENANT` e `SCOPE` in testa allo script

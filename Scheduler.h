@@ -39,13 +39,11 @@ namespace Scheduler
    * Esito di un task nel giro corrente.
    *
    *   OK            eseguito, con dati nuovi da mostrare.
-   *   OK_INVARIATO  eseguito, ma i dati sono identici a quelli in cache:
-   *                 nessun motivo di pagare un refresh del pannello.
    *   FALLITO       guasto imputabile al task: consuma un tentativo.
    *   SALTATO       niente da fare, o guasto a monte (radio giu'): lo stato
    *                 resta intatto e il tentativo non viene speso.
    */
-  enum class Esito : uint8_t { OK, OK_INVARIATO, FALLITO, SALTATO };
+  enum class Esito : uint8_t { OK, FALLITO, SALTATO };
 
   /** Come si apre lo slot di un task. */
   enum class Cadenza : uint8_t
@@ -105,7 +103,6 @@ namespace Scheduler
     {
       bool     maiEseguito        = true;   // esplicito: nessuna sentinella su ultimoMs
       uint32_t ultimoMs           = 0;      // istante dell'ultimo slot consumato
-      uint32_t ultimoOkMs         = 0;
       bool     inRitento          = false;
       uint32_t prossimoTentativoMs = 0;
       uint8_t  tentativi          = 0;      // falliti consecutivi dentro lo slot corrente
@@ -128,7 +125,7 @@ namespace Scheduler
     inline bool     esitoReteVisto   = false;
     inline uint32_t giri             = 0;
 
-    /** Confronto rollover-safe, come Weather::detail::elapsed. */
+    /** Confronto rollover-safe sulla differenza signed di millis(). */
     inline bool trascorso(uint32_t ora, uint32_t rif, uint32_t soglia)
     {
       return (int32_t)(ora - rif) >= (int32_t)soglia;
@@ -287,7 +284,7 @@ namespace Scheduler
     const bool incompleto = (e != Esito::FALLITO) && t.datiIncompleti && t.datiIncompleti();
     const bool fallitoAiFini = (e == Esito::FALLITO) || incompleto;
 
-    if (e == Esito::OK) { t.stato.ok++; t.stato.ultimoOkMs = ora; }
+    if (e == Esito::OK) t.stato.ok++;
     if (e == Esito::FALLITO) t.stato.falliti++;
 
     // Il ridisegno non e' affare dello scheduler: chi porta dati nuovi lo
@@ -315,8 +312,7 @@ namespace Scheduler
           sogliaRaggiunta ? ", soglia raggiunta" : "",
           detail::descriviScadenza(t, ora, oggi));
     else
-      LOG("sched", "%s: %s in %lu ms, prossimo %s", t.tag,
-          e == Esito::OK_INVARIATO ? "ok (dati invariati)" : "ok",
+      LOG("sched", "%s: ok in %lu ms, prossimo %s", t.tag,
           (unsigned long)durataMs, detail::descriviScadenza(t, ora, oggi));
   }
 
@@ -412,6 +408,11 @@ namespace Scheduler
     // nostro.
     eseguiFase(false, 0, oggi);
   }
+
+  /** Vero se nell'ultimo giro almeno un task ha prodotto un esito: il .ino lo
+   *  usa per scrivere la diagnostica di memoria solo nei giri che hanno fatto
+   *  qualcosa. */
+  inline bool ranTasksThisRound() { return detail::eseguitoNelGiro; }
 
   /** Vero quando il primo frame puo' essere disegnato: o la rete ha dato un
    *  esito qualsiasi, o e' passato troppo tempo dal boot per aspettarla. */

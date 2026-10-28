@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <esp_sleep.h>
 #include <esp_heap_caps.h>
+#include <driver/gpio.h>
 
 /**
  * Necessario per Adafruit_GFX per disegnare testo e linee
@@ -130,6 +131,7 @@
 #include "Env.h"
 #include "Log.h"
 #include "Clock.h"
+#include "Net.h"
 #include "Scheduler.h"
 
 SPIClass hspi(HSPI);
@@ -209,6 +211,36 @@ static_assert(!Layout::Panel::hasFastPartialUpdate,
  *     scrittura, ricarica della waveform dall'OTP a ogni refresh pieno, e
  *     ripulitura della RAM al risveglio da hibernate().
  */
+/**
+ * Attesa del BUSY del pannello in light sleep invece che a CPU accesa: un
+ * refresh pieno dura ~24 s, ed è la voce più costosa del ciclo dopo la radio.
+ * GxEPD2 la chiama in _waitWhileBusy() finchè il BUSY resta attivo e ricontrolla
+ * il pin dopo ogni chiamata; il suo timeout resta valido perchè micros() avanza
+ * anche durante il light sleep.
+ *
+ * Il risveglio è il BUSY che torna basso, con un timer di sicurezza. A radio
+ * accesa, cioè nella finestra di manutenzione, resta l'attesa attiva: il light
+ * sleep staccherebbe access point e web server.
+ */
+static void waitBusyAsleep(const void*)
+{
+	if (WiFi.getMode() != WIFI_OFF || Layout::BUSY_WAKE_PIN < 0)
+	{
+		delay(1);
+		return;
+	}
+	const gpio_num_t busyPin = (gpio_num_t)Layout::BUSY_WAKE_PIN;
+	gpio_wakeup_enable(busyPin, GPIO_INTR_LOW_LEVEL);
+	esp_sleep_enable_gpio_wakeup();
+	esp_sleep_enable_timer_wakeup((uint64_t)DISPLAY_BUSY_SLEEP_SLICE_MS * 1000ULL);
+	Serial.flush();
+	esp_light_sleep_start();
+	// La sorgente GPIO va tolta: lasciata attiva, con il BUSY basso
+	// risveglierebbe subito ogni light sleep dello scheduler.
+	esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+	gpio_wakeup_disable(busyPin);
+}
+
 void initDisplay()
 {
 	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS (HSPI bus, board-specific)
@@ -218,6 +250,7 @@ void initDisplay()
 	 */
 	display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
 	display.init(115200, true, 2, false);
+	display.epd2.setBusyCallback(waitBusyAsleep);
 	display.setRotation(Layout::ROTATION);
 	display.setFullWindow();
 }
@@ -350,12 +383,15 @@ static void freeCinemaBuffers()
  *
  * Su TLS il fire-and-forget puro non esiste: la richiesta arriva al router di
  * render solo a handshake completo, quindi la connessione va portata su per
- * intero. Il timeout dell'handshake resta quello di default di HTTPClient e
- * NON va accorciato, altrimenti su rete lenta la richiesta non parte nemmeno.
+ * intero. L'handshake ha il tetto comune TLS_HANDSHAKE_TIMEOUT_S, ampio per un
+ * edge che risponde anche a istanza ferma, e indispensabile qui: il ping gira
+ * prima di tutti gli altri fetch, e un handshake bloccato col default del core
+ * (120 s) li fermerebbe tutti.
  * Quello che si abbandona e' la RISPOSTA: con setTimeout() breve la GET
  * ritorna appena scaduta l'attesa degli header, end() chiude il socket e
- * l'istanza prosegue il boot per conto suo. Il chiamante intanto fa meteo,
- * mail e calendari, che e' il tempo di copertura vero di questo meccanismo.
+ * l'istanza prosegue il boot per conto suo. HTTP/1.0 chiude la connessione
+ * senza keep-alive. Il chiamante intanto fa meteo, mail e calendari, che e' il
+ * tempo di copertura vero di questo meccanismo.
  *
  * Nessun valore di ritorno: l'esito non cambia niente nel resto del giro. Il
  * codice HTTP viene solo loggato ed e' l'unica diagnostica disponibile:
@@ -370,14 +406,9 @@ static void freeCinemaBuffers()
 static void prewarmCinemaServer()
 {
 	WiFiClientSecure client;
-	client.setInsecure();
-
 	HTTPClient http;
 	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
-	// Nessun keep-alive: end() deve chiudere il socket subito invece di
-	// tenerlo aperto per un riuso che non arrivera' mai.
-	http.setReuse(false);
-	if (!http.begin(client, CINEMA_PREWARM_URL))
+	if (!Net::beginHttps(http, client, CINEMA_PREWARM_URL))
 	{
 		LOG("cinema", "pre-warm: http.begin fallita");
 		return;
@@ -438,12 +469,17 @@ static bool fetchCinemaImage()
 		}
 	}
 
+	// Client esplicito, dichiarato prima di HTTPClient perchè il distruttore di
+	// http lo usa: con begin(url) il core ne creerebbe uno interno, senza modo
+	// di limitarne l'handshake. Il server risponde con Content-Length anche in
+	// HTTP/1.0, quindi il controllo sulla dimensione resta valido.
+	WiFiClientSecure client;
 	HTTPClient http;
 	// 45s: margine per il cold start del free tier render.com (una ventina di
 	// secondi) quando il ping di prewarmCinemaServer() non e' bastato a
 	// completare il boot dell'istanza prima di arrivare qui.
 	http.setTimeout(CINEMA_HTTP_TIMEOUT_MS);
-	if (!http.begin(Layout::CINEMA_URL))
+	if (!Net::beginHttps(http, client, Layout::CINEMA_URL))
 	{
 		LOG("cinema", "HTTP begin fallita");
 		freeCinemaBuffers();
@@ -544,6 +580,16 @@ static Scheduler::Esito eseguiOutlook()
  */
 static bool calendarioPronto() { return Clock::valido(); }
 
+/**
+ * Precondizioni sulle credenziali di Env.h: un produttore con i valori del
+ * template resta sospeso invece di spendere un handshake per un rifiuto certo
+ * a ogni slot, e non accende la radio per sè. Gli altri proseguono come sempre.
+ */
+static bool weatherReady() { return Weather::isConfigured(); }
+static bool mailReady() { return Mail::isConfigured(); }
+static bool googleReady() { return calendarioPronto() && Calendar::Google::isConfigured(); }
+static bool outlookReady() { return calendarioPronto() && Calendar::Outlook::isConfigured(); }
+
 static Scheduler::Esito eseguiCinema()
 {
 	return fetchCinemaImage() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
@@ -575,22 +621,26 @@ static void dopoTuya(Scheduler::Esito)
 	Weather::markDirty();
 }
 
-/** Poll del sensore: BSEC temporizza da se' i 5 minuti, quindi la chiamata e'
- *  a costo trascurabile quando nessun campione e' dovuto. */
+/** Interrogazione del sensore: OK quando il dato da mostrare è cambiato, cioè
+ *  per un campione nuovo o per uno appena scaduto. */
 static Scheduler::Esito eseguiIndoor()
 {
 	return Indoor::refresh() ? Scheduler::Esito::OK : Scheduler::Esito::SALTATO;
 }
 
-/** Scadenza del prossimo campione ULP, l'unica informazione disponibile:
- *  next_call della libreria non e' leggibile dall'esterno. */
-static uint32_t scadenzaIndoor()
+/** Scadenza custom del task del sensore. La scadenza custom precede ogni altra
+ *  regola dello scheduler, mai eseguito compreso, quindi deve valere 0 al boot:
+ *  è Indoor a garantirlo. */
+static uint32_t scadenzaIndoor() { return Indoor::msUntilNextPoll(); }
+
+/**
+ * Il dato del sensore chiede il ridisegno solo dentro la fascia WiFi: di notte
+ * un refresh pieno ogni 5 minuti non servirebbe a nessuno. Il campione viene
+ * comunque acquisito, e il primo ridisegno del mattino mostra il più recente.
+ */
+static void dopoIndoor(Scheduler::Esito e)
 {
-	const Indoor::Sample& s = Indoor::sample();
-	if (!s.valid) return (uint32_t)SLEEP_MAX_S * 1000UL;
-	const uint32_t quando = s.lastUpdateMs + (uint32_t)BSEC_PERIODO_ULP_S * 1000UL + BSEC_MARGINE_POLL_MS;
-	const int32_t d = (int32_t)(quando - millis());
-	return d <= 0 ? 0 : (uint32_t)d;
+	if (e == Scheduler::Esito::OK && Scheduler::inFascia()) Weather::markDirty();
 }
 
 /** Chiede il ridisegno quando il task ha portato dati nuovi. */
@@ -632,7 +682,7 @@ static void dopoDisplay(Scheduler::Esito) {}
  *   - il sensore precede il display cosi' un campione appena prodotto entra
  *     nel frame dello stesso giro.
  *
- * Tuya e' l'unico task con maxTentativi a 0, cioe' un tentativo per slot
+ * Tuya e' l'unico task di rete con maxTentativi a 0, cioe' un tentativo per slot
  * comunque vada: i suoi modi di fallimento sono permanenti sulla scala dei
  * minuti (credenziali, region, device model) e ogni ritento costerebbe un
  * altro handshake TLS senza cambiare l'esito. Ed e' l'unico con ignoraFascia
@@ -642,22 +692,22 @@ static Scheduler::Task TABELLA_TASK[] = {
 	{"meteo", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::owmMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiMeteo, nullptr, meteoIncompleto, nullptr, marcaSuOk, nullptr},
+	 eseguiMeteo, weatherReady, meteoIncompleto, nullptr, marcaSuOk, nullptr},
 
 	{"mail", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::mailMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiMail, nullptr, nullptr, nullptr, marcaSuOk, nullptr},
+	 eseguiMail, mailReady, nullptr, nullptr, marcaSuOk, nullptr},
 
 	{"google", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::googleMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiGoogle, calendarioPronto, nullptr, nullptr, marcaSuOk, nullptr},
+	 eseguiGoogle, googleReady, nullptr, nullptr, marcaSuOk, nullptr},
 
 	{"outlook", Scheduler::Cadenza::PERIODICA, true, false,
 	 &Timings::Valori::outlookMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiOutlook, calendarioPronto, nullptr, nullptr, marcaSuOk, nullptr},
+	 eseguiOutlook, outlookReady, nullptr, nullptr, marcaSuOk, nullptr},
 
 	{"tuya", Scheduler::Cadenza::PERIODICA, true, TUYA_IGNORE_ACTIVE_HOUR,
 	 &Timings::Valori::tuyaMin, nullptr,
@@ -672,7 +722,7 @@ static Scheduler::Task TABELLA_TASK[] = {
 	{"bsec", Scheduler::Cadenza::PERIODICA, false, false,
 	 &Timings::Valori::displayRefreshMin, nullptr,
 	 FETCH_RITENTO_MS, 0,
-	 eseguiIndoor, nullptr, nullptr, nullptr, marcaSuOk, scadenzaIndoor},
+	 eseguiIndoor, Indoor::attivo, nullptr, nullptr, dopoIndoor, scadenzaIndoor},
 
 	{"display", Scheduler::Cadenza::PERIODICA, false, false,
 	 &Timings::Valori::displayRefreshMin, nullptr,
@@ -709,28 +759,71 @@ void drawTestBackground()
 	GxEPDImage::showImage(display, *g_cinema_desc);
 }
 
+/** Canale e BSSID dell'ultima connessione riuscita. Stanno in RAM, che il
+ *  light sleep conserva; un riavvio li azzera e la prima connessione scandisce. */
+static bool g_wifi_ap_known = false;
+static int32_t g_wifi_channel = 0;
+static uint8_t g_wifi_bssid[6] = {};
+
+/** Attende WL_CONNECTED fino a deadlineMs, con il passo di polling comune. */
+static bool waitWifiConnected(uint32_t t0, uint32_t deadlineMs)
+{
+	while (WiFi.status() != WL_CONNECTED && (millis() - t0) < deadlineMs)
+	{
+		delay(WIFI_ATTESA_POLL_MS);
+	}
+	return WiFi.status() == WL_CONNECTED;
+}
+
 /**
  * Accende il WiFi in modalita' STA e attende la connessione fino a
  * WIFI_CONNECT_TIMEOUT_MS.
  * La radio resta accesa solo per la finestra di fetch: viene spenta
  * da wifiOff() subito dopo.
  *
- * A connessione riuscita sincronizza anche l'orologio con Clock::sincronizza(),
- * che al primo boot puo' aggiungere fino a TIME_SYNC_TIMEOUT_MS di attesa.
+ * Dal secondo giro prova prima sul canale e sul BSSID dell'ultima connessione,
+ * che saltano la scansione dei canali: senza, il core li prova a partire dal
+ * primo finchè trova la rete. Se il router ha cambiato canale il tentativo
+ * veloce scade dopo WIFI_FAST_CONNECT_TIMEOUT_MS e si ripiega sulla connessione
+ * normale nel tempo che resta.
+ *
+ * A connessione riuscita sincronizza l'orologio con Clock::sincronizza(), che al
+ * primo boot puo' aggiungere fino a TIME_SYNC_TIMEOUT_MS di attesa, e poi lo
+ * risincronizza ogni ora con Clock::resyncIfStale(), che non blocca.
  * @return true se connesso entro il timeout.
  */
 static bool wifiOn()
 {
 	WiFi.mode(WIFI_STA);
-	WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-	uint32_t t0 = millis();
-	while (WiFi.status() != WL_CONNECTED && (millis() - t0) < WIFI_CONNECT_TIMEOUT_MS)
+	const uint32_t t0 = millis();
+	bool connected = false;
+	if (g_wifi_ap_known)
 	{
-		delay(WIFI_ATTESA_POLL_MS);
+		WiFi.begin(WIFI_SSID, WIFI_PASSWORD, g_wifi_channel, g_wifi_bssid);
+		connected = waitWifiConnected(t0, WIFI_FAST_CONNECT_TIMEOUT_MS);
+		if (!connected)
+		{
+			LOG("WiFi", "connessione veloce sul canale %ld fallita: scansione completa", (long)g_wifi_channel);
+			g_wifi_ap_known = false;
+			WiFi.disconnect(false, false);
+		}
 	}
-	if (WiFi.status() == WL_CONNECTED)
+	if (!connected)
 	{
-		LOG("WiFi", "connected, IP=%s", WiFi.localIP().toString().c_str());
+		WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+		connected = waitWifiConnected(t0, WIFI_CONNECT_TIMEOUT_MS);
+	}
+	if (connected)
+	{
+		g_wifi_channel = WiFi.channel();
+		const uint8_t* bssid = WiFi.BSSID();
+		if (bssid != nullptr)
+		{
+			memcpy(g_wifi_bssid, bssid, sizeof(g_wifi_bssid));
+			g_wifi_ap_known = true;
+		}
+		LOG("WiFi", "connected in %lu ms, canale %ld, IP=%s",
+			(unsigned long)(millis() - t0), (long)g_wifi_channel, WiFi.localIP().toString().c_str());
 		/**
 		 * Orologio sincronizzato nello stesso punto in cui la radio diventa
 		 * disponibile: tutti i fetch del ramo normale stanno dentro questo
@@ -739,6 +832,7 @@ static bool wifiOn()
 		 * non si puo', ci pensa Maintenance con la forma non bloccante.
 		 */
 		Clock::sincronizza();
+		Clock::resyncIfStale();
 		return true;
 	}
 	LOG("WiFi", "connection timeout");
@@ -750,11 +844,11 @@ static bool wifiOn()
  * consumo fra un fetch e l'altro: ~120 mA attivo vs ~30 mA a radio spenta.
  *
  * disconnect(true, false) [wifioff=true, eraseap=false]: spegne la radio ma
- * NON cancella SSID/BSSID/channel salvati. Il prossimo wifiOn() puo' usare
- * la cache per riconnettersi al BSSID noto saltando lo scan completo
- * (potenziale risparmio 0-1500 ms su WiFi.begin()). Le credenziali in NVS
- * non vanno comunque cancellate: ad ogni begin() vengono ripassate dai
- * #define di Env.h.
+ * non cancella la configurazione salvata. Da sola quella configurazione non
+ * evita la scansione, perchè WiFi.begin(ssid, pass) senza canale fa scandire
+ * i canali al core: il salto della scansione lo fa wifiOn() con canale e BSSID
+ * memorizzati. Le credenziali in NVS non vanno comunque cancellate: ad ogni
+ * begin() vengono ripassate dai #define di Env.h.
  */
 static void wifiOff()
 {
@@ -812,11 +906,8 @@ void setup()
  * Niente light sleep qui, altrimenti il WebServer non risponderebbe.
  *
  * Scaduta la finestra, Maintenance::chiudi() spegne AP e WiFi e il ciclo torna al
- * comportamento energetico originale: STA acceso solo poco prima del fetch
- * e spento subito dopo, con light sleep DISPLAY_REFRESH_MIN minuti fra un
- * giro e l'altro (tempo minimo fra un refresh del display e il successivo).
- *
- * @modified 21/04/26 light sleep 60 s -> 5 min + Indoor::refresh() agganciato
+ * comportamento energetico ordinario: STA acceso solo per i fetch dovuti e
+ * spento subito dopo, con light sleep fino al prossimo evento dello scheduler.
  */
 void loop()
 {
@@ -828,8 +919,12 @@ void loop()
 		 * dovuti quando la STA e' su, senza accenderla ne' spegnerla (wifiOff()
 		 * butterebbe giu' anche l'AP). Nessun light sleep finche' la finestra
 		 * e' aperta, altrimenti il web server non risponderebbe.
+		 *
+		 * Mentre qualcuno usa le pagine lo scheduler aspetta: un fetch o un
+		 * refresh lascerebbero il web server muto per decine di secondi.
 		 */
-		Scheduler::giro(Scheduler::Radio::ESTERNA);
+		if (!Maintenance::clientAttivo())
+			Scheduler::giro(Scheduler::Radio::ESTERNA);
 		delay(MAINTENANCE_LOOP_DELAY_MS);
 		return;
 	}
@@ -856,6 +951,13 @@ void loop()
 	 * il pannello verrebbe addormentato e risvegliato in continuazione.
 	 */
 	display.hibernate();
+
+	// Margini di memoria misurati, nei soli giri che hanno lavorato: sono la
+	// verifica sul campo delle stime sul picco di heap e sullo stack del loop.
+	if (Scheduler::ranTasksThisRound())
+		LOGV("mem", "heap min %lu, blocco max %lu, stack loop residuo %lu",
+			 (unsigned long)ESP.getMinFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(),
+			 (unsigned long)uxTaskGetStackHighWaterMark(nullptr));
 
 	Scheduler::dormi();
 }

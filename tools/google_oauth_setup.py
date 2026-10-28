@@ -7,10 +7,10 @@ emette una volta sola da questa macchina e poi vive nell'header, che il
 dispositivo compila dentro il proprio firmware.
 
 Uso:
-    python3 google_oauth_setup.py
+    python3 tools/google_oauth_setup.py
 
-Nessun argomento e nessun percorso assoluto: lo script lavora sulla cartella in
-cui e' posizionato. Li' cerca un client_secret_*.json (come viene scaricato dalla
+Nessun argomento e nessun percorso assoluto: lo script sta in tools/ e lavora
+sulla cartella superiore, la root del progetto. Lì cerca un client_secret_*.json (come viene scaricato dalla
 pagina Credenziali di Google Cloud Console, tipo "Applicazione desktop"); se non
 c'e', riusa client id e secret gia' presenti nell'header, cosi' dopo la prima
 configurazione il JSON non e' piu' necessario. Apre il browser per
@@ -30,11 +30,12 @@ import tempfile
 from pathlib import Path
 
 # --- Configurazione -------------------------------------------------------
-# Tutto e' relativo alla cartella dello script, cosi' spostarlo altrove lo fa
-# lavorare sul progetto che lo ospita senza modifiche.
+# Tutto è relativo alla root del progetto, la cartella superiore a tools/, così
+# il comportamento non dipende dalla cartella da cui si lancia lo script.
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
 
-# Header di configurazione da aggiornare, cercato accanto allo script.
+# Header di configurazione da aggiornare, cercato nella root del progetto.
 ENV_FILENAME = "Env.h"
 
 # Scope da autorizzare. Vanno chiesti tutti insieme: un refresh token vale solo
@@ -64,8 +65,8 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 def percorso_header():
-    """Header di configurazione accanto allo script."""
-    percorso = SCRIPT_DIR / ENV_FILENAME
+    """Header di configurazione nella root del progetto."""
+    percorso = PROJECT_DIR / ENV_FILENAME
     if not percorso.exists():
         sys.exit(f"{percorso} non esiste: crealo (di solito copiando il "
                  f"template accanto) e rilancia.")
@@ -73,14 +74,14 @@ def percorso_header():
 
 
 def trova_client_secret():
-    """Ritorna il client_secret_*.json della cartella dello script, o None se
-    non c'e' (in quel caso la credenziale si legge dall'header). Con piu' di un
-    file si ferma: sceglierne uno significherebbe usare il progetto Google
-    sbagliato."""
-    trovati = sorted(SCRIPT_DIR.glob("client_secret_*.json"))
+    """Ritorna il client_secret_*.json della root del progetto, dove lo copre il
+    /*.json del .gitignore, o None se non c'è (in quel caso la credenziale si
+    legge dall'header). Con più di un file si ferma: sceglierne uno
+    significherebbe usare il progetto Google sbagliato."""
+    trovati = sorted(PROJECT_DIR.glob("client_secret_*.json"))
     if len(trovati) > 1:
         elenco = "\n  ".join(p.name for p in trovati)
-        sys.exit(f"Piu' di un client_secret_*.json in {SCRIPT_DIR}:\n  {elenco}\n"
+        sys.exit(f"Più di un client_secret_*.json in {PROJECT_DIR}:\n  {elenco}\n"
                  "Tieni solo quello del progetto da usare.")
     return trovati[0] if trovati else None
 
@@ -128,11 +129,11 @@ def credenziale(percorso_json, testo_header):
     client_secret = leggi_macro(testo_header, macro_secret)
     if not client_id or not client_secret:
         sys.exit(
-            f"Nessun client_secret_*.json in {SCRIPT_DIR} e {ENV_FILENAME} non ha\n"
+            f"Nessun client_secret_*.json in {PROJECT_DIR} e {ENV_FILENAME} non ha\n"
             f"ancora {macro_id} / {macro_secret} valorizzati.\n"
             "Scarica il JSON da Google Cloud Console -> API e servizi -> Credenziali,\n"
             "riga dell'ID client OAuth di tipo 'Applicazione desktop' (icona di\n"
-            "download), e lascialo in questa cartella senza rinominarlo."
+            f"download), e lascialo in {PROJECT_DIR} senza rinominarlo."
         )
     print(f"Nessun JSON in cartella: riuso la credenziale gia' in {ENV_FILENAME}.")
     return client_id, client_secret
@@ -168,7 +169,7 @@ def aggiorna_header(percorso, valori):
         sys.exit(f"Queste macro non sono state trovate in {percorso.name}: "
                  + ", ".join(mancanti) + "\nAggiungile e rilancia.")
 
-    fd, tmp = tempfile.mkstemp(dir=str(SCRIPT_DIR), prefix=f".{ENV_FILENAME}.")
+    fd, tmp = tempfile.mkstemp(dir=str(percorso.parent), prefix=f".{ENV_FILENAME}.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(testo)

@@ -19,8 +19,11 @@ Il modulo non possiede nessun tempo: è una riga della tabella dei task del
 `.ino` (vedi [[scheduler_task_table]]), con gli adattatori `eseguiTuya`,
 `tuyaPronto` e `dopoTuya`. Quattro conseguenze da tenere a mente:
 
-- `readyToPublish()` è l'hook `pronto()`: credenziali presenti, campione BSEC
-  valido **e orologio sincronizzato**. Falso sospende il task e lo esclude dal
+- `readyToPublish()` è l'hook `pronto()`: credenziali presenti (riconosciute
+  con `Net::isCredentialSet()`, lo stesso criterio degli altri produttori),
+  campione BSEC valido **e orologio sincronizzato**. Il campione scade al
+  secondo campione perso (vedi [[bsec_modi_campionamento]]), quindi con il
+  sensore guasto Tuya si sospende invece di ripubblicare un valore vecchio. Falso sospende il task e lo esclude dal
   calcolo del prossimo risveglio, e soprattutto **non consuma lo slot**: con un
   solo tentativo per cadenza, uno slot speso senza poter pubblicare sarebbe
   perso fino alla cadenza piena. La condizione sull'orologio conta al boot,
@@ -107,7 +110,9 @@ compaiono nell'app.
 Il `report_response` **non arriva di default**: richiede `"sys":{"ack":1}` nel
 messaggio, forma che non compare nelle pagine di documentazione consultabili ed
 è stata presa dall'SDK. Il modulo la implementa sotto `TUYA_REQUEST_ACK`
-(default 0): a 1 aggiunge il campo, sottoscrive il topic di risposta attendendo
+(default 0 in `Tuya.h`; il `.ino` lo alza a 1 per il bring-up e va riabbassato
+quando la telemetria è confermata, perchè costa fino a 4 s di radio a publish):
+a 1 aggiunge il campo, sottoscrive il topic di risposta attendendo
 il SUBACK prima di pubblicare, e logga il `code` (0 = accettato) o il corpo
 intero in caso di rifiuto. Costa ~1148 byte di flash, 120 di RAM e fino a
 `TUYA_ACK_TIMEOUT_MS` per publish.

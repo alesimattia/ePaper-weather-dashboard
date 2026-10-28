@@ -61,6 +61,11 @@ namespace Layout
   inline constexpr int PIN_RST  = 26;
   inline constexpr int PIN_BUSY = 25;
 
+  /** BUSY che risveglia l'MCU dal light sleep durante l'attesa del refresh,
+   *  vedi waitBusyAsleep() nel .ino. Simbolo comune ai due layout perchè i
+   *  nomi dei pin, qui e nel 122c, non lo sono. */
+  inline constexpr int BUSY_WAKE_PIN = PIN_BUSY;
+
   /**
    * Altezza della page del template GxEPD2_3C. Sta qui e non nel .ino perchè
    * dipende dal pannello: è il compromesso fra RAM occupata dai due buffer
@@ -201,6 +206,11 @@ namespace Layout
   inline constexpr int16_t BLOCK_FC0_X = FORECAST_RR_X;
   inline constexpr int16_t BLOCK_FC1_X = BLOCK_FC0_X + BLOCK_FC_W;
   inline constexpr int16_t BLOCK_FC2_X = BLOCK_FC1_X + BLOCK_FC_W;
+
+  /** Margine laterale della description di un blocco meteo dal bordo del suo
+   *  riquadro o del blocco accanto: oltre, il testo passa a FONT_SMALL e poi
+   *  viene troncato. */
+  inline constexpr int16_t DESC_SIDE_PAD = 4;
 
   /** Baseline dei testi dentro un blocco meteo (current / forecast). */
   inline constexpr int16_t ICON_Y        = BANNER_Y + 6;     // top icona
