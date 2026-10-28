@@ -615,6 +615,16 @@ warm-up di 5-30 min dopo un power cycle.
 l'indirizzo è errato `begin()` logga `[BME680] init failed` e il modulo si comporta
 come un no-op: meteo, calendario e display continuano a girare.
 
+Con `I2C_DEBUG` a 1 (default in [`Indoor.h`](Indoor.h), da riportare a 0 a
+regime) `begin()` diagnostica il bus prima di avviare BSEC: sonda 0x77 e 0x76
+(gli unici indirizzi del BME68x), controlla il chip ID e misura il clock massimo
+a cui il blocco di calibrazione si rilegge identico, salendo da 100 kHz a 1 MHz.
+Le righe `[BME680] i2c: ...` dicono se manca il dispositivo (cablaggio,
+alimentazione, CS e SDO della breakout), se il bus va in timeout (pull-up), se il
+chip non è un BME680, e quali valori dare a `BME680_I2C_ADDR` e
+`BME680_I2C_CLOCK_HZ`. Costa circa 100 ms al boot e, senza sensore, il firmware
+prosegue come sopra.
+
 ### Tuya (`Tuya.h`)
 
 Pubblica le cinque grandezze di `Indoor::sample()` sul cloud Tuya con

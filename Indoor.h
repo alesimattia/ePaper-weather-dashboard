@@ -24,11 +24,26 @@
 #define BME680_SDA_PIN    21
 #define BME680_SCL_PIN    22
 
-/** Clock dell'I2C in fast mode: il BME680 regge fino a 3,4 MHz e il
- *  controller I2C dell'ESP32 fino a 1 MHz, quindi 400 kHz sta dentro entrambi
- *  e porta la lettura di un campione da circa 3 ms a meno di 1 ms. Richiede
- *  fili corti e le pull-up della breakout; con un bus lungo si torna a 100000. */
+/** Clock dell'I2C. Il limite reale non è quello dei datasheet ma quello del
+ *  cablaggio (pull-up e capacità dei fili): il valore va preso dal clock
+ *  massimo affidabile che I2C_DEBUG misura sul bus, uno scalino sotto se il
+ *  margine è stretto. A 400 kHz la lettura di un campione scende da circa 3 ms
+ *  a meno di 1 ms. Wire non accetta valori oltre 1 MHz. */
 #define BME680_I2C_CLOCK_HZ 400000UL
+
+/**
+ * Diagnosi del bus I2C al boot, da accendere durante il bring-up del sensore.
+ * A 1 begin() sonda i due soli indirizzi possibili del BME68x (quello
+ * configurato e l'altro), verifica il chip ID e misura il clock massimo a cui
+ * il blocco di calibrazione si rilegge identico, poi avvia BSEC su indirizzo e
+ * clock trovati, loggando quali costanti correggere. Costa ~100 ms una volta
+ * sola; se il sensore non c'è il modulo resta un no-op come senza flag.
+ * A 0 begin() usa BME680_I2C_ADDR e BME680_I2C_CLOCK_HZ così come sono: va
+ * riportato a 0 dopo aver fissato le due costanti.
+ */
+#ifndef I2C_DEBUG
+#define I2C_DEBUG 1
+#endif
 
 namespace Indoor
 {
@@ -249,12 +264,140 @@ namespace Indoor
       else
         LOG("BME680", "setState failed: %d", bsec.status);
     }
+
+#if I2C_DEBUG
+    /** Letture ripetute per ogni clock dello sweep di findMaxClock(). */
+    inline constexpr uint8_t I2C_SWEEP_READS = 16;
+
+    /**
+     * Legge n registri consecutivi con la stessa forma di transazione di
+     * bme68xI2cRead() (puntatore con STOP, poi requestFrom), così la misura
+     * esercita il traffico che BSEC userà. Al clock corrente di Wire.
+     */
+    inline bool readRegs(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t n)
+    {
+      Wire.beginTransmission(addr);
+      Wire.write(reg);
+      if (Wire.endTransmission() != 0) return false;
+      if (Wire.requestFrom(addr, n) != n) return false;
+      for (uint8_t i = 0; i < n; i++) buf[i] = (uint8_t)Wire.read();
+      return true;
+    }
+
+    /**
+     * Clock massimo a cui il blocco di calibrazione (NVM costante, bit misti)
+     * si rilegge identico al riferimento preso a 100 kHz. Sale per scalini e
+     * si ferma al primo errore o differenza, quindi paga al più un timeout.
+     * @return la frequenza in Hz, 0 se il bus è instabile già a 100 kHz.
+     */
+    inline uint32_t findMaxClock(uint8_t addr)
+    {
+      static constexpr uint32_t SCALINI[] = {100000UL, 200000UL, 400000UL,
+                                             600000UL, 800000UL, 1000000UL};
+      uint8_t ref[BME68X_LEN_COEFF1], buf[BME68X_LEN_COEFF1];
+
+      Wire.setClock(SCALINI[0]);
+      if (!readRegs(addr, BME68X_REG_COEFF1, ref, sizeof(ref)) ||
+          !readRegs(addr, BME68X_REG_COEFF1, buf, sizeof(buf)) ||
+          memcmp(ref, buf, sizeof(ref)) != 0)
+        return 0;
+
+      uint32_t max = 0;
+      for (uint32_t f : SCALINI)
+      {
+        Wire.setClock(f);
+        for (uint8_t i = 0; i < I2C_SWEEP_READS; i++)
+        {
+          if (!readRegs(addr, BME68X_REG_COEFF1, buf, sizeof(buf)) ||
+              memcmp(ref, buf, sizeof(ref)) != 0)
+          {
+            LOG("BME680", "i2c: errore a %lu kHz", (unsigned long)(f / 1000UL));
+            return max;
+          }
+        }
+        max = f;
+      }
+      return max;
+    }
+
+    /**
+     * Rileva il sensore sul bus e misura il clock: sonda i due indirizzi
+     * ammessi dal BME68x (la sonda di Wire gira sempre a 100 kHz, quale che
+     * sia il clock impostato), controlla il chip ID e lascia Wire al clock da
+     * usare, cioè BME680_I2C_CLOCK_HZ se il bus lo regge, altrimenti il
+     * massimo misurato. Ogni esito negativo è loggato con la sua causa.
+     * Usata da begin() con I2C_DEBUG a 1.
+     * @return false se non c'è un BME680 utilizzabile.
+     */
+    inline bool debugDetect(uint8_t& addr)
+    {
+      const uint8_t candidati[] = {
+        BME680_I2C_ADDR,
+        BME680_I2C_ADDR == BME68X_I2C_ADDR_HIGH ? BME68X_I2C_ADDR_LOW : BME68X_I2C_ADDR_HIGH};
+
+      uint8_t esito = 2;
+      addr = 0;
+      for (uint8_t a : candidati)
+      {
+        Wire.beginTransmission(a);
+        esito = Wire.endTransmission();
+        if (esito == 0) { addr = a; break; }
+        // Timeout: bus guasto, ogni altra sonda costerebbe un altro timeout
+        if (esito == 5) break;
+      }
+
+      if (addr == 0)
+      {
+        if (esito == 5)
+          LOG("BME680", "i2c: timeout sul bus, pull-up assenti o linea bloccata bassa");
+        else
+          LOG("BME680", "i2c: nessuna risposta a 0x%02X e 0x%02X, controllare "
+              "alimentazione 3,3 V, SDA/SCL, CS a 3,3 V e SDO non flottante",
+              (unsigned)candidati[0], (unsigned)candidati[1]);
+        return false;
+      }
+
+      uint8_t chipId = 0;
+      Wire.setClock(100000UL);
+      if (!readRegs(addr, BME68X_REG_CHIP_ID, &chipId, 1))
+      {
+        LOG("BME680", "i2c: ACK a 0x%02X ma lettura del chip ID fallita", (unsigned)addr);
+        return false;
+      }
+      if (chipId != BME68X_CHIP_ID)
+      {
+        LOG("BME680", "i2c: a 0x%02X chip ID 0x%02X, non un BME680 "
+            "(0x60 = BME280, 0x58 = BMP280)", (unsigned)addr, (unsigned)chipId);
+        return false;
+      }
+
+      const uint32_t max = findMaxClock(addr);
+      if (max == 0)
+      {
+        LOG("BME680", "i2c: letture instabili già a 100 kHz");
+        return false;
+      }
+      LOG("BME680", "i2c: BME680 a 0x%02X, clock massimo affidabile %lu kHz%s",
+          (unsigned)addr, (unsigned long)(max / 1000UL),
+          max == 1000000UL ? " (tetto di Wire)" : "");
+
+      const uint32_t clockHz = BME680_I2C_CLOCK_HZ <= max ? BME680_I2C_CLOCK_HZ : max;
+      Wire.setClock(clockHz);
+      if (addr != BME680_I2C_ADDR || clockHz != BME680_I2C_CLOCK_HZ)
+        LOG("BME680", "i2c: in uso 0x%02X a %lu kHz, aggiornare "
+            "BME680_I2C_ADDR / BME680_I2C_CLOCK_HZ",
+            (unsigned)addr, (unsigned long)(clockHz / 1000UL));
+      return true;
+    }
+#endif
   } // namespace detail
 
   /**
    * Inizializza Wire, avvia BSEC2 sul BME680, ripristina l'eventuale
    * stato salvato in NVS e sottoscrive gli output in modalita' ULP
    * (un sample ogni 300 s, coerente col light sleep del ciclo main).
+   * Con I2C_DEBUG a 1 indirizzo e clock vengono da debugDetect(), altrimenti
+   * da BME680_I2C_ADDR e BME680_I2C_CLOCK_HZ.
    * Se il sensore non risponde il resto del firmware (meteo/calendario/display) continua a funzionare.
    */
   inline void begin()
@@ -272,7 +415,14 @@ namespace Indoor
     // clock impostato qui resta quello del bus.
     Wire.setClock(BME680_I2C_CLOCK_HZ);
 
-    if (!bsec.begin(BME680_I2C_ADDR, Wire)) {
+#if I2C_DEBUG
+    uint8_t addr;
+    if (!debugDetect(addr)) return;
+#else
+    const uint8_t addr = BME680_I2C_ADDR;
+#endif
+
+    if (!bsec.begin(addr, Wire)) {
       LOG("BME680", "init failed (bsec=%d, sensor=%d)",
           bsec.status, bsec.sensor.status);
       return;
