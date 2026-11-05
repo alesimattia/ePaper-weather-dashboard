@@ -7,8 +7,9 @@ purchè restino in quei tre colori.
 
 `tools/weather_icons.py convert` le riduce al lato del banner e genera
 `icons_weather.h`, con un piano nero e un piano rosso per icona e la tabella che
-associa i codici condizione di OpenWeather alle icone. `icons_weather.h` non si
-modifica a mano.
+associa i codici condizione di OpenWeather alle icone e alle etichette brevi.
+`icons_weather.h` non si modifica a mano: si cambia `icons.json` o una PNG e si
+rigenera.
 
 ## Sorgente
 
@@ -43,8 +44,23 @@ variante piena, dove le forme sono staccate da un taglio bianco.
 
 ## Codici condizione
 
-`conditions` in `icons.json` copre tutti i 54 codici documentati da
-OpenWeather (https://openweathermap.org/weather-conditions). Giorno e notte
-differiscono solo per sereno (800) e poche nubi (801); il firmware ricava la
-notte dal suffisso `n` del campo `icon`. Un codice assente o sconosciuto
-ripiega su `fallback`.
+`conditions` in `icons.json` copre tutti i 55 codici documentati da
+OpenWeather (https://openweathermap.org/weather-conditions). Ogni riga dà un
+intervallo di codici, l'icona di giorno, quella di notte e l'etichetta mostrata
+sotto la temperatura.
+
+L'icona è la più precisa che Material Symbols offre per il codice: pioggia
+debole o moderata e pioggia forte hanno icone diverse, la neve ne ha tre per
+intensità, nevischio e pioggia mista a neve sono distinti, e 801-802 (sole
+ancora visibile), 803 e 804 (coperto) hanno ciascuno la sua. Giorno e notte
+differiscono per sereno, poche nubi, nubi sparse e rovesci di neve: per pioggia,
+neve e temporale Material non ha varianti notturne. Il firmware ricava la notte
+dal suffisso `n` del campo `icon` di OpenWeather.
+
+L'etichetta invece resta breve: ASCII stampabile, senza accenti (i font del
+pannello sono a 7 bit), misurata per entrare nel blocco più stretto in 12 pt o
+in 9 pt. `weather_icons.py` rifiuta etichette vuote o fuori dall'ASCII e
+intervalli sovrapposti.
+
+Un codice assente o sconosciuto, compreso lo 0 di un dato mancante, ripiega su
+`fallback` con l'etichetta `--`.

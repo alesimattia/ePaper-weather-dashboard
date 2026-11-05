@@ -57,6 +57,10 @@ disegna in una griglia sotto al wallpaper cinema con `Mail::draw()`. API:
 8. **Testo.** Mittente e oggetto passano da `Graphics::foldToFontCharset()`
    subito dopo la copia nei buffer (vedi [[resa_testo_pannello]]).
 
+9. **Errori HTTP.** `fetchMessageIds()` logga solo `list fetch failed: http=%d`, senza il
+   corpo; un 401 invalida la cache condivisa del token, un 403 no. Collegamento delle API,
+   causa dei 403 e verifica dal Mac in [[google_oauth_setup]].
+
 **How to apply:** se si tocca la struttura del modulo (cambio scope, decoupling
 da Calendar), tenere presente che il refresh_token è uno solo e l'access_token
 è fisicamente in `Calendar::detail::cachedGoogleToken`. Non duplicare la cache

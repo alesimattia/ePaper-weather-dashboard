@@ -68,21 +68,10 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 namespace Calendar
 {
   /**
-   * Numero massimo di eventi effettivamente renderizzati nella lista.
-   *
-   * Calcolato a compile-time da Layout::EVT_H con cascata 7 -> 6 -> 5:
-   * sceglie il massimo N in {7, 6, 5} tale che la riga risultante
-   * EVT_H/N sia almeno MIN_EVT_ROW_H (45 px). La soglia 45 e' dimensionata
-   * perche':
-   *  - garantisce simmetria visiva interna alla riga: con drawEventRow
-   *    le baseline sono time @ rowTop+19, title @ rowTop+EVT_ROW_H/2+6,
-   *    date @ rowTop+EVT_ROW_H-7. A 46 px le distanze title-time e
-   *    title-date sono entrambe 10 px (riga bilanciata e leggibile);
-   *    sotto 40 px le tre baseline si comprimono e i testi si toccano.
-   *  - mantiene 7 entry sul 122c (EVT_H=326, 326/7=46 px/riga >= 45).
-   *  - forza 5 entry sul 097c (EVT_H=230: 230/7=32 e 230/6=38 entrambi
-   *    sotto soglia, 230/5=46 supera) cosi' le righe restano confortevoli
-   *    anche sul pannello piu' corto verticalmente.
+   * Numero di eventi mostrati: il massimo fra 7, 6 e 5 che lascia ogni riga
+   * alta almeno MIN_EVT_ROW_H. Sotto i 45 px l'orario in alto e la data in
+   * basso si avvicinano al titolo fino a toccarlo. Con la geometria attuale
+   * il 9.7" mostra 5 righe da 46 px e il 12.2" 7 righe da 46 px.
    *
    * Le sorgenti (Outlook, Google) alimentano ciascuna una propria cache
    * da MAX_EVENTS=5; la lista mostrata e' il merge ordinato dei piu'
@@ -92,6 +81,8 @@ namespace Calendar
   static constexpr uint8_t MAX_EVENTS_DISPLAYED =
       (Layout::EVT_H / 7 >= MIN_EVT_ROW_H) ? 7 :
       (Layout::EVT_H / 6 >= MIN_EVT_ROW_H) ? 6 : 5;
+  static_assert(Layout::EVT_H / 5 >= MIN_EVT_ROW_H,
+                "Calendar: l'area eventi non contiene nemmeno 5 righe da MIN_EVT_ROW_H");
 
   namespace Outlook
   {
@@ -233,54 +224,6 @@ namespace Calendar
       return true;
     }
 
-    /**
-     * Disegna una stringa centrata orizzontalmente sulla colonna `centerX`
-     * con la baseline alla y specificata, usando il font gia' impostato.
-     */
-    inline void drawCentered(const char* txt, int16_t centerX, int16_t baselineY, uint16_t color)
-    {
-      int16_t x1, y1;
-      uint16_t w, h;
-      display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(centerX - (int16_t)(w / 2) - x1, baselineY);
-      display.setTextColor(color);
-      display.print(txt);
-    }
-
-    /**
-     * Disegna una stringa allineata a destra.
-     */
-    inline void drawRightAligned(const char* txt, int16_t rightX, int16_t baselineY, uint16_t color)
-    {
-      int16_t x1, y1;
-      uint16_t w, h;
-      display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(rightX - (int16_t)w - x1, baselineY);
-      display.setTextColor(color);
-      display.print(txt);
-    }
-
-    /**
-     * Tronca la stringa in `buf` in-place finchè la sua resa non rientra
-     * in `maxW` pixel. 
-     * Se tronca inserisce ".." come indicatore finale.
-     */
-    inline void truncateToWidth(char* buf, int16_t maxW)
-    {
-      int16_t x1, y1;
-      uint16_t w, h;
-      display.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-      if ((int16_t)w <= maxW) return;
-
-      size_t n = strlen(buf);
-      while (n > 0)
-      {
-        buf[--n] = 0;
-        display.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-        if ((int16_t)w <= maxW) break;
-      }
-      if (n >= 2) { buf[n - 1] = '.'; buf[n - 2] = '.'; }
-    }
 
     /**
      * Ricava un epoch UTC "adesso" affidabile: RTC di sistema se sincronizzato,
@@ -360,8 +303,8 @@ namespace Calendar
       }
 
       JsonDocument doc;
-      Net::BodyStream body(http.getStream());
-      DeserializationError err = deserializeJson(doc, body);
+      Net::BodyStream response(http.getStream());
+      DeserializationError err = deserializeJson(doc, response);
       http.end();
       if (err){
         LOG("OAuth", "token json parse: %s", err.c_str()); 
@@ -638,14 +581,32 @@ namespace Calendar
     }
 
     // =======================================================================
-    // Rendering: riquadro mese
+    // Rendering: scheda della sidebar (mese, griglia, filetto, eventi)
     // =======================================================================
 
     /**
-     * Disegna il riquadro del mese corrente (cornice arrotondata, titolo,
-     * intestazione giorni, griglia 7x6, cella odierna in rosso con round-rect).
+     * Disegna la cornice della scheda con il titolo sul bordo superiore e il
+     * filetto che separa la griglia del mese dagli eventi. La scheda si
+     * sbianca per intero, quindi va disegnata prima di griglia ed eventi.
      */
-    inline void drawMonthWidget(const struct tm& today)
+    inline void drawCard(const char* title)
+    {
+      display.fillRoundRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
+                            Layout::BOX_RADIUS, GxEPD_WHITE);
+      display.setFont(Layout::FONT_TITLE);
+      Graphics::drawFieldsetRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
+                                 Layout::BOX_RADIUS, title, Layout::TITLE_INSET, GxEPD_WHITE);
+      display.drawFastHLine(Layout::CAL_X + Layout::BOX_PAD, Layout::CAL_DIVIDER_Y,
+                            Layout::CAL_W - 2 * Layout::BOX_PAD, GxEPD_BLACK);
+    }
+
+    /**
+     * Disegna la griglia del mese corrente dentro la scheda: intestazione dei
+     * giorni, filetto, sei righe di settimane da lunedì e cella odierna in
+     * rosso. Sei righe bastano sempre: un mese di 31 giorni che inizia di
+     * sabato occupa sei settimane.
+     */
+    inline void drawMonthGrid(const struct tm& today)
     {
       const int todayDay   = today.tm_mday;
       const int todayMonth = today.tm_mon;
@@ -658,51 +619,22 @@ namespace Calendar
       int firstWdaySun = ((todayWday - (todayDay - 1)) % 7 + 7) % 7;
       int firstCol     = (firstWdaySun + 6) % 7;
 
-      /** Sfondo bianco + cornice arrotondata in stile fieldset: il nome
-       *  del mese è incastrato sul bordo superiore interrotto. */
-      display.fillRoundRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
-                            Layout::CAL_R, GxEPD_WHITE);
-      display.setFont(Layout::FONT_LARGE);
-      Graphics::drawFieldsetRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
-                                 Layout::CAL_R, MESI_IT[todayMonth],
-                                 Layout::CAL_R + 4, GxEPD_WHITE);
-
       const int16_t gridX = Layout::CAL_X + Layout::CAL_PAD;
-      const int16_t gridY = Layout::CAL_Y + Layout::TITLE_H;
       const int16_t gridW = Layout::CAL_W - 2 * Layout::CAL_PAD;
       const int16_t cellW = gridW / 7;
-      /**
-       * Altezza disponibile per la griglia delle settimane. Le settimane
-       * mostrate da un calendario lunedi'-first sono al massimo 6 (mese
-       * di 31 giorni che inizia di sabato o domenica): allocare piu' di 6
-       * righe lascia strutturalmente una riga sempre vuota sotto l'ultima
-       * settimana utilizzata. Con 6 righe (cellH ~24 px su CAL_H=200) il
-       * massimo "vuoto" residuo e' solo 1 riga (mesi di 5 settimane).
-       * Fallback a 5 righe se l'altezza disponibile non basta a garantire
-       * MIN_CELL_H per mantenere leggibile il numero in FONT_BODY (cap
-       * ~14 px). Nota: con 5 righe i mesi a 6 settimane verrebbero
-       * troncati; il fallback resta una clausola di salvaguardia per
-       * eventuali CAL_H futuri molto ridotti, non un caso operativo.
-       */
-      const int16_t gridAvailH = Layout::CAL_H - Layout::TITLE_H - Layout::HDR_H
-                               - Layout::GRID_TOP_PAD - Layout::CAL_PAD;
-      const int16_t MIN_CELL_H = 22;
-      const int16_t numRows = (gridAvailH / 6 >= MIN_CELL_H) ? 6 : 5;
-      const int16_t cellH   = gridAvailH / numRows;
+      const int16_t cellH = Layout::CAL_CELL_H;
 
       display.setFont(Layout::FONT_BODY);
       for (int i = 0; i < 7; i++)
       {
         int16_t cx = gridX + i * cellW + cellW / 2;
-        drawCentered(DOW_IT[i], cx, gridY + Layout::HDR_H - 6, GxEPD_BLACK);
+        Graphics::drawCentered(DOW_IT[i], cx, Layout::CAL_GRID_Y + Layout::CAL_HDR_BASELINE, GxEPD_BLACK);
       }
 
-      display.drawFastHLine(Layout::CAL_X + Layout::CAL_R, gridY + Layout::HDR_H,
-                            Layout::CAL_W - 2 * Layout::CAL_R, GxEPD_BLACK);
+      display.drawFastHLine(Layout::CAL_X + Layout::BOX_PAD, Layout::CAL_GRID_Y + Layout::CAL_HDR_H,
+                            Layout::CAL_W - 2 * Layout::BOX_PAD, GxEPD_BLACK);
 
-      // GRID_TOP_PAD stacca la prima riga di celle dalla linea orizzontale
-      // dei giorni L M M G V S.
-      const int16_t gridTop = gridY + Layout::HDR_H + Layout::GRID_TOP_PAD;
+      const int16_t gridTop = Layout::CAL_GRID_Y + Layout::CAL_HDR_H + Layout::CAL_GRID_TOP_PAD;
       char buf[4];
       for (int d = 1; d <= daysInMonth; d++)
       {
@@ -716,14 +648,9 @@ namespace Calendar
         snprintf(buf, sizeof(buf), "%d", d);
 
         /**
-         * Baseline del numero calcolata dalla cap-height effettiva del
-         * font corrente (getTextBounds restituisce h ~= cap-height per i
-         * digit ASCII, che non hanno discendenti). Cosi' il numero risulta
-         * verticalmente centrato nella cella indipendentemente dal numero
-         * di righe del calendario (cellH=20 con 7 righe, 24 con 6) e
-         * indipendentemente dal font usato per FONT_BODY. Il badge rosso
-         * sotto puo' quindi essere reso simmetrico attorno al numero senza
-         * scarti verticali percettibili.
+         * Baseline dall'altezza del numero, che per le cifre coincide con la
+         * cap height: il numero resta centrato nella cella e il badge rosso
+         * simmetrico attorno a lui.
          */
         int16_t  tx1, ty1;
         uint16_t tw, th;
@@ -732,17 +659,12 @@ namespace Calendar
 
         if (d == todayDay)
         {
-          /**
-           * Badge rosso simmetrico attorno al numero: 2 px di inset
-           * orizzontale e 1 px di inset verticale (top e bottom), CELL_R
-           * per gli angoli arrotondati.
-           */
-          display.fillRoundRect(cellX + 2, cellY + 1, cellW - 4, cellH - 2, Layout::CELL_R, GxEPD_RED);
-          drawCentered(buf, cx, baseY, GxEPD_WHITE);
+          display.fillRoundRect(cellX + 2, cellY + 1, cellW - 4, cellH - 2, Layout::CAL_CELL_R, GxEPD_RED);
+          Graphics::drawCentered(buf, cx, baseY, GxEPD_WHITE);
         }
         else
         {
-          drawCentered(buf, cx, baseY, GxEPD_BLACK);
+          Graphics::drawCentered(buf, cx, baseY, GxEPD_BLACK);
         }
       }
     }
@@ -759,21 +681,17 @@ namespace Calendar
     inline void drawEventRow(int row, const CalEvent& e,
                              int todayY, int todayM, int todayD)
     {
-      int16_t rowTop = Layout::EVT_Y + row * EVT_ROW_H;
+      const int16_t rowTop        = Layout::EVT_Y + row * EVT_ROW_H;
+      const int16_t titleBaseline = rowTop + EVT_ROW_H / 2 + Layout::EVT_TITLE_FROM_MIDDLE;
 
       if (row > 0)
-      {
-        display.drawFastHLine(Layout::EVT_X + Layout::EVT_SEP_PAD, rowTop,
-                              Layout::EVT_W - 2 * Layout::EVT_SEP_PAD, GxEPD_BLACK);
-      }
+        display.drawFastHLine(Layout::EVT_X, rowTop, Layout::EVT_W, GxEPD_BLACK);
 
       display.setFont(Layout::FONT_BODY);
 
       if (!e.valid)
       {
-        display.setCursor(Layout::EVT_X + Layout::EVT_PAD_LEFT, rowTop + EVT_ROW_H / 2 + 6);
-        display.setTextColor(GxEPD_BLACK);
-        display.print("--");
+        Graphics::drawLeftAligned("--", Layout::EVT_X, titleBaseline, GxEPD_BLACK);
         return;
       }
 
@@ -800,31 +718,20 @@ namespace Calendar
       if (e.allDay) snprintf(timeBuf, sizeof(timeBuf), "tutto gg");
       else          snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
 
-      int16_t x1, y1;
-      uint16_t dw, dh, tw, th;
-      display.getTextBounds(dateBuf, 0, 0, &x1, &y1, &dw, &dh);
-      display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &tw, &th);
-      int16_t rightColW = (int16_t)(dw > tw ? dw : tw);
-
-      int16_t rightX    = Layout::EVT_X + Layout::EVT_W - Layout::EVT_PAD;
-      int16_t titleMaxW = (Layout::EVT_W - Layout::EVT_PAD_LEFT - Layout::EVT_PAD) - rightColW - 8;
+      const int16_t dateW     = Graphics::textWidth(dateBuf);
+      const int16_t timeW     = Graphics::textWidth(timeBuf);
+      const int16_t rightColW = dateW > timeW ? dateW : timeW;
+      const int16_t rightX    = Layout::EVT_X + Layout::EVT_W;
 
       char titleBuf[sizeof(e.title)];
       strncpy(titleBuf, e.title, sizeof(titleBuf) - 1);
       titleBuf[sizeof(titleBuf) - 1] = 0;
-      truncateToWidth(titleBuf, titleMaxW);
+      Graphics::truncateToWidth(titleBuf, Layout::EVT_W - rightColW - Layout::EVT_RIGHT_GAP);
+      Graphics::drawLeftAligned(titleBuf, Layout::EVT_X, titleBaseline, color);
 
-      int16_t titleBaseline = rowTop + EVT_ROW_H / 2 + 6;
-      display.setCursor(Layout::EVT_X + Layout::EVT_PAD_LEFT, titleBaseline);
-      display.setTextColor(color);
-      display.print(titleBuf);
-
-      /**
-       * Orario sopra, data sotto, con baseline tarate su EVT_ROW_H=46 e sul
-       * FONT_BODY a 12pt.
-       */
-      drawRightAligned(timeBuf, rightX, rowTop + 19, color);
-      drawRightAligned(dateBuf, rightX, rowTop + EVT_ROW_H - 7, color);
+      // Orario in alto e data in basso nella colonna destra della riga.
+      Graphics::drawRightAligned(timeBuf, rightX, rowTop + Layout::EVT_TIME_BASELINE, color);
+      Graphics::drawRightAligned(dateBuf, rightX, rowTop + EVT_ROW_H - Layout::EVT_DATE_FROM_BOTTOM, color);
     }
 
     /** Vero se l'evento è già terminato. Senza ora valida nessun evento lo è:
@@ -892,15 +799,15 @@ namespace Calendar
   // =========================================================================
 
   /**
-   * Disegna il riquadro calendario del mese corrente (in alto a destra
-   * dentro la sidebar) e la lista dei prossimi eventi (merge di Outlook +
-   * Google) nello spazio sottostante, fino al banner meteo.
+   * Disegna la scheda della sidebar: il mese corrente come titolo, la sua
+   * griglia e sotto il filetto la lista dei prossimi eventi (merge di
+   * Outlook + Google), fino al banner meteo.
    *
    * I componenti locali vengono calcolati via localtime_r(), che
    * applica il TZ impostato da Clock::begin().
    *
-   * Senza un'ora valida il riquadro del mese resta vuoto con il titolo "--":
-   * prima di SNTP time() conta l'uptime dal 1970, e disegnarlo mostrerebbe
+   * Senza un'ora valida la scheda ha il titolo "--" e nessuna griglia: prima
+   * di SNTP time() conta l'uptime dal 1970, e disegnarla mostrerebbe
    * "Gennaio 1970".
    *
    * @param utcEpoch epoch UTC di riferimento (0 = usa time(nullptr))
@@ -915,15 +822,12 @@ namespace Calendar
 
     if (utcEpoch >= TIME_VALID_EPOCH_MIN)
     {
-      detail::drawMonthWidget(tmNow);
+      detail::drawCard(detail::MESI_IT[tmNow.tm_mon]);
+      detail::drawMonthGrid(tmNow);
     }
     else
     {
-      display.fillRoundRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
-                            Layout::CAL_R, GxEPD_WHITE);
-      display.setFont(Layout::FONT_LARGE);
-      Graphics::drawFieldsetRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
-                                 Layout::CAL_R, "--", Layout::CAL_R + 4, GxEPD_WHITE);
+      detail::drawCard("--");
     }
     detail::drawEventsList(tmNow, utcEpoch);
   }

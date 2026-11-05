@@ -8,9 +8,10 @@
 #include "Layout.h"
 
 /**
- * Utility di disegno condivise fra i moduli (Weather, Calendar).
+ * Utility di disegno condivise fra i moduli (Weather, Calendar, Mail).
  * Header-only, non tiene stato: le funzioni di disegno scrivono direttamente
- * sul display globale dichiarato nello sketch .ino.
+ * sul display globale dichiarato nello sketch .ino e usano il font che il
+ * chiamante ha impostato.
  */
 
 // ---------------------------------------------------------------------------
@@ -23,24 +24,111 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 namespace Graphics
 {
   /**
-   * Disegna un rettangolo a bordi arrotondati con un titolo "stile fieldset"
-   * incastrato nel bordo superiore: il bordo viene interrotto da un rettangolo
-   * di sfondo sotto il testo, dando l'impressione che il titolo sia seduto
-   * sulla linea. Il titolo è sempre nero; il rettangolo è nero anch'esso.
+   * Cap height del font corrente, misurata sulla "H": è la stessa per ogni
+   * stringa, quindi allinea testi e icone senza dipendere da ascendenti e
+   * discendenti del testo da scrivere.
+   */
+  inline int16_t capHeight()
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds("H", 0, 0, &x1, &y1, &w, &h);
+    return (int16_t)h;
+  }
+
+  /**
+   * Cima di un'icona piccola (Layout::SMALL_ICON_SIZE) da affiancare a un
+   * testo nel font corrente: il centro dell'icona cade a metà della cap height.
+   */
+  inline int16_t smallIconY(int16_t baselineY)
+  {
+    return baselineY - capHeight() / 2 - Layout::SMALL_ICON_SIZE / 2;
+  }
+
+  /**
+   * Disegna una riga di testo che parte con il bordo sinistro dell'inchiostro
+   * su leftX, compensando il bearing del primo carattere. Restituisce la x
+   * del cursore dopo l'ultimo carattere.
+   */
+  inline int16_t drawLeftAligned(const char* txt, int16_t leftX, int16_t baselineY, uint16_t color)
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(leftX - x1, baselineY);
+    display.setTextColor(color);
+    display.print(txt);
+    return display.getCursorX();
+  }
+
+  /** Disegna una stringa centrata orizzontalmente su centerX. */
+  inline void drawCentered(const char* txt, int16_t centerX, int16_t baselineY, uint16_t color)
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(centerX - (int16_t)(w / 2) - x1, baselineY);
+    display.setTextColor(color);
+    display.print(txt);
+  }
+
+  /** Disegna una stringa con il bordo destro dell'inchiostro su rightX. */
+  inline void drawRightAligned(const char* txt, int16_t rightX, int16_t baselineY, uint16_t color)
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(rightX - (int16_t)w - x1, baselineY);
+    display.setTextColor(color);
+    display.print(txt);
+  }
+
+  /** Larghezza dell'inchiostro di una stringa nel font corrente. */
+  inline int16_t textWidth(const char* txt)
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+    return (int16_t)w;
+  }
+
+  /**
+   * Tronca sul posto la stringa finchè la sua resa con ".." in coda rientra
+   * in maxW. Il candidato si misura con i puntini già scritti, perchè ".."
+   * può essere più largo dei caratteri che sostituisce; gli spazi rimasti in
+   * coda al prefisso si tolgono.
+   */
+  inline void truncateToWidth(char* buf, int16_t maxW)
+  {
+    if (textWidth(buf) <= maxW) return;
+
+    size_t length = strlen(buf);
+    if (length < 2) return;
+    for (size_t prefix = length - 2; ; --prefix)
+    {
+      size_t end = prefix;
+      while (end > 0 && buf[end - 1] == ' ') --end;
+      buf[end] = '.';
+      buf[end + 1] = '.';
+      buf[end + 2] = '\0';
+      if (prefix == 0 || textWidth(buf) <= maxW) return;
+    }
+  }
+
+  /**
+   * Disegna un rettangolo a bordi arrotondati con il titolo seduto sul bordo
+   * superiore, che una striscia di sfondo sotto il testo interrompe. Il font
+   * è quello impostato dal chiamante.
    *
-   * Precondizioni: il chiamante deve aver impostato il font prima di chiamare
-   * questa funzione (viene usato per misurare e disegnare il titolo).
+   * La baseline sta mezza cap height sotto il bordo e non dipende dalla
+   * stringa: un titolo con discendenti, come "Maggio", e uno senza, come
+   * "Ottobre", restano alla stessa altezza e dentro lo schermo.
    *
-   * @param x          x (px) dell'angolo superiore sinistro del rettangolo.
-   * @param y          y (px) dell'angolo superiore sinistro del rettangolo.
-   * @param w          larghezza (px) del rettangolo.
-   * @param h          altezza (px) del rettangolo.
-   * @param radius     raggio (px) degli angoli arrotondati.
-   * @param title      testo del titolo (NULL o stringa vuota = nessun titolo).
-   * @param titleLeftOffset offset orizzontale del titolo dal bordo sinistro
-   *                        del rettangolo (prima del gap); default ~ radius+6.
-   * @param bgColor    colore di sfondo con cui "cancellare" il bordo sotto il
-   *                   testo (tipicamente GxEPD_WHITE).
+   * @param x, y, w, h       rettangolo in pixel.
+   * @param radius           raggio degli angoli.
+   * @param title            titolo, nessuno se nullptr o vuoto.
+   * @param titleLeftOffset  distanza del titolo dal bordo sinistro.
+   * @param bgColor          colore della striscia sotto il titolo, di norma GxEPD_WHITE.
    */
   inline void drawFieldsetRect(int16_t x, int16_t y, int16_t w, int16_t h,
                                int16_t radius, const char* title,
@@ -50,27 +138,10 @@ namespace Graphics
 
     if (!title || !*title) return;
 
-    // Misura il testo con il font corrente impostato dal chiamante.
-    int16_t  x1, y1;
-    uint16_t tw, th;
-    display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
-
-    /**
-     * Copri una striscia di sfondo dietro il testo per "spezzare" il bordo
-     * superiore del rettangolo. Alta 3 px centrata sulla linea y (il bordo
-     * è di 1 px quindi 3 px danno margine sicuro su entrambi i lati).
-     */
-    const int16_t PAD_H = 3;
+    // La striscia alta 3 px copre il bordo da 1 px con un pixel di margine per lato.
     const int16_t stripX = x + titleLeftOffset;
-    display.fillRect(stripX - 2, y - 1, (int16_t)tw + 4, PAD_H, bgColor);
-
-    // Baseline del titolo: centrata verticalmente sul bordo superiore.
-    // La baseline sta al top del rettangolo, con ~metà ascender sopra e
-    // metà sotto (th/2 dal top del testo).
-    const int16_t baselineY = y + (int16_t)th / 2;
-    display.setCursor(stripX - x1, baselineY);
-    display.setTextColor(GxEPD_BLACK);
-    display.print(title);
+    display.fillRect(stripX - 4, y - 1, textWidth(title) + 8, 3, bgColor);
+    drawLeftAligned(title, stripX, y + capHeight() / 2, GxEPD_BLACK);
   }
 
   namespace detail

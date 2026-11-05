@@ -7,3 +7,4 @@ GxEPD2-master
 # Credenziali scaricate da Google Cloud (client OAuth, chiavi di
 # service account): nessun .json della root va versionato.
 /*.json
+__pycache__/

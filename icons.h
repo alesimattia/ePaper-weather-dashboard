@@ -7,56 +7,20 @@
 #include "Layout.h"
 
 /**
- * Icone meteo per il banner OpenWeatherMap.
- * Ogni icona è un bitmap 1bpp Layout::ICON_SIZE x Layout::ICON_SIZE in PROGMEM
- * (lato selezionato dal Layout, default 88 per il 097c). Il codice icona
- * OpenWeatherMap è del tipo "01d", "02n", ecc.
- * (vedi https://openweathermap.org/weather-conditions).
+ * Icone piccole del riquadro Interno, della colonna alba/tramonto e della
+ * busta delle mail non lette: bitmap 1bpp 20x20 in PROGMEM, MSB a sinistra,
+ * nel formato di display.drawBitmap(). Le righe sono scritte a mano a 3 byte
+ * l'una, quindi il lato resta Layout::SMALL_ICON_SIZE = 20. Le icone meteo
+ * stanno in icons_weather.h, generato da tools/weather_icons.py.
  *
- * Le icone vere saranno sostituite dall'utente; qui c'è solo un placeholder
- * tutto bianco come fallback per far compilare lo sketch.
- *
- * Usato da: Weather.h (funzione renderBlock)
+ * Usato da: Weather.h e Mail.h.
  */
-
-/** Placeholder ICON_SIZE x ICON_SIZE tutto bianco. Sostituire con icone reali. */
-static const uint8_t ICON_PLACEHOLDER[Layout::ICON_SIZE * Layout::ICON_SIZE / 8] PROGMEM = {
-  /* Inizializzazione implicita a zero (pixel spenti = bianco su e-paper). */
-  0x00
-};
-
-/**
- * Lookup dell'icona a partire dal codice OpenWeatherMap.
- * Ritorna un puntatore a un bitmap 88x88 1bpp in PROGMEM, oppure il
- * placeholder se il codice non è mappato.
- *
- * Usato da: Weather.h (renderBlock)
- *
- * @param code codice icona OWM (es. "10d"); puo' essere NULL.
- * @return puntatore PROGMEM all'icona 96x96 1bpp.
- */
-inline const uint8_t* iconFromCode(const char* code)
-{
-  // TODO: sostituire con lookup reale quando le icone saranno disponibili.
-  (void)code;
-  return ICON_PLACEHOLDER;
-}
-
-// ===========================================================================
-// Icone piccole per la sub-colonna dati ambientali BME680 (Weather.h
-// -> renderIndoorSubColumn). Bitmap 1bpp 20x20 in PROGMEM, MSB-first,
-// compatibili con display.drawBitmap(). Lato selezionato dal Layout
-// tramite Layout::INDOOR_ICON_SIZE (default 20 per il 097c).
-// Le bitmap qui sotto sono dimensionate "in chiaro" come 20x20 (3 byte
-// per riga * 20 righe = 60 byte) perche' i loro contenuti dipendono dal
-// layout grafico fisico delle icone, non dalla dimensione astratta.
-// ===========================================================================
 
 /**
  * Icona temperatura (termometro 20x20, nero solido).
  * Stem verticale + bulbo tondo in basso.
  */
-static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x01, 0xE0, 0x00,   // riga  0: .......XXXX......... (stem)
   0x01, 0xE0, 0x00,   // riga  1
   0x01, 0xE0, 0x00,   // riga  2
@@ -83,7 +47,7 @@ static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::INDOOR_ICON_SIZE * 3] PROGM
  * Icona umidita' (goccia d'acqua 20x20, piena nera).
  * Forma a teardrop: punta in alto, rotonda in basso.
  */
-static const uint8_t INDOOR_ICON_HUMIDITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_HUMIDITY[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x60, 0x00,   // riga  0: .........XX.........
   0x00, 0x60, 0x00,   // riga  1
   0x00, 0xF0, 0x00,   // riga  2: ........XXXX........
@@ -112,7 +76,7 @@ static const uint8_t INDOOR_ICON_HUMIDITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM 
  * in alto, linea orizzontale base, lancetta diagonale che parte dal
  * centro basso verso il settore destro del quadrante.
  */
-static const uint8_t INDOOR_ICON_PRESSURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_PRESSURE[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
   0x00, 0x00, 0x00,   // riga  1
   0x03, 0xF0, 0x00,   // riga  2: ......XXXXXX........ (arco superiore)
@@ -141,7 +105,7 @@ static const uint8_t INDOOR_ICON_PRESSURE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM 
  * (2 px) è in basso: rappresenta il sole che sorge emanando raggi
  * crescenti. Spaziatura verticale di 1 riga vuota fra linee.
  */
-static const uint8_t INDOOR_ICON_SUNRISE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_SUNRISE[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0xFF, 0xFF, 0xF0,   // riga  0: XXXXXXXXXXXXXXXXXXXX (w=20)
   0x00, 0x00, 0x00,   // riga  1
   0x7F, 0xFF, 0xE0,   // riga  2: .XXXXXXXXXXXXXXXXXX. (w=18)
@@ -170,7 +134,7 @@ static const uint8_t INDOOR_ICON_SUNRISE[Layout::INDOOR_ICON_SIZE * 3] PROGMEM =
  * copre la meta' superiore, la linea di orizzonte è una singola riga a
  * larghezza massima che si appoggia contro la base del sole.
  */
-static const uint8_t INDOOR_ICON_SUNSET[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_SUNSET[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0
   0x00, 0x00, 0x00,   // riga  1
   0x00, 0xF0, 0x00,   // riga  2: ........XXXX........ (apex sole, w=4)
@@ -198,7 +162,7 @@ static const uint8_t INDOOR_ICON_SUNSET[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = 
  * Corpo simmetrico a goccia rovesciata (tip in alto) + gambo verticale
  * in basso che termina con una piccola piega.
  */
-static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x40, 0x00,   // riga  0: .........X.......... (tip)
   0x00, 0xE0, 0x00,   // riga  1: ........XXX.........
   0x01, 0xF0, 0x00,   // riga  2: .......XXXXX........
@@ -228,7 +192,7 @@ static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::INDOOR_ICON_SIZE * 3] PROGM
  * piu' rapidamente (2 cols/row) all'apex su row 7. Usata da Mail.h come
  * badge "unread" inline accanto al mittente di ogni mail non letta.
  */
-static const uint8_t INDOOR_ICON_MAIL[Layout::INDOOR_ICON_SIZE * 3] PROGMEM = {
+static const uint8_t INDOOR_ICON_MAIL[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
   0x00, 0x00, 0x00,   // riga  0: ....................
   0x00, 0x00, 0x00,   // riga  1: ....................
   0x00, 0x00, 0x00,   // riga  2: ....................

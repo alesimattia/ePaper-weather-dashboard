@@ -1,5 +1,6 @@
-#ifndef MAIL_H
-#define MAIL_H
+// Guardia diversa da MAIL_H, che è il nome della costante Layout::MAIL_H.
+#ifndef MAIL_MODULE_H
+#define MAIL_MODULE_H
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -22,11 +23,10 @@
 // ===========================================================================
 
 /**
- * Numero massimo di mail da scaricare/cachare. Il default e' allineato al
- * layout grafico: Layout::MAIL_MAX (4 sul 097c, 6 sul 122c) garantisce che
- * la cache abbia esattamente tante mail quante celle visualizzabili. Override
- * dal .ino con #define MAIL_MAX_MESSAGES N solo se si vuole disaccoppiare
- * cache size e numero di celle (es. cache piu' grande della UI per scrolling).
+ * Numero massimo di mail da scaricare e tenere in cache. Il default coincide
+ * con le celle del riquadro Posta, Layout::MAIL_MAX (4 sul 097c, 6 sul 122c).
+ * Un override dal .ino con #define MAIL_MAX_MESSAGES N cambia solo quante
+ * mail si scaricano: il riquadro ne disegna al massimo Layout::MAIL_MAX.
  */
 #ifndef MAIL_MAX_MESSAGES
   #define MAIL_MAX_MESSAGES Layout::MAIL_MAX
@@ -471,139 +471,98 @@ namespace Mail
   namespace detail
   {
     /**
-     * Disegna una singola cella mail.
-     *
-     * Layout per cella (speculare alle entry calendario, ma con sender al
-     * posto del title e data sotto l'orario):
-     *   - sx alto: indirizzo email mittente (FONT_BODY)
-     *   - sx alto, accanto al mittente: icona busta 20x20 SOLO se m.unread
-     *     (badge "non letto"; la busta e' compressa a 14h visibili per
-     *     allinearsi otticamente al cap-height del FONT_BODY)
-     *   - sx subito sotto: oggetto (FONT_SMALL, ravvicinato al mittente)
-     *   - dx alto: orario "HH:MM" (FONT_BODY)
-     *   - dx subito sotto: data "dd/MM" (FONT_BODY)
-     *
-     * Le righe sono distanziate da MAIL_ROW_GAP px verticali (cella
-     * successiva parte a cellY + ROW_H + ROW_GAP), che corrisponde a
-     * MAIL_ROW_H - 36 px di "vuoto" in basso ad ogni cella: questo crea
-     * la separazione visiva richiesta fra le entry.
+     * Disegna una mail nella sua cella: mittente e oggetto a sinistra, orario
+     * e data a destra, e la busta rossa accanto al mittente quando la mail non
+     * è letta. Le celle si riempiono per colonna, dall'alto in basso, così la
+     * lettura resta cronologica: la cache tiene in testa la mail più recente.
      */
     inline void drawMailCell(int idx, const MailMessage& m)
     {
-      /**
-       * Ordinamento column-major: la cache e' ordinata cronologicamente
-       * (idx 0 = piu' recente). Visualmente la colonna sinistra mostra i
-       * primi MAIL_ROWS_PER_COL elementi top-to-bottom, la colonna destra
-       * i successivi: cosi' la mail piu' vecchia visibile (ultima in colonna
-       * destra) e' immediatamente successiva all'ultima della colonna
-       * sinistra, mantenendo la sequenza cronologica nella lettura.
-       */
-      const int16_t col = idx / Layout::MAIL_ROWS_PER_COL;
-      const int16_t row = idx % Layout::MAIL_ROWS_PER_COL;
-      const int16_t cellX = Layout::MAIL_X + col * Layout::MAIL_COL_W;
-      const int16_t cellY = Layout::MAIL_BODY_Y
-                          + row * (Layout::MAIL_ROW_H + Layout::MAIL_ROW_GAP);
+      const int16_t col    = idx / Layout::MAIL_ROWS_PER_COL;
+      const int16_t row    = idx % Layout::MAIL_ROWS_PER_COL;
+      const int16_t cellX  = Layout::MAIL_X + col * Layout::MAIL_COL_W;
+      const int16_t rowTop = Layout::MAIL_BODY_Y + row * Layout::MAIL_ROW_H;
+      const int16_t left   = cellX + Layout::BOX_PAD;
+      const int16_t right  = cellX + Layout::MAIL_COL_W - Layout::BOX_PAD;
+      const int16_t line1  = rowTop + Layout::MAIL_LINE1_BASELINE;
+      const int16_t line2  = line1 + Layout::MAIL_LINE_GAP;
 
-      display.setTextColor(GxEPD_BLACK);
+      if (row > 0)
+        display.drawFastHLine(left, rowTop, right - left, GxEPD_BLACK);
 
-      // Baseline coerenti con il calendario (time/date a +19 e +ROW_H-7).
-      const int16_t topBaseline = cellY + 19;
-      const int16_t botBaseline = cellY + 36;
-
+      display.setFont(Layout::FONT_BODY);
       if (!m.valid)
       {
-        display.setFont(Layout::FONT_BODY);
-        display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, topBaseline);
-        display.print("--");
+        Graphics::drawLeftAligned("--", left, line1, GxEPD_BLACK);
         return;
       }
 
-      // ----- Colonna destra: time sopra, date sotto -----
+      // Senza internalDate l'orario non è noto: "--" invece di una data inventata.
       char timeBuf[8], dateBuf[8];
-      // Orario sempre HH:MM; data sempre dd/MM (richiesta utente).
+      if (m.receivedUtc > 0)
       {
-        struct tm tmL{};
-        if (m.receivedUtc > 0) localtime_r(&m.receivedUtc, &tmL);
+        struct tm tmL;
+        localtime_r(&m.receivedUtc, &tmL);
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
         snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
       }
+      else
+      {
+        strcpy(timeBuf, "--");
+        strcpy(dateBuf, "--");
+      }
+      const int16_t timeW     = Graphics::textWidth(timeBuf);
+      const int16_t dateW     = Graphics::textWidth(dateBuf);
+      const int16_t rightColW = timeW > dateW ? timeW : dateW;
+      Graphics::drawRightAligned(timeBuf, right, line1, GxEPD_BLACK);
+      Graphics::drawRightAligned(dateBuf, right, line2, GxEPD_BLACK);
 
-      display.setFont(Layout::FONT_BODY);
-      int16_t x1, y1; uint16_t tw, th, dw, dh;
-      display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &tw, &th);
-      display.getTextBounds(dateBuf, 0, 0, &x1, &y1, &dw, &dh);
-      const int16_t rightColW = (int16_t)(tw > dw ? tw : dw);
-      const int16_t rightX    = cellX + Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_R;
-
-      Calendar::detail::drawRightAligned(timeBuf, rightX, topBaseline, GxEPD_BLACK);
-      Calendar::detail::drawRightAligned(dateBuf, rightX, botBaseline, GxEPD_BLACK);
-
-      // ----- Colonna sinistra: sender (+ badge unread) alto, subject sotto -----
-      const int16_t leftAreaW = Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_L
-                              - Layout::MAIL_CELL_PAD_R - rightColW - 8;
-      // Se unread, riserviamo spazio per icona 20w + 4 gap accanto al sender.
-      const int16_t iconReserve = m.unread ? (Layout::INDOOR_ICON_SIZE + 4) : 0;
-      const int16_t senderMaxW  = leftAreaW - iconReserve;
+      const int16_t textMaxW    = right - left - rightColW - Layout::MAIL_RIGHT_GAP;
+      const int16_t iconReserve = m.unread ? (Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP) : 0;
 
       char senderBuf[MAIL_SENDER_LEN];
       strncpy(senderBuf, m.sender, sizeof(senderBuf) - 1);
       senderBuf[sizeof(senderBuf) - 1] = 0;
-      display.setFont(Layout::FONT_BODY);
-      Calendar::detail::truncateToWidth(senderBuf, senderMaxW);
-
-      display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, topBaseline);
-      display.print(senderBuf);
+      Graphics::truncateToWidth(senderBuf, textMaxW - iconReserve);
+      Graphics::drawLeftAligned(senderBuf, left, line1, GxEPD_BLACK);
 
       if (m.unread)
       {
-        // Misura larghezza reale del sender troncato per posizionare l'icona
-        // subito a destra (con 4 px di gap). Icona compressa (14h visibili
-        // centrate nel frame 20x20): top a cellY+5 fa cadere il rettangolo
-        // della busta (rows 3..16) attorno a cellY+8..cellY+21, allineato
-        // otticamente al cap-height del sender.
-        uint16_t sw, sh;
-        display.getTextBounds(senderBuf, 0, 0, &x1, &y1, &sw, &sh);
-        const int16_t iconX = cellX + Layout::MAIL_CELL_PAD_L + (int16_t)sw + 4;
-        const int16_t iconY = cellY + 5;
-        display.drawBitmap(iconX, iconY, INDOOR_ICON_MAIL,
-                           Layout::INDOOR_ICON_SIZE, Layout::INDOOR_ICON_SIZE,
-                           GxEPD_BLACK);
+        const int16_t iconX = left + Graphics::textWidth(senderBuf) + Layout::SMALL_ICON_GAP;
+        display.drawBitmap(iconX, Graphics::smallIconY(line1), INDOOR_ICON_MAIL,
+                           Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_RED);
       }
 
-      // Oggetto (FONT_SMALL, ravvicinato al mittente). Estende fino al bordo
-      // sinistro della colonna time/date per massimizzare lo spazio testo.
       char subjectBuf[MAIL_SUBJECT_LEN];
       strncpy(subjectBuf, m.subject, sizeof(subjectBuf) - 1);
       subjectBuf[sizeof(subjectBuf) - 1] = 0;
       display.setFont(Layout::FONT_SMALL);
-      const int16_t subjMaxW = Layout::MAIL_COL_W - Layout::MAIL_CELL_PAD_L
-                             - Layout::MAIL_CELL_PAD_R - rightColW - 8;
-      Calendar::detail::truncateToWidth(subjectBuf, subjMaxW);
-      display.setCursor(cellX + Layout::MAIL_CELL_PAD_L, botBaseline);
-      display.print(subjectBuf);
+      Graphics::truncateToWidth(subjectBuf, textMaxW);
+      Graphics::drawLeftAligned(subjectBuf, left, line2, GxEPD_BLACK);
     }
   } // namespace detail
 
   /**
-   * Disegna la griglia mail: MAIL_COLS x MAIL_ROWS_PER_COL di celle, lettura
-   * left-to-right top-to-bottom. NO icona header globale: l'icona busta
-   * appare inline accanto al mittente solo per le mail UNREAD (badge).
+   * Disegna il riquadro "Posta" con le Layout::MAIL_MAX celle della griglia,
+   * separate da un divisore verticale fra le colonne e da filetti fra le
+   * righe. Le celle oltre le mail in cache mostrano "--"; con una cache più
+   * grande della griglia (MAIL_MAX_MESSAGES ridefinito) si disegnano solo le
+   * prime, invece di uscire dal riquadro.
    *
-   * Va chiamata DENTRO il paged loop di Weather::renderFrame() (tra
-   * Calendar::draw e drawBanner), perche' GxEPD2 ridisegna ogni pagina
-   * separatamente. L'area (x=0..MAIL_W, y=MAIL_Y..MAIL_Y+MAIL_H) non
-   * intercetta il wallpaper (che si ferma a CINEMA_H = MAIL_Y), quindi
-   * non serve fillRect bianco preventivo: lo fa gia' fillScreen.
-   *
-   * Solo colore nero (richiesta utente). L'ordinamento delle mail riflette
-   * quello in cache (insertion order del fetch Gmail: piu' recente prima).
+   * Va chiamata dentro il loop paged di Weather::renderFrame(), fra
+   * Calendar::draw e drawBanner: l'area è già bianca grazie a fillScreen.
    */
   inline void draw()
   {
-    for (size_t i = 0; i < MAX_MESSAGES; ++i)
+    display.setFont(Layout::FONT_TITLE);
+    Graphics::drawFieldsetRect(Layout::MAIL_X, Layout::MAIL_Y, Layout::MAIL_W, Layout::MAIL_H,
+                               Layout::BOX_RADIUS, "Posta", Layout::TITLE_INSET, GxEPD_WHITE);
+    const int16_t gridH = Layout::MAIL_ROWS_PER_COL * Layout::MAIL_ROW_H;
+    display.drawFastVLine(Layout::MAIL_X + Layout::MAIL_COL_W, Layout::MAIL_BODY_Y + 4, gridH - 8, GxEPD_BLACK);
+
+    const MailMessage empty{};
+    for (size_t i = 0; i < (size_t)Layout::MAIL_MAX; ++i)
     {
-      // Cella vuota: usa MailMessage{} con valid=false. Mostra "--".
-      const MailMessage empty{};
       const MailMessage& m = (i < detail::messagesCount) ? detail::messages[i] : empty;
       detail::drawMailCell((int)i, m);
     }
@@ -688,7 +647,7 @@ namespace Mail
      * sovrascriviamo la cache "live". Su transitorio (WiFi cade tra list
      * e batch, batch HTTP 5xx, parse error) la cache precedente resta
      * intatta e la futura UI continua a mostrare le ultime mail valide.
-     * Costo RAM: 5 * sizeof(MailMessage) ~ 600 byte sullo stack.
+     * Costo sullo stack: MAX_MESSAGES copie di MailMessage, circa 140 byte l'una.
      */
     MailMessage tmp[MAX_MESSAGES] = {};
     size_t tmpCount = 0;
@@ -733,4 +692,4 @@ namespace Mail
   }
 } // namespace Mail
 
-#endif // MAIL_H
+#endif // MAIL_MODULE_H

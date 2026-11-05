@@ -6,7 +6,7 @@ icons/weather/icons.json come icona base: un PNG 512x512 a tre colori (bianco,
 nero, rosso) che si può aprire, ritoccare o sostituire con un disegno proprio.
 "convert" riduce le icone base al lato richiesto e scrive icons_weather.h, con
 un piano nero e un piano rosso 1bpp per icona e la tabella che associa i codici
-condizione di OpenWeather alle icone.
+condizione di OpenWeather alle icone e alle etichette brevi in italiano.
 
 Uso:
     python tools/weather_icons.py extract [--font PATH]
@@ -45,13 +45,23 @@ RED = (255, 0, 0)
 
 
 def load_spec(spec_path=SPEC_PATH):
-    """Legge icons.json e verifica che ogni condizione nomini un'icona esistente."""
+    """Legge icons.json e verifica che ogni condizione nomini un'icona esistente, abbia
+    un'etichetta in ASCII stampabile (i font del pannello sono a 7 bit) e non si
+    sovrapponga alla precedente."""
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     names = {icon["name"] for icon in spec["icons"]}
+    previous_max = -1
     for condition in spec["conditions"]:
+        id_min, id_max = condition["ids"]
+        if id_min > id_max or id_min <= previous_max:
+            raise ValueError(f"condizione {condition['ids']}: intervallo vuoto o sovrapposto al precedente")
+        previous_max = id_max
         for key in ("day", "night"):
             if condition[key] not in names:
                 raise ValueError(f"condizione {condition['ids']}: icona '{condition[key]}' non elencata")
+        label = condition.get("label", "")
+        if not label or not all(" " <= char <= "~" for char in label) or '"' in label:
+            raise ValueError(f"condizione {condition['ids']}: etichetta '{label}' vuota o fuori dall'ASCII stampabile")
     if spec["fallback"] not in names:
         raise ValueError(f"fallback '{spec['fallback']}' non elencato")
     return spec
@@ -251,7 +261,6 @@ def build_header(spec, planes, side):
     """Testo completo di icons_weather.h."""
     source = spec["source"]
     names = [name for name, _, _ in planes]
-    index_of = {name: index for index, name in enumerate(names)}
     arrays, entries = [], []
     for name, black, red in planes:
         packed = {"BLACK": pack_plane(black), "RED": pack_plane(red)}
@@ -267,7 +276,7 @@ def build_header(spec, planes, side):
         entries.append(f"    {{ {pointers[0]}, {pointers[1]} }},   // {name}")
     enum_lines = [f"    {name.upper()} = {index}," for index, name in enumerate(names)]
     condition_lines = [
-        f"    {{ {c['ids'][0]}, {c['ids'][1]}, {c['day'].upper()}, {c['night'].upper()} }},"
+        f"    {{ {c['ids'][0]}, {c['ids'][1]}, {c['day'].upper()}, {c['night'].upper()}, \"{c['label']}\" }},"
         for c in spec["conditions"]
     ]
     return f"""#ifndef ICONS_WEATHER_H
@@ -282,9 +291,10 @@ def build_header(spec, planes, side):
 
 /**
  * Icone meteo {source['name']} ({source['license']}) associate ai codici
- * condizione di OpenWeather. Ogni icona ha un piano nero e un piano rosso nel
- * formato di Adafruit_GFX::drawBitmap(), cioè bit 1 = colore, MSB a sinistra
- * e righe paddate a byte; un piano vuoto vale nullptr.
+ * condizione di OpenWeather, con un'etichetta breve in italiano per codice.
+ * Ogni icona ha un piano nero e un piano rosso nel formato di
+ * Adafruit_GFX::drawBitmap(), cioè bit 1 = colore, MSB a sinistra e righe
+ * paddate a byte; un piano vuoto vale nullptr.
  */
 namespace WeatherIcons
 {{
@@ -297,13 +307,15 @@ namespace WeatherIcons
     const uint8_t* red;
   }};
 
-  /** Intervallo di codici condizione e indici delle icone di giorno e di notte. */
+  /** Intervallo di codici condizione, indici delle icone di giorno e di notte
+   *  ed etichetta mostrata sotto la temperatura. */
   struct Condition
   {{
-    uint16_t idMin;
-    uint16_t idMax;
-    uint8_t  day;
-    uint8_t  night;
+    uint16_t    idMin;
+    uint16_t    idMax;
+    uint8_t     day;
+    uint8_t     night;
+    const char* label;
   }};
 
   enum : uint8_t
@@ -321,19 +333,34 @@ namespace WeatherIcons
 {chr(10).join(condition_lines)}
   }};
 
-  /**
-   * Icona del codice condizione OpenWeather; night sceglie la variante
-   * notturna, che esiste solo per sereno e poche nubi. Un codice fuori
-   * tabella, compreso lo 0 di un dato mancante, ripiega su {spec['fallback']}.
-   */
-  inline const Icon& forCondition(uint16_t conditionId, bool night)
+  /** Riga della tabella che contiene il codice, oppure nullptr se manca. */
+  inline const Condition* findCondition(uint16_t conditionId)
   {{
     for (const Condition& condition : CONDITIONS)
     {{
       if (conditionId >= condition.idMin && conditionId <= condition.idMax)
-        return ICONS[night ? condition.night : condition.day];
+        return &condition;
     }}
-    return ICONS[{spec['fallback'].upper()}];
+    return nullptr;
+  }}
+
+  /**
+   * Icona del codice condizione OpenWeather; night sceglie la variante
+   * notturna dove la tabella ne ha una. Un codice fuori tabella, compreso lo
+   * 0 di un dato mancante, ripiega su {spec['fallback']}.
+   */
+  inline const Icon& forCondition(uint16_t conditionId, bool night)
+  {{
+    const Condition* condition = findCondition(conditionId);
+    if (!condition) return ICONS[{spec['fallback'].upper()}];
+    return ICONS[night ? condition->night : condition->day];
+  }}
+
+  /** Etichetta del codice condizione, "--" per un codice fuori tabella. */
+  inline const char* labelFor(uint16_t conditionId)
+  {{
+    const Condition* condition = findCondition(conditionId);
+    return condition ? condition->label : "--";
   }}
 }}
 

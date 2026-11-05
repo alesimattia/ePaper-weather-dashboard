@@ -31,17 +31,18 @@ Lo sketch principale compone uno schermo completo con:
   successivi. Se il fetch fallisce o il WiFi non c'è si usa il fallback PROGMEM
   in [`wallpaper/`](wallpaper/). Vedi [Background cinema](#background-cinema);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
-  bordo): **Indoor** (BME680: T/RH/IAQ/pressione), **Weather** (meteo corrente
-  OWM + sub-colonna sole con alba/tramonto, barra temp-range e mini-grafico
-  della temperatura percepita), **Forecast** (3 previsioni OWM);
-- **calendario** del mese corrente in alto a destra, bordi arrotondati
-  in stile fieldset (nome del mese sul bordo superiore) e data odierna
-  in rosso pieno (`fillRoundRect`);
-- **lista eventi** (5 slot) sotto al calendario, fusione di **Outlook**
+  bordo): **Interno** (BME680: T/RH/IAQ/pressione), **Meteo** (meteo corrente
+  OWM + colonna sole con alba/tramonto, barra temp-range e mini-grafico
+  della temperatura percepita), **Previsioni** (3 previsioni OWM). Ogni blocco
+  meteo ha un'icona Material scelta dal codice condizione di OpenWeather, vedi
+  [Icone meteo](#icone-meteo);
+- **scheda calendario** a destra: il mese corrente come titolo sul bordo,
+  la griglia con la data odierna in rosso pieno (`fillRoundRect`) e sotto un
+  filetto la **lista eventi** (5 sul 9.7", 7 sul 12.2"), fusione di **Outlook**
   (Microsoft Graph) e **Google Calendar** ordinati per inizio: gli
   eventi di oggi sono colorati in rosso, gli altri in nero, con evento
   in corso (end nel futuro) mantenuto fino al termine effettivo;
-- **griglia mail Gmail** sotto al wallpaper: 4 mail su 097c (2×2) / 6 su
+- **riquadro Posta** sotto al wallpaper: 4 mail su 097c (2×2) / 6 su
   122c (2×3). Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
   impostato da `Clock::begin()` in `setup()`);
@@ -59,7 +60,6 @@ ogni modifica dei parametri.
 ## Indice
 
 - [Hardware supportato](#hardware-supportato)
-- [Struttura del repository](#struttura-del-repository)
 - [Selezione del display](#selezione-del-display)
   - [Font utilizzati](#font-utilizzati)
 - [Configurazione (Env.h)](#configurazione-envh)
@@ -69,6 +69,7 @@ ogni modifica dei parametri.
 - [Flussi di boot e timeout](#flussi-di-boot-e-timeout)
 - [Background cinema](#background-cinema)
 - [Rate limit API esterne](#rate-limit-api-esterne)
+- [Icone meteo](#icone-meteo)
 - [Convertitore immagini Python](#convertitore-immagini-python)
 - [Build e flash](#build-e-flash)
 - [Crediti](#crediti)
@@ -227,25 +228,33 @@ scommentando UNA sola delle due varianti:
 | `DISPLAY_VARIANT_097C`  | SOLUM ESL 9.7"       | 960w × 672h | [Layout_097c.h](Layout_097c.h) |
 | `DISPLAY_VARIANT_122C`  | SOLUM 12.2"          | 960w × 768h | [Layout_122c.h](Layout_122c.h) |
 
-Ogni Layout definisce un namespace `Layout` con gli stessi simboli per
-entrambe le varianti, in modo che i moduli applicativi
-(`Weather.h`, `Calendar.h`, `Graphics.h`, `icons.h`, lo sketch `.ino`) li
-referenzino in modo uniforme. Famiglie di simboli:
+Ogni `Layout_<pannello>.h` definisce nel namespace `Layout` soltanto il
+pannello e due manopole, poi include [`Layout_common.h`](Layout_common.h), che
+ne deriva tutte le coordinate. I moduli applicativi (`Weather.h`, `Calendar.h`,
+`Mail.h`, `Graphics.h`, `icons.h`, lo sketch `.ino`) leggono tutto come
+`Layout::*`. Famiglie di simboli:
 
-- **`Layout::Panel`**, `PAGE_HEIGHT`, `makePanel()` — classe driver e sua
+- **`Layout::Panel`**, `PAGE_HEIGHT`, `makePanel()`: classe driver e sua
   costruzione. Lo sketch istanzia il display come
   `GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT>`.
-- **`Layout::PIN_*`, `ROTATION`, `SCREEN_W/H`** — pin del driver, orientamento e
-  geometria del frame visibile. Il bus HSPI condiviso resta nello sketch.
-- **`Layout::CINEMA_*`** — dimensioni dell'area wallpaper cinema, URL
-  del server (la query string riflette `width`/`height` corretti),
-  `STRIDE`, `PLANE_SZ`, `PLANES`, `TOTAL_SZ` per il fetch HTTP.
-- **`Layout::SIDEBAR_*`, `BANNER_*`, `INDOOR_RR_*`, `WEATHER_RR_*`,
-  `FORECAST_RR_*`, `BLOCK_*`, `SUN_*`, `TRB_*`, `TC_*`** — fieldset, blocchi e
-  baseline del banner meteo, espresse come `BANNER_Y + offset`, così lo scaling
-  097c→122c si propaga in automatico.
-- **`Layout::CAL_*` / `EVT_*` / `MAIL_*`** — riquadro mese, area eventi e griglia mail.
-- **`Layout::FONT_*`** — `const GFXfont*` per ciascun ruolo semantico.
+- **`Layout::PIN_*`, `ROTATION`, `SCREEN_W/H`**: pin del driver, orientamento e
+  geometria del frame visibile, presa dal driver. Il bus HSPI condiviso resta
+  nello sketch.
+- **Manopole del pannello**: `CINEMA_H` (altezza del wallpaper) e
+  `MAIL_ROWS_PER_COL` (righe del riquadro Posta).
+- **Token** di `Layout_common.h`: `MARGIN`, `GUTTER`, `STACK_GAP`,
+  `BOX_RADIUS`, `TITLE_INSET`, `BOX_PAD`, `TOP_BOX_Y`.
+- **`Layout::CINEMA_*`**: posizione e dimensioni del wallpaper, `STRIDE`,
+  `PLANE_SZ`, `PLANES`, `TOTAL_SZ` per il fetch HTTP. L'URL lo compone lo
+  sketch da queste costanti.
+- **`Layout::BANNER_*`, `INDOOR_*`, `WEATHER_*`, `FORECAST_*`, `WX_*`, `SUN_*`,
+  `TRB_*`, `TC_*`**: riquadri, blocchi e baseline del banner meteo, espresse
+  come `BANNER_Y + offset`, che a sua volta deriva da `SCREEN_H`.
+- **`Layout::CAL_*` / `EVT_*` / `MAIL_*`**: scheda della sidebar, eventi e
+  riquadro Posta.
+- **`Layout::FONT_*`**: `const GFXfont*` per ciascun ruolo semantico.
+- **`static_assert`** di geometria: righe della Posta e degli eventi troppo
+  basse o aree non positive fermano la build.
 
 Il dispatcher [`Layout.h`](Layout.h) valuta le `#define` e include uno
 solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
@@ -254,62 +263,56 @@ solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
 ### Differenze layout 097c vs 122c
 
 Il pannello 12.2" ha la stessa larghezza (960 px) e 96 px in più in
-altezza (672→768). I 96 px aggiuntivi sono distribuiti per mantenere il
-banner ancorato al fondo schermo:
+altezza (672→768). Tutte le X e le larghezze coincidono; le altezze le
+deriva `Layout_common.h` dalle due manopole e da `SCREEN_H`:
 
 | Costante           | 097c   | 122c   | Note                                        |
 |--------------------|-------:|-------:|---------------------------------------------|
-| `SCREEN_H`         | 672    | 768    | +96 px verticale                            |
-| `BANNER_Y`         | 460    | 556    | banner ancorato al fondo, +96               |
-| `BANNER_H`         | 212    | 212    | invariato (baseline ricalcolate dalla cascata) |
-| `CINEMA_H`         | 300    | 335    | +35 sul 122c; il resto dell'extra va in EVT_H + fascia mail |
-| Area mail (`MAIL_H`)| 160h   | 221h   | `BANNER_Y - CINEMA_H`. Griglia `MAIL_COLS × MAIL_ROWS_PER_COL` = 2×2 (4 mail) sul 097c, 2×3 (6 mail) sul 122c |
-| `EVT_H`            | 230    | 326    | +96 (assorbe extra verticale in sidebar)    |
-| `CINEMA_PLANE_SZ`  | 23 400 | 26 130 | (W/8)·H per ogni piano                        |
-| `CINEMA_PLANES`    | 2      | 3      | il 9.7" è BWR; il 12.2" chiede un terzo piano, perchè il suo quarto colore non è determinato |
-| `CINEMA_TOTAL_SZ`  | 46 800 | 78 390 | piano × piani -> ~46 KB (097c) / ~77 KB (122c) |
-| `CINEMA_URL` height| 300    | 335    | il server riceve la dimensione corretta     |
-
-Tutto il banner (`X/W` dei fieldset, `BLOCK_FC*_X`, `SUN_COL_OFFSET`)
-resta invariato perchè la larghezza è identica. Le baseline interne
-del banner (icona, description, temp, time, indoor row1..4) sono
-espresse come `BANNER_Y + offset` in entrambi i Layout, quindi seguono
-la traslazione di `BANNER_Y` in automatico.
+| `SCREEN_H`         | 672    | 768    | dal driver                                  |
+| `CINEMA_H`         | 290    | 325    | manopola: altezza del wallpaper             |
+| `MAIL_ROWS_PER_COL`| 2      | 3      | manopola: 4 mail sul 097c, 6 sul 122c       |
+| `BANNER_Y`         | 466    | 562    | `SCREEN_H - MARGIN - BANNER_H`, banner alto 196 |
+| `MAIL_Y` / `MAIL_H`| 316 / 134 | 351 / 195 | righe da 57 e 58 px                       |
+| `CAL_H`            | 436    | 532    | scheda della sidebar fino a `BANNER_Y - STACK_GAP` |
+| `EVT_H`            | 231    | 327    | 5 righe da 46 px sul 097c, 7 sul 122c       |
+| `CINEMA_PLANE_SZ`  | 22 330 | 25 025 | ceil(W/8)·H per ogni piano, con W = 610     |
+| `CINEMA_PLANES`    | 2      | 2      | black e red: nessuno dei due pannelli ha il giallo |
+| `CINEMA_TOTAL_SZ`  | 44 660 | 50 050 | piano × piani, ~44 KB / ~49 KB              |
 
 ### Font utilizzati
 
 I moduli applicativi non referenziano mai direttamente i font GFX:
 usano sempre gli alias semantici `Layout::FONT_*`, definiti in
-[`Layout_097c.h`](Layout_097c.h) e [`Layout_122c.h`](Layout_122c.h). Cambiare
-un font vuol dire ridefinire l'alias nel Layout, senza toccare i moduli. Tutti i
-font appartengono al set Adafruit_GFX (`<Fonts/*.h>`) e sono inclusi una sola
-volta dal Layout selezionato.
+[`Layout_common.h`](Layout_common.h). Cambiare un font vuol dire ridefinire
+l'alias lì, senza toccare i moduli. Tutti i font appartengono al set
+Adafruit_GFX (`<Fonts/*.h>`).
 
 | Alias semantico        | Font GFX             | Dimensione  | Dove viene usato |
 |------------------------|----------------------|-------------|------------------|
-| `FONT_MICRO`           | `Picopixel`          | ~3 pt (4×6 px) | Label `HH:MM` dei tick asse X del mini-chart temperatura; pedice numerico accuracy IAQ |
-| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Oggetto (subject) delle mail; label IAQ e fallback `--` del riquadro Indoor |
-| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Header e numeri del calendario; righe eventi; mittente, orario e data delle mail; descrizione meteo; cifre della barra temp-range; HH:MM di alba/tramonto; titoli dei fieldset |
-| `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Nome del mese sul bordo del calendario; valori grandi del riquadro Indoor (temperatura, umidità, pressione) |
-| `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo corrente + 3 forecast, in rosso |
-| `FONT_TIME` *(alias)*  | `FreeSans18pt7b` (097c) / `FreeSans12pt7b` (122c) | 18 / 12 pt | Orario `HH:MM` sotto i blocchi meteo. Unico alias che cambia tra i due Layout: sul 12.2" è rimappato a `FONT_BODY` |
+| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Oggetto delle mail; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; badge `TUYA ERR`; righe meteo che non entrano in 12 pt |
+| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Giorni del mese; righe eventi; mittente, orario e data delle mail; orario, etichetta e riga precipitazioni dei blocchi meteo; IAQ; cifre della barra temp-range; alba e tramonto |
+| `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Valori del riquadro Interno (temperatura, umidità, pressione) |
+| `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo, in rosso |
+| `FONT_TITLE`           | `FreeSansBold12pt7b` | 12 pt bold  | Titoli dei riquadri sul bordo superiore, compreso il mese |
 
 Note pratiche:
 
 - Tutti i font `*7b` (FreeSans*) **non** contengono il glifo `°`: il
   simbolo dei gradi è disegnato come cerchietto da `drawTempWithDegree`,
   con raggio differenziato tra Regular (2 px) e Bold (3 px).
-- `Picopixel` rende grossolanamente ai piccoli formati: l'accuracy IAQ
-  viene shiftata di +2 px (`setCursor(subX, baseline + 2)`) per
-  apparire come pedice rispetto al numero IAQ in `FONT_SMALL`.
+- I titoli sui bordi hanno la baseline a mezza cap height del font
+  (`Graphics::drawFieldsetRect`), quindi stanno alla stessa altezza con o
+  senza discendenti.
 
 ### Aggiungere un terzo display
 
 1. Scrivere il driver custom (cartella + `.h` header-only sullo schema
    di [`GxEPD2_SOLUM_ESL/`](GxEPD2_SOLUM_ESL/)), rispettando il contratto di
    `GxEPDImage.h`.
-2. Creare `Layout_<nome>.h` con gli stessi simboli del namespace
-   `Layout` (Panel, pin, font, coord, cinema).
+2. Creare `Layout_<nome>.h` con gli stessi simboli di pannello del namespace
+   `Layout` (Panel, pin, `PAGE_HEIGHT`, `makePanel()`, `ROTATION`,
+   `SCREEN_W/H`) e le due manopole `CINEMA_H` e `MAIL_ROWS_PER_COL`, poi
+   `#define LAYOUT_PANEL_SELECTED` e l'include di `Layout_common.h`.
 3. Aggiungere il ramo `#elif defined(DISPLAY_VARIANT_<NOME>)` in
    [Layout.h](Layout.h).
 4. Nello sketch `.ino` aggiungere `#define DISPLAY_VARIANT_<NOME>` in
@@ -463,7 +466,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 - [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`calendarioPronto()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
 - Il task `bsec` è sospeso senza sensore (`pronto` = `Indoor::attivo`) e interroga BSEC ogni 300 s dall'ultima chiamata ([Indoor::msUntilNextPoll()](Indoor.h)). Il suo `dopoIndoor()` chiede il ridisegno solo dentro la fascia WiFi: di notte il campione si acquisisce ma il pannello non si aggiorna.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
-- [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `dopoTuya()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `[TUYA ERR]`, tramite `Tuya::hasFailed()`.
+- [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `dopoTuya()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `TUYA ERR`, tramite `Tuya::hasFailed()`.
 
 #### Consumatori
 
@@ -473,7 +476,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
   - [renderSunColumn()](Weather.h) per alba, tramonto, barra temp-range e mini-grafico;
-  - il badge `[TUYA ERR]` quando la telemetria è in errore.
+  - il badge `TUYA ERR` quando la telemetria è in errore.
 
 Gli stati intermedi dei fetch (`meteoIncompleto()`, `tuyaPronto()`) servono solo a decidere se un task può partire.
 
@@ -481,12 +484,22 @@ Gli stati intermedi dei fetch (`meteoIncompleto()`, `tuyaPronto()`) servono solo
 
 Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
 
-- Endpoint unico `/data/3.0/onecall` con `exclude=minutely,alerts`, `lang=it`,
+- Endpoint unico `/data/3.0/onecall` con `exclude=minutely,alerts` e
   `units=metric`. Una chiamata restituisce `current` (→ `slots[0]`),
   `hourly[3/6/9]` (→ `slots[1..3]`, step 3h) e `daily[0]` (temperatura percepita
   `morn`/`eve` per la barra temp-range). Un `DeserializationOption::Filter`
-  tiene in memoria solo i campi letti: tra gli altri `sunrise`/`sunset` (colonna
-  sole) e `rain.1h`/`pop` delle ore.
+  tiene in memoria solo i campi letti: per ogni slot il codice condizione
+  `weather[0].id` e il suffisso giorno/notte di `weather[0].icon`, poi
+  `sunrise`/`sunset` (colonna sole) e `pop`, `rain.1h` e `snow.1h` delle ore.
+  Il testo descrittivo di OpenWeather non si scarica: icona ed etichetta breve
+  vengono dal codice, vedi [Icone meteo](#icone-meteo).
+- **Riga sotto la temperatura**, uguale per i quattro blocchi: con una
+  probabilità di precipitazione o un volume previsto è `pop% X.Xmm`, dove i mm
+  sommano pioggia e neve dell'ora; altrimenti è l'etichetta del codice. Per il
+  blocco corrente probabilità e volumi vengono da `hourly[0]`, l'ora in corso,
+  perchè `current` non ha `pop`.
+- Le temperature si arrotondano con `lroundf` e si stampano come interi, così
+  fra -0.5 e 0 compare "0" e non "-0".
 - Cadenza `owm_min` (default 10 min, vedi [Cadenze configurabili](#cadenze-configurabili-timingsh-modificabili-da-config)).
 - **Prerequisito account**: la chiave `OWM_API_KEY` deve essere sottoscritta a
   One Call API 3.0, che include 1000 chiamate/giorno gratuite e oltre fattura a
@@ -494,15 +507,15 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   sottoscrizione l'endpoint rifiuta la richiesta.
 - Il WiFi non è gestito qui: `runFetch()` presuppone STA già connessa
   (`wifiOn()`/`wifiOff()` sono dello scheduler).
-- **Banner**: fascia 960w × 212h in basso con 3 riquadri fieldset (raggio 18 px,
-  titolo sul bordo superiore): **Indoor** 154w × 202h (T/RH/IAQ/pressione),
-  **Weather** 306w × 202h (a sinistra il blocco corrente con icona 88w × 88h,
-  descrizione, temperatura percepita in rosso e orario; a destra la colonna sole
-  con alba e tramonto, la **barra temp-range** morn↔eve in nero con indicatore
-  triangolare sulla percepita corrente, e il mini-grafico della temperatura
-  percepita da 3 ore fa a ~9 ore avanti, passato in nero e previsione in rosso),
-  **Forecast** 470w × 202h (3 slot da ~156w). Utility condivisa
-  `Graphics::drawFieldsetRect` in [`Graphics.h`](Graphics.h).
+- **Banner**: 3 riquadri fieldset alti 196 px in fondo allo schermo (raggio
+  12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 200w
+  (T/RH/IAQ/pressione, badge `TUYA ERR` sul bordo inferiore), **Meteo** 280w (a
+  sinistra il blocco corrente con orario, icona 88w × 88h, temperatura percepita
+  in rosso ed etichetta; a destra la colonna sole con alba e tramonto, la
+  **barra temp-range** morn↔eve in nero con indicatore triangolare sulla
+  percepita corrente, e il mini-grafico della temperatura percepita da 3 ore fa
+  a ~9 ore avanti, passato in nero e previsione in rosso), **Previsioni** 440w
+  (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
 - **Gate del primo refresh**: è dello scheduler, il task `display` è dovuto solo
   quando la rete ha prodotto un esito qualsiasi, anche un fallimento, oppure sono
   passati `PRIMO_FRAME_ATTESA_MS` dal boot. Il primo frame arriva sempre, con i
@@ -512,12 +525,12 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
 
 Widget del mese e lista eventi Outlook + Google.
 
-- **Widget mese**: riquadro 320w × 200h in alto a destra, bordi arrotondati in
-  stile fieldset (raggio 14 px), nome del mese in italiano sul bordo superiore.
-  Griglia 7×6 **Lunedì-first**, cella odierna riempita di rosso con numero in bianco.
-- **Lista eventi**: 5 righe sotto il widget. Cache separate per sorgente
+- **Scheda**: un fieldset 320w alto quanto la colonna destra, con il nome del
+  mese in italiano sul bordo superiore. Griglia 7×6 **Lunedì-first**, cella
+  odierna riempita di rosso con numero in bianco, poi un filetto e gli eventi.
+- **Lista eventi**: 5 righe sul 9.7", 7 sul 12.2". Cache separate per sorgente
   (`outlookEvents[5]` + `googleEvents[5]`); al rendering le due cache sono fuse,
-  ordinate per `startUtc` e ritagliate ai 5 eventi più vicini all'orario attuale.
+  ordinate per `startUtc` e ritagliate agli eventi più vicini all'orario attuale.
   Gli eventi già terminati (`endUtc` passato) si saltano.
   Per riga: titolo a sinistra (troncato), data e orario a destra. Riga rossa se
   l'evento cade oggi, nera altrimenti.
@@ -529,28 +542,29 @@ Widget del mese e lista eventi Outlook + Google.
   `googleapis.com/calendar/v3/calendars/primary/events?timeMin=<now>&fields=items(summary,start,end)`:
   un evento in corso resta in lista finchè non termina. `fields=` tiene piccola la
   risposta anche con eventi dalla descrizione lunga.
-- Il disegno non dipende dalla rete: senza fetch riuscito la lista mostra 5
+- Il disegno non dipende dalla rete: senza fetch riuscito la lista mostra i
   placeholder `--`. L'epoch di riferimento per "oggi" è l'orologio di sistema
   quando è sincronizzato, altrimenti `Weather::slots[0].epoch`; senza nessuno dei
-  due il riquadro del mese mostra `--` invece di "Gennaio 1970".
+  due la scheda ha il titolo `--` e nessuna griglia, invece di "Gennaio 1970".
   `Calendar::draw()` accetta solo un `utcEpoch`, il fuso lo applica `Clock`.
 
 ### Mail (`Mail.h`)
 
-Ultime mail della casella Gmail, in una griglia sotto al wallpaper cinema (4 su
-097c in 2×2, 6 su 122c in 2×3). Solo nero.
+Ultime mail della casella Gmail, nel riquadro "Posta" sotto al wallpaper cinema
+(4 su 097c in 2×2, 6 su 122c in 2×3). Testo nero, busta delle mail non lette in
+rosso.
 
 | Funzione | Effetto |
 |---|---|
 | `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
 | `Mail::runFetch()` | Fetch best-effort. Ritorna `true` se la cache è aggiornata; lo scheduler ne fa seguire il ridisegno. Cadenza e ritenti non sono suoi. |
-| `Mail::draw()` | Disegna la griglia nell'area `Layout::MAIL_*`, dentro il paged loop. |
+| `Mail::draw()` | Disegna il riquadro e le `Layout::MAIL_MAX` celle nell'area `Layout::MAIL_*`, dentro il paged loop. Con una cache più grande (`MAIL_MAX_MESSAGES`) disegna solo le prime. |
 | `Mail::isConfigured()` | Vero se le credenziali Google di `Env.h` sono configurate: è la precondizione del task `mail`. |
 
 **Cella**: indirizzo del mittente (solo `<email>`, il nome leggibile è scartato)
-in alto a sinistra con badge busta 20×20 se la mail è non letta, oggetto
-(`FONT_SMALL`, max 60 caratteri) sotto, orario `HH:MM` e data `dd/MM` a destra.
-Cella senza mail: placeholder `--`.
+in alto a sinistra con la busta 20×20 rossa se la mail è non letta, oggetto
+(`FONT_SMALL`, max 60 caratteri) sotto, orario `HH:MM` e data `dd/MM` a destra,
+oppure `--` se la mail non ha `internalDate`. Cella senza mail: placeholder `--`.
 
 **Fetch** (1 GET + 1 POST batch sulla stessa connessione TLS in HTTP/1.1 keep-alive;
 se il server la chiude dopo la lista, HTTPClient si riconnette da sè):
@@ -598,7 +612,7 @@ Lettura del sensore **Bosch BME680** via I2C con fusione IAQ della libreria
 **Bosch BSEC2** in modalità **ULP**: un campione ogni 300 s, che è il modo con cui BSEC
 è sottoscritto e non un intervallo configurabile. Il modulo espone una cache
 (`Indoor::sample()`) con temperatura e umidità heat-compensated, pressione (hPa),
-indice IAQ (0-500) e livello di calibrazione (0-3), mostrata nel riquadro Indoor.
+indice IAQ (0-500) e livello di calibrazione (0-3), mostrata nel riquadro Interno.
 
 `Indoor::refresh()` è chiamato dal task `bsec`: BSEC temporizza internamente i 300 s.
 Quando arriva un nuovo campione ritorna `true` e lo scheduler chiede il ridisegno
@@ -662,8 +676,8 @@ nell'app. Si verifica in **Device Debugging** sulla console, oppure con
 `sys.ack`, sottoscrive il topic di risposta e logga il codice del cloud (`0` =
 accettato). Costa una sottoscrizione e fino a `TUYA_ACK_TIMEOUT_MS` per publish.
 
-**Sul pannello** compare solo un badge `[TUYA ERR]` accanto al titolo del riquadro
-Indoor quando l'ultimo tentativo speso è fallito. Il ridisegno è chiesto solo quando il
+**Sul pannello** compare solo un badge `TUYA ERR` rosso sul bordo inferiore del
+riquadro Interno quando l'ultimo tentativo speso è fallito. Il ridisegno è chiesto solo quando il
 badge compare o sparisce, perchè un refresh pieno costa ~24 s. Una radio caduta non
 alza il badge: lo scheduler non chiama nemmeno il modulo.
 
@@ -816,36 +830,47 @@ definito:
 | `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
 | `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
 
-Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_097c.h`):
+Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_common.h`
+con le manopole di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
+affiancate, 16 px fra zone impilate:
 
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
-| Wallpaper         | `x=0..620, y=0..300`      | Background cinema scaricato via HTTP (620w × 300h BWR)  |
-| Area mail         | `x=0..620, y=300..460`    | Griglia 2×2 = 4 mail. Per cella: email mittente + busta inline se non letta / oggetto / orario HH:MM / data dd/MM. Solo nero |
-| Sidebar           | `x=620..960, y=0..460`    | Contenitore bianco per calendario + eventi              |
-| Calendario mese   | `x=630..950, y=10..210`   | 320w × 200h fieldset (raggio 14), mese sul bordo        |
-| Lista eventi      | `x=630..950, y=220..450`  | 5 righe da 46 px (Outlook + Google merged)              |
-| Banner Indoor     | `x=5..159,  y=465..667`   | 154w × 202h fieldset, 1 colonna × 4 righe BME680 (T/RH/IAQ/P) |
-| Banner Weather    | `x=169..475, y=465..667`  | 306w × 202h fieldset, meteo corrente + colonna sole a destra  |
-| Banner Forecast   | `x=485..955, y=465..667`  | 470w × 202h fieldset, 3 slot previsioni da ~156w px           |
+| Wallpaper         | `x=10..620, y=10..300`    | Background cinema scaricato via HTTP (610w × 290h BWR)  |
+| Posta             | `x=10..620, y=316..450`   | Riquadro con 2×2 = 4 mail su righe da 57 px. Per cella: email mittente + busta rossa se non letta / oggetto / orario HH:MM / data dd/MM |
+| Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=207, poi 5 eventi da 46 px (Outlook + Google merged) |
+| Banner Interno    | `x=10..210,  y=466..662`  | 200w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
+| Banner Meteo      | `x=220..500, y=466..662`  | 280w × 196h, blocco corrente 162w + colonna sole 118w   |
+| Banner Previsioni | `x=510..950, y=466..662`  | 440w × 196h, 3 blocchi da 146w                          |
 
-Sul pannello SOLUM 12.2" (960w × 768h, valori da `Layout_122c.h`) X e larghezze
-sono identici; i 96h px aggiuntivi rispetto al 097c vanno alla sidebar / lista
-eventi e all'area mail, NON al wallpaper: Wallpaper fino a `y=335` (+35h vs
-097c), Sidebar fino a `y=556`, Lista eventi `y=220..546`, banner ancorato al
-fondo (`y=556..768`). Area mail `y=335..556` (221h, griglia 2×3 = 6 mail vs
-2×2 = 4 sul 097c). Vedi tabella riepilogativa nella sezione
+Sul pannello SOLUM 12.2" (960w × 768h) X e larghezze sono identici. Il
+wallpaper scende a `y=335` (610w × 325h), la Posta occupa `y=351..546` con 2×3
+= 6 mail, la scheda calendario arriva a `y=546` con 7 eventi e il banner sta a
+`y=562..758`. Vedi la tabella nella sezione
 [Differenze layout 097c vs 122c](#differenze-layout-097c-vs-122c).
 
-Anteprima statica del layout (rendering nativo GitHub via SVG):
+Anteprima del frame disegnata come la disegna il firmware, dalle costanti di
+`Layout_common.h` e dei `Layout_<pannello>.h`, con dati di esempio e il
+wallpaper di fallback ritagliato all'area cinema. Il fallback è più basso
+dell'area del 12.2", quindi lì resta una fascia bianca sotto l'immagine, come in
+campo senza rete:
 
 ![Anteprima layout 960w × 672h](preview.svg)
 
-> La versione HTML interattiva equivalente è in [`preview_097c.html`](preview_097c.html)
-> (offre stile più ricco, calendario popolato dinamicamente da JS sul mese
-> corrente e lista eventi di esempio; il contenuto strutturale è lo stesso
-> dell'SVG sopra). Aprire in un browser per la consultazione offline. L'anteprima
-> per il pannello 12.2" è in [`preview_122c.html`](preview_122c.html).
+![Layout 960w × 768h](docs/layout_122c.png)
+
+> Le pagine [`preview_097c.html`](preview_097c.html) e
+> [`preview_122c.html`](preview_122c.html) si aprono in un browser e mostrano lo
+> stesso frame con zoom, zone del layout e coordinate del puntatore. Anteprime,
+> `preview.svg` e PNG di `docs/` le genera
+> [`tools/layout_preview.py`](tools/layout_preview.py) e non si modificano a
+> mano: dopo ogni modifica del layout si rigenerano con
+> `python tools/layout_preview.py`, che legge anche font GFX, icone e wallpaper
+> veri e richiede Pillow.
+>
+> La pagina [`docs/mockup_097c.html`](docs/mockup_097c.html) conserva il
+> confronto fra il layout precedente e le due varianti proposte, con le icone
+> meteo e la tabella delle coordinate.
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner
@@ -1005,8 +1030,8 @@ Ogni esito è loggato con durata e prossima scadenza:
 | Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Fra 30 s |
 | Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata** e ridisegno richiesto: è una risposta valida, non un errore | Alla cadenza piena |
 | Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
-| Tuya (broker, credenziali, PUBACK mancante) | Badge `[TUYA ERR]` accanto al titolo Indoor, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
-| BME680 (init failed) | `Indoor::refresh()` no-op, banner indoor a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
+| Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
+| BME680 (init failed) | `Indoor::refresh()` no-op, riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.
@@ -1032,31 +1057,35 @@ Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 
 ## Background cinema
 
-Il wallpaper a sinistra della sidebar calendario (`Layout::CINEMA_W` ×
-`Layout::CINEMA_H` px: 620w × 300h sul 097c, 620w × 335h sul 122c) mostra un
-collage locandine + orari scaricato via HTTP dalla webapp
-[`webapp/`](webapp/) (vedi [webapp/README.md](webapp/README.md) per l'API).
-La fascia tra fine wallpaper e banner meteo (y=`CINEMA_H`..`BANNER_Y`:
-160h px sul 097c, 221h px sul 122c) ospita la **griglia mail** del modulo
-[`Mail.h`](Mail.h).
+Il wallpaper in cima alla colonna sinistra (`Layout::CINEMA_W` ×
+`Layout::CINEMA_H` px a partire da (`CINEMA_X`, `CINEMA_Y`) = (10, 10): 610w ×
+290h sul 097c, 610w × 325h sul 122c) mostra un collage locandine + orari
+scaricato via HTTP dalla webapp [`webapp/`](webapp/) (vedi
+[webapp/README.md](webapp/README.md) per l'API). Sotto c'è il riquadro **Posta**
+del modulo [`Mail.h`](Mail.h).
 
 ### Flusso
 
 1. **Boot**: `g_cinema_desc` in [`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino)
-   punta al fallback PROGMEM `img_la_grande_onda_desc` — il display ha comunque
+   punta al fallback PROGMEM `img_la_grande_onda_desc`: il display ha comunque
    un'immagine da mostrare se il WiFi non è ancora connesso o l'endpoint
-   non risponde.
+   non risponde. Il fallback si genera con
+   [`epd_image_converter.pyw`](#convertitore-immagini-python) a 610w × 290h:
+   `showImage()` non ritaglia, quindi un'immagine più grande invade il titolo
+   della Posta e una più larga finisce nella colonna destra, sbiancata.
 2. **Fetch**: `fetchCinemaImage()` è l'**ultimo** task di rete del giro, dopo meteo,
    mail e calendari, perchè è l'unico che può pagare il cold start di render.com e il
-   tempo degli altri è la copertura di quel boot. Fa un `HTTP GET` a `Layout::CINEMA_URL`:
+   tempo degli altri è la copertura di quel boot. Fa un `HTTP GET` all'URL che
+   compone da `CINEMA_ORIGIN` e dalle costanti del layout:
    ```
-   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=300&colors=bwr&dither=floyd   (097c)
-   https://cinema-epd.onrender.com/cinema/arduino?width=620&height=335&colors=bwry&dither=floyd  (122c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=290&colors=bwr&dither=floyd   (097c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=325&colors=bwr&dither=floyd   (122c)
    ```
-   L'URL e i parametri `width`/`height` sono nel Layout della variante: cambiare
-   display significa solo scommentare l'altro `DISPLAY_VARIANT_*` nel `.ino`.
+   `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio: lo usa anche il
+   ping `/health`. Larghezza, altezza e piani non possono divergere dai buffer,
+   perchè vengono dalle stesse costanti.
 3. **Allocazione**: `Layout::CINEMA_PLANES` buffer da `Layout::CINEMA_PLANE_SZ` byte
-   ciascuno, cioè 2 × 23 400 = 46 800 byte sul 097c e 3 × 26 130 = 78 390 sul 122c.
+   ciascuno, cioè 2 × 22 330 = 44 660 byte sul 097c e 2 × 25 025 = 50 050 sul 122c.
    `allocPlaneBuffer()` prova `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` se
    `psramFound()` è `true`, altrimenti `malloc()` sull'heap interno, e logga su Serial
    il segmento usato e la memoria libera residua.
@@ -1100,20 +1129,20 @@ deriva di cron.
 
 | Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` |
 |----------|------------------:|----------------:|------------------:|
-| 097c (620w × 300h, BWR)  | 23 400 byte | 2 | **46 800 byte** (~46 KB) |
-| 122c (620w × 335h)       | 26 130 byte | 3 | **78 390 byte** (~77 KB) |
+| 097c (610w × 290h, BWR)  | 22 330 byte | 2 | **44 660 byte** (~44 KB) |
+| 122c (610w × 325h, BWR)  | 25 025 byte | 2 | **50 050 byte** (~49 KB) |
 
 | Configurazione board | Esito allocazione                                 |
 |----------------------|---------------------------------------------------|
 | ESP32-WROVER (PSRAM 4–8 MB) | OK per entrambe le varianti: tutti i buffer in PSRAM, heap interno libero per altro |
-| ESP32 classico senza PSRAM (come la Waveshare Driver Board, WROOM-32E) | OK su entrambe le varianti: ~46 KB sul 097c, ~77 KB sul 122c in heap interno. Verifica `ESP.getFreeHeap()` dopo la connessione WiFi |
+| ESP32 classico senza PSRAM (come la Waveshare Driver Board, WROOM-32E) | OK su entrambe le varianti: ~44 KB sul 097c, ~49 KB sul 122c in heap interno. Verifica `ESP.getFreeHeap()` dopo la connessione WiFi |
 | Heap insufficiente | Allocazione fallita → fallback al PROGMEM, nessun crash |
 
 Il Serial monitor stampa qualcosa come, sul 097c senza PSRAM:
 ```
 [cinema] PSRAM assente (uso heap interno), free heap: 180 234 byte
-[cinema] black: alloc 23400 byte in heap interno (free: 180234)
-[cinema] red: alloc 23400 byte in heap interno (free: 156834)
+[cinema] black: alloc 22330 byte in heap interno (free: 180234)
+[cinema] red: alloc 22330 byte in heap interno (free: 157904)
 [cinema] download completato, immagine remappata
 ```
 
@@ -1141,6 +1170,36 @@ servizio). I fetch di rete sono vincolati alla finestra oraria
 `WIFI_ACTIVE_HOUR_START..END` (default 07:00–23:59): fuori da questa fascia la radio
 resta spenta e non si contattano API esterne, con l'unica eccezione della telemetria
 Tuya se `TUYA_IGNORE_ACTIVE_HOUR` è a 1.
+
+---
+
+## Icone meteo
+
+Le icone dei blocchi meteo sono Material Symbols Rounded di Google (Apache 2.0),
+nella variante vuota, con sole, luna, gocce, neve, grandine e fulmini in rosso
+e la nuvola sempre nera. La catena è in tre posti:
+
+| Dove | Cosa |
+|---|---|
+| [`icons/weather/`](icons/weather/) | Icone base PNG 512×512 a tre colori, ritoccabili, e `icons.json` con regole di colore e tabella codice OpenWeather → icona e etichetta. Il font sorgente sta in `source/`. Dettaglio in [icons/weather/README.md](icons/weather/README.md) |
+| [`tools/weather_icons.py`](tools/weather_icons.py) | `extract` rende le icone base dal font; `convert --side 88` le riduce e genera l'header |
+| [`icons_weather.h`](icons_weather.h) | Generato, da non modificare a mano: piani nero e rosso per icona, `WeatherIcons::forCondition(id, night)` e `WeatherIcons::labelFor(id)` |
+
+L'icona usa tutta l'informazione del codice condizione `weather[0].id`
+(intensità della pioggia, neve debole o forte, nevischio, nebbia, sabbia,
+tornado, quota di nubi) e il giorno/notte; l'etichetta resta breve e senza
+accenti, misurata per entrare nel blocco in 12 pt o in 9 pt. La tabella copre i
+55 codici documentati da OpenWeather; un codice sconosciuto mostra la nuvola e
+`--`. Le icone piccole di Interno, alba e tramonto e della busta restano in
+[`icons.h`](icons.h).
+
+```bash
+python tools/weather_icons.py extract       # dal font alle icone base
+python tools/weather_icons.py convert --side 88   # dalle icone base a icons_weather.h
+```
+
+Dipendenza: Pillow. Le funzioni sono indipendenti dalla riga di comando, così
+un'interfaccia grafica può importarle.
 
 ---
 

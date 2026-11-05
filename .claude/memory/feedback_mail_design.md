@@ -21,14 +21,13 @@ il ciclo, quindi la garanzia è strutturale e non va reintrodotta a mano.
 `Mail::runFetch()` può fallire silenziosamente: la cache resta com'era e i
 task successivi partono comunque.
 
-**UPDATE (2026-05): La UI mail ora ESISTE.** Originariamente l'utente disse
-"per ora non voglio modificare l'interfaccia grafica ma devo solo scaricare
-le mail". Successivamente ha richiesto e approvato il rendering: griglia
-2x2 (097c, 4 mail) / 2x3 (122c, 6 mail) nell'area y=CINEMA_H..BANNER_Y,
-icona busta `INDOOR_ICON_MAIL` 20x20 in alto a sinistra, font come gli
-eventi calendario, solo nero. `Mail::draw()` viene chiamato dentro
-`Weather::renderFrame()` paged loop e il `.ino` chiama `Weather::markDirty()`
-dopo un `Mail::runFetch()` riuscito.
+**UI mail approvata dall'utente**: riquadro "Posta" sotto il wallpaper con
+griglia 2x2 (097c, 4 mail) / 2x3 (122c, 6 mail), divisore fra le colonne e
+filetti fra le righe, font come gli eventi calendario, testo nero e busta
+`INDOOR_ICON_MAIL` rossa accanto al mittente delle mail non lette (scelta
+nel mockup della variante A). `Mail::draw()` viene chiamato dentro
+`Weather::renderFrame()` paged loop e lo scheduler chiede il ridisegno dopo
+un `Mail::runFetch()` riuscito.
 
 **2. Mail va eseguito SUBITO PRIMA di Outlook + Google Calendar.**
 

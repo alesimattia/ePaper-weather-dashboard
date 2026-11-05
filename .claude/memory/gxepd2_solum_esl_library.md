@@ -42,7 +42,7 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
   `#error` (verificato: la build fallisce al preprocessore con quel messaggio).
 - `GxEPD2_SOLUM_DRIVER_CLASS`: nome della classe selezionata.
 - `SOLUM_MAX_HEIGHT(EPD)`: altezza della page dal budget `SOLUM_MAX_DISPLAY_BUFFER_SIZE` (default
-  65536 su ESP32, lo stesso di upstream; 15000 altrove), diviso 2 perchè i pannelli hanno due piani
+  65536, lo stesso di upstream per ESP32, l'unica architettura della libreria), diviso 2 perchè i pannelli hanno due piani
   a 1 bpp, con cap a `EPD::HEIGHT`. Su un pannello 960 px di larghezza dà **273 righe = ~65 KB** di
   buffer: va bene per uno sketch di prova, non per un firmware che ha altro in RAM. Il consumer
   `A:\epd` non la usa e tiene `Panel::HEIGHT / 8` (~20 KB, otto page).
@@ -61,13 +61,18 @@ portato fuori — vedi [[waveshare_esp32_driver_board]] e [[gxepd2_122c_driver]]
 
 **Contratto di `GxEPDImage.h`.** Il namespace e il template `showImage()` sono **unici** per la
 libreria, non duplicati per driver: due header driver possono stare nella stessa translation unit.
-Il template è indipendente dal silicio ma pretende cinque metodi pubblici da ogni driver —
-`setPaged()`, `showImagePageHint()`, `writeImageYellow()`, `preserveYellow()`,
-`isYellowPreserved()` — elencati in testa a quel file. Un driver a due piani dichiara le tre del
-giallo come **no-op**: il ramo `FORMAT_BWRY_1BPP` è guardato dal formato del descrittore, non dal
-tipo del driver, quindi non le chiama mai. Conseguenza pratica: i moduli applicativi scritti per il
-9.7" (`Weather.h` chiama `preserveYellow(true)`, il `.ino` costruisce un descrittore BWRY)
-compilano contro un driver a 3 colori senza rami condizionali.
+Il template è indipendente dal silicio e pretende due soli metodi pubblici da ogni driver,
+`setPaged()` e `showImagePageHint()`. `showImage()` compone i piani black e red e non tocca un
+eventuale terzo piano; le primitive del giallo (`writeImageYellow`, `preserveYellow`,
+`isYellowPreserved`) sono API opzionali del singolo driver: il 12.2" le dichiara senza corpo per
+compatibilità di API, il 9.7" non le dichiara.
+
+**Salto delle righe in `showImage()`.** La page k del template copre le righe fisiche da
+`_pw_y + k * pageH`, e `_pw_y` è privato di `GxEPD2_3C`: il driver lo vede solo dopo la prima page.
+Per questo il salto è su un lato solo, quello che nessuna finestra può anticipare: con rotation 0
+le righe prima della page, con rotation 2 quelle dopo `display.height() - pageY` (drawPixel ribalta
+y); rotation 1 e 3 iterano tutto. Corretto a schermo pieno, in finestra parziale e ruotato, al
+costo di circa il doppio delle righe iterate rispetto al taglio esatto, una ventina di ms.
 
 **Regole per aggiungere un driver** (scritte anche nel README, sezione *Aggiungere un driver alla
 libreria*):
@@ -82,7 +87,13 @@ libreria*):
    `_waitWhileAnyBusy` del 122c, vedi [[gxepd2_122c_driver]]);
 3. bus SPI **sempre** da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`, mai dall'oggetto `SPI`
    globale: un default proprio si imposta chiamando `selectSPI()` nel costruttore, non cablando le
-   `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte;
+   `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte.
+   **Nessun membro deve tenere riferimenti o puntatori a membri di `*this`**: `GxEPD2_3C` tiene il
+   driver per valore e lo copia dal parametro del costruttore, che poi muore, quindi un riferimento
+   copiato resta legato a un oggetto distrutto. Il 12.2" passa il bus alle `ScreenPart` a ogni
+   chiamata per questo motivo;
+   un driver con un'attesa del BUSY propria chiama `_busy_callback` come `_waitWhileBusy()` della
+   base, altrimenti `setBusyCallback()` dello sketch (il light sleep del firmware) non ha effetto;
 4. membro `panel`: i driver prendono in prestito un valore di `GxEPD2::Panel` upstream. **Non**
    scegliere `GDEW0154Z04` nè `GDE0213B1`: i template li trattano in modo speciale
    (`GxEPD2_3C.h:373` e `:504`, `GxEPD2_BW.h:249` in `A:\tmp\GxEPD2-master`) e il driver si

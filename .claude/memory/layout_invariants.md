@@ -1,32 +1,33 @@
 ---
 name: Vincoli numerici layout (097c + 122c)
-description: Somme che validano le costanti pixel + relazioni implicite tra cadenze (DISPLAY_REFRESH_MIN ↔ BSEC ↔ HOUR_END)
+description: Come Layout_common.h deriva la geometria dalle due manopole del pannello, le somme che la tengono in piedi e i vincoli fra font e misure delle zone
 type: project
 ---
 
 Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y); costanti `*_W` = larghezza, `*_H` = altezza.
 
-Numeri non immediatamente visibili che vincolano le costanti definite in `Layout_097c.h` / `Layout_122c.h` e usate da `Weather.h` / `Calendar.h` / `.ino` via `Layout::*`:
+**Da dove vengono i numeri.** `Layout_097c.h` / `Layout_122c.h` danno solo `SCREEN_W/H` (dal driver), `CINEMA_H` (290 / 325) e `MAIL_ROWS_PER_COL` (2 / 3); `Layout_common.h` deriva tutto il resto da quei valori e da sette token: `MARGIN` 10 (dal bordo), `GUTTER` 10 (fra zone affiancate), `STACK_GAP` 16 (fra zone impilate), `BOX_RADIUS` 12, `TITLE_INSET` 16, `BOX_PAD` 12, `TOP_BOX_Y` 14. Vedi [[layout_separation]].
 
-**Banner orizzontale (uguale in entrambe le varianti, larghezza display 960w):**
-- `INDOOR_RR(5,154) + gap10 + WEATHER_RR(169,306) + gap10 + FORECAST_RR(485,470) + inset5 = 960`
-- Verifica: `5 + 154 + 10 + 306 + 10 + 470 + 5 = 960` ✓
-- Inset laterali 5 px, gap interni 10 px.
+**Perchè STACK_GAP 16 e TOP_BOX_Y 14.** Un titolo in FreeSansBold12pt seduto sul bordo ha la baseline a mezza cap height (8 px) e sporge di circa 9 px sopra il bordo: fra due riquadri impilati servono quindi almeno 16 px, e il riquadro in cima allo schermo ha il bordo a y=14 perchè il titolo resti a 5 px dal bordo.
 
-**Aree verticali:**
-- 097c (`SCREEN_H=672`): wallpaper 0..300 (`CINEMA_H=300`), fascia mail 300..460 (`MAIL_Y=300`, `MAIL_H=160`), banner 460..672 (`BANNER_Y=460`, `BANNER_H=212`). Verifica: `300 + 160 + 212 = 672` ✓
-- 122c (`SCREEN_H=768`): wallpaper 0..335 (`CINEMA_H=335`), fascia mail 335..556 (`MAIL_Y=335`, `MAIL_H=221`), banner 556..768 (`BANNER_Y=556`, `BANNER_H=212`). Verifica: `335 + 221 + 212 = 768` ✓ Scaling: dei 96 px in più rispetto al 097c, 35 vanno al wallpaper e 61 alla fascia mail; il banner è ancorato al fondo con `BANNER_H` invariato.
-- Sidebar destra `x=620..960` (`SIDEBAR_W=340`) sovrappone wallpaper+banda+banner. Calendar mese a `CAL_X=630, CAL_Y=10, CAL_W=320, CAL_H=200` in entrambe le varianti. `CAL_W=320` con `gridW=308` è divisibile esattamente per 7 (44 px/cella) → centratura giorni esatta.
+**Colonne (uguali sui due pannelli, larghezza 960):**
+- sinistra x=10..620: wallpaper (`CINEMA_X/Y` = 10, `CINEMA_W` 610) e Posta (`MAIL_W` 610, due colonne da 305);
+- destra x=630..950: scheda calendario (`SIDEBAR_W` 320);
+- banner: Interno 200 + 10 + Meteo 280 + 10 + Previsioni 440 = 940 = 960 - 2 × 10. Meteo = blocco corrente 162 + colonna sole 118; Previsioni = 3 blocchi da 146.
 
-**Spaziatura baseline indoor (4 righe in `INDOOR_RR_W=154`, `BANNER_H=212`, IDENTICA nelle due varianti):**
-- Altezza testo visiva FreeSans18pt ≈ 27 px (ascent 22 + descent 5).
-- 5 spazi uguali tra rr_top, 4 righe, rr_bottom: `G = (202 - 4*27)/5 = 19 px`.
-- Step baseline = `27 + 19 = 46 px`. Costanti `INDOOR_ROWn_BASELINE = BANNER_Y + {46, 92, 138, 184}`. La cascata `BANNER_Y + offset` propaga lo shift +96 sul 122c senza toccare le baseline.
+**Altezze (097c / 122c):**
+- banner alto 196, `BANNER_Y` = `SCREEN_H - MARGIN - 196` = 466 / 562; la fascia sbiancata parte da `BANNER_CLEAR_Y` = `BANNER_Y - 10`, per coprire i titoli che sporgono;
+- wallpaper y=10..300 / 10..335;
+- Posta da `CINEMA_Y + CINEMA_H + 16` a `BANNER_Y - 16`: 316..450 / 351..546, righe da 57 / 58 px (contenuto da +14 a -6 del riquadro);
+- scheda calendario y=14..450 / 14..546: griglia del mese 6 righe da 24, filetto a y=207 su entrambi, eventi da y=213 alti 231 / 327.
 
-**Aree eventi:**
-- 097c: `EVT_H = 230 = EVT_ROW_H * MAX_EVENTS_DISPLAYED = 46 * 5`. Stesso step baseline 46 del banner indoor (uniformità visiva trans-modulo). EVT_ROW_H derivato da `Layout::EVT_H / Calendar::MAX_EVENTS_DISPLAYED` in `Calendar.h` (non costante in Layout perchè dipende dal numero di eventi).
-- 122c: `EVT_H = 326 = 230 + 96`. EVT_ROW_H = 326/5 = 65.2 → 65 (troncato int). NB: rompe l'uniformità baseline 46 del banner indoor: se l'estetica è importante, da rivedere a posteriori del primo test fisico sul 122c.
+**Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 45 px (`MIN_EVT_ROW_H` in `Calendar.h`): 5 righe da 46 sul 097c, 7 da 46 sul 122c. Una riga di Posta deve contenere i 41 px di mittente più oggetto. Entrambi i limiti, e le aree non positive, fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
+
+**Font e larghezze che vincolano le zone** (misurate dalle glyph table GFX):
+- "Mediocre 500" (caso peggiore di `Indoor::iaqLabel`) misura 139 px in 12pt e 107 in 9pt: il riquadro Interno largo 200 lo tiene in 12pt con il pedice;
+- le etichette meteo di `icons_weather.h` e la riga "100% 12.5mm" entrano nei blocchi (154 px utili nel corrente, 138 nelle previsioni) in 12pt o in 9pt, quindi non vengono mai troncate;
+- "-12" in 9pt misura 25 px: la colonna delle etichette del mini-grafico (`TC_LABEL_W`) è 28.
 
 **Cadenze accoppiate non documentate:**
-- `disp_min` e il periodo BSEC non sono più accoppiati: `disp_min` è il **rate limit** del pannello (distanza minima fra due ridisegni, con ridisegno solo su dati nuovi), mentre il campione BSEC ogni 300 s è un task a sé con la propria scadenza. Il risveglio è il minimo delle due, clampato in `[30, 300] s`. Il pavimento reale di `disp_min` è la durata di un refresh, 24 s. Vedi [[timing_chain]].
+- `disp_min` e il periodo BSEC non sono accoppiati: `disp_min` è il **rate limit** del pannello (distanza minima fra due ridisegni, con ridisegno solo su dati nuovi), mentre il campione BSEC ogni 300 s è un task a sé con la propria scadenza. Il risveglio è il minimo delle due, clampato in `[30, 300] s`. Il pavimento reale di `disp_min` è la durata di un refresh, 24 s. Vedi [[timing_chain]].
 - Il daily fetch cinema parte all'ora `CINEMA_DAILY_FETCH_HOUR` locale (default 7, allineato a `WIFI_ACTIVE_HOUR_START`). Vincolo implicito: `CINEMA_DAILY_FETCH_HOUR` DEVE cadere dentro la finestra `[WIFI_ACTIVE_HOUR_START, WIFI_ACTIVE_HOUR_END]`, altrimenti il WiFi è giù all'ora del trigger e il daily refresh non scatta MAI. Le due costanti restano separate per poter spostare l'una senza toccare l'altra.

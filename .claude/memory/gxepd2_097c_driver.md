@@ -574,19 +574,25 @@ custom `0x26` è il frame precedente in polarità BW, e un refresh pieno la rile
 `0xFF` vuol dire rosso, quindi una `refresh(false)` nuda dopo una catena dipingerebbe lo schermo di
 rosso. La seconda è più insidiosa: `writeImage(black, color, ...)` scrive `0x26` **una page alla
 volta**, quindi un frame a colori dal loop paged dopo una catena uscirebbe con sette ottavi di rosso
-spurio. Il flag lo alzano soltanto `writeScreenBufferPrevious()` e `writeImagePrevious()`, quindi
+spurio. Il flag lo alzano soltanto `writeScreenBufferPrevious()` e `writeImageToPrevious()`, quindi
 quando è alto l'ultima scrittura in quella RAM *è* un frame precedente e un refresh pieno non ha
 nessun uso possibile per quel contenuto: cancellarlo non può mai distruggere un accent legittimo.
-`_cleanColorIfPrevious()` è agganciata a `_Update_Full()` e a **`setPaged()`**, che è l'unico punto
-in cui la pulizia è completa perchè `GxEPD2_3C::firstPage()` riempie solo il buffer locale e non ha
-ancora scritto sul controller.
+`_cleanColorIfPrevious()` è agganciata a `_Update_Full()`, a **`setPaged()`**, che è il punto in cui
+la pulizia è completa perchè `GxEPD2_3C::firstPage()` riempie solo il buffer locale e non ha ancora
+scritto sul controller, e a ogni scrittura di un accent vero: `writeImage(black, color)`,
+`writeImagePart(black, color)` e `writeImageRed()`. Senza quella in `writeImage(black, color)` un
+frame a colori scritto fuori dal loop paged dopo una catena (`display()`, `drawImage(black, red)`,
+`drawPaged()` in finestra parziale, che non chiama `setPaged()`) verrebbe azzerato da
+`_Update_Full()` insieme al frame precedente.
 
 **TUTTE le porte del partial passano da `_ensurePartialRamDefined()`**, ed è l'invariante da non
 rompere. La causa unica: `_InitDisplay()` **riarma `_initial_write`** quando si arriva da un
 `hibernate()`, perchè il deep sleep lascia la RAM indefinita. Una porta che chiami l'init nudo senza
 poi consumare quel flag lascia la RAM casuale, e sotto la LUT del partial uno `0x26` casuale fa
 pilotare l'intero schermo. Per questo `drawImagePartial()`, `drawImagePartialPart()`,
-`refreshPartial()` e `writeScreenBufferPrevious()` chiamano l'helper e non `_InitDisplay()`.
+`refreshPartial()`, `writeScreenBufferPrevious()`, `writeImageBlack()` e `writeImageToPrevious()`
+chiamano l'helper e non `_InitDisplay()`: le ultime due possono essere la prima scrittura di una
+catena dopo un init o un hibernate.
 
 L'helper **abbassa `_initial_write` PRIMA** delle scritture e usa le primitive private: da lì si
 rientra in `writeScreenBufferPrevious()`, e col flag ancora alto la ricorsione non terminerebbe.
@@ -600,6 +606,13 @@ bianco, quindi ogni pixel cade su `LUT3` che è a zero e una chiamata fuori post
 **I due writer privati ritornano `bool`**, cioè se hanno scritto davvero: le due `drawImagePartial*()`
 lo guardano e non lanciano una passata da 640 ms per un rettangolo che, tagliato sullo schermo, non
 ha superficie. Gli altri undici call site lo ignorano.
+
+**Il border** (`0x3C`) va in HiZ in `_Init_Part()` e torna a `0x01` in **ogni** `_Update_Full()`, non
+solo dopo una passata di partial: `setPartialLut()` abbassa `_using_partial_mode` con il border
+ancora in HiZ, e un ripristino condizionato al flag lascerebbe flottante il refresh pieno successivo.
+Il flag è `_using_partial_mode` della base `GxEPD2_EPD`, non una copia del driver, e `writeImageToPrevious()` è l'override del virtuale nativo: vedi [[feedback_native_methods]].
+La waveform `GxEPD2_SOLUM_097c_lut_partial` è `inline constexpr`, così l'header resta includibile da
+più translation unit senza violare la ODR.
 
 **`setPartialLut(const uint8_t* lut110)`** sostituisce la waveform, e fa scendere il booster:
 altrimenti le nuove tensioni verrebbero scritte ad analog già acceso e `_PowerOn()` salterebbe,

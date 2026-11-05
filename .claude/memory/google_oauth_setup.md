@@ -1,122 +1,125 @@
 ---
 name: Autorizzazione Google OAuth (Calendar + Gmail)
-description: google_oauth_setup.py scrive le 3 macro GOOGLE_* in Env.h; requisiti del progetto Cloud, i tre errori 403/500 con la causa, e quando il refresh token va rigenerato (l'unico valore non copiabile a mano)
+description: procedura completa per collegare le API Google al firmware (progetto, DUE API da abilitare, consenso, client desktop, script, verifica, copia di Env.h), progetto in uso, errori del consenso e 403 a runtime con la causa, ciclo di vita del refresh token
 type: project
 ---
 
-`tools/google_oauth_setup.py` produce le credenziali Google che
-`Env.h` richiede: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-`GOOGLE_REFRESH_TOKEN`. Si lancia senza argomenti e **non stampa i valori**: apre
-il browser, riceve il callback su loopback e riscrive Env.h da sé.
+## Progetto in uso
 
-```
-/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 tools/google_oauth_setup.py
-```
+id `awesome-gist-508310-j4`, numero **756177182449** (= prefisso di `GOOGLE_CLIENT_ID`: è il modo per
+verificare di stare guardando il progetto giusto), account `alesimattia@gmail.com`, nessuna
+organizzazione. Nelle URL della console mettere sempre `?project=awesome-gist-508310-j4`: i
+progetti con nomi simili si confondono, e il messaggio del consenso nomina il **display name**
+dell'app, non il progetto.
 
-**L'interprete è obbligatorio**: il `python3` di default (Homebrew) non ha
-tkinter/Pillow/numpy né le dipendenze installate. `google-auth-oauthlib` è
-installato nel framework 3.13. Stesso interprete di `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`.
+## Procedura completa, in ordine
+
+Ogni passo è necessario; il flusso OAuth **non controlla** le API abilitate, quindi un passo
+saltato emerge solo a runtime sul dispositivo.
+
+1. **Progetto** fuori da qualsiasi organizzazione Workspace (alla creazione: "Nessuna
+   organizzazione"); dentro un'organizzazione il consenso diventa Interno → `403 org_internal`.
+2. **Abilitare ENTRAMBE le API** nello stesso progetto, dalla Libreria:
+   - Google Calendar API, servizio `calendar-json.googleapis.com`:
+     `https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=awesome-gist-508310-j4`
+   - Gmail API, servizio `gmail.googleapis.com`:
+     `https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=awesome-gist-508310-j4`
+
+   Abilitata = la pagina mostra "Gestisci" invece di "Abilita"; elenco completo in
+   `/apis/dashboard?project=…`. Propagazione di pochi minuti. Senza la API: il token si rinnova
+   (`[Google] token OK`) ma quel modulo prende `403 SERVICE_DISABLED`. Non serve riautorizzare
+   né riflashare: il task riprende al primo slot. `gcloud` non è installato sul Mac.
+3. **Schermata consenso** (Google Auth Platform, `/auth/overview?project=…`): tipo **Esterno**.
+   In `/auth/audience`: aggiungere l'account agli **utenti di test e salvare** (essere proprietari
+   non basta), poi **Pubblica app → In produzione**, altrimenti i refresh token scadono dopo 7
+   giorni. La verifica Google non serve (vedi sotto).
+4. **Client OAuth** in `/auth/clients`: tipo **Applicazione desktop** (il tipo `web` non ha il
+   redirect su loopback, lo script lo rifiuta). Scaricare il JSON nella root del repo senza
+   rinominarlo: lo copre il `/*.json` del `.gitignore`.
+5. **Script** (scrive le tre macro in Env.h, non stampa i valori):
+   `/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 tools/google_oauth_setup.py`.
+   Dal browser: *Avanzate → Apri comunque* (app non verificata), spuntare **entrambi** gli scope
+   `calendar.readonly` e `gmail.readonly`.
+6. **Verifica dal Mac, prima di flashare**: POST `https://oauth2.googleapis.com/token` con le tre
+   macro di Env.h e `grant_type=refresh_token`; il campo `scope` della risposta deve contenere
+   entrambi gli scope. Poi GET
+   `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&fields=messages(id)` col
+   bearer: 200 = Gmail ok, altrimenti stampare il corpo d'errore. Lo script di verifica non deve
+   stampare i valori delle macro.
+7. **Env.h è gitignored**: ogni macchina che compila ne ha una copia propria; dopo una
+   rigenerazione va copiata a mano su quella che builda e flasha.
+
+Atteso sul seriale: `[Google] token OK`, `[Mail] fetched N message ids`,
+`[Mail] batch parsed N/N messaggi`, `[Google] fetched N events`.
+
+## Errori e causa
+
+| Dove | Errore | Causa | Rimedio |
+|---|---|---|---|
+| consenso | `403 org_internal` | progetto dentro un Workspace, consenso Interno | progetto nuovo senza organizzazione |
+| consenso | `403 access_denied` "app in fase di test" | account non fra gli utenti di test | aggiungerlo **e salvare**, o pubblicare |
+| consenso | `500` su accounts.google.com | propagazione lato Google dopo ogni modifica al consenso | riprovare dopo qualche minuto; se insiste, incognito con un solo account |
+| seriale | `[OAuth] token refresh failed: http=400` `invalid_grant` | token revocato, password cambiata, app ancora in Test da 7 giorni, sei mesi senza uso | rigenerare il token (passo 5) |
+| seriale | `[Mail] list fetch failed: http=403` con `token OK` | corpo `SERVICE_DISABLED` / `accessNotConfigured`: **Gmail API non abilitata** | passo 2 |
+| seriale | idem | corpo `ACCESS_TOKEN_SCOPE_INSUFFICIENT`: token emesso senza `gmail.readonly` | passo 5 spuntando entrambi gli scope |
+
+Il firmware logga solo il codice HTTP, mai il corpo: i due 403 di Gmail si distinguono solo con
+la verifica del passo 6. Un 403 `SERVICE_DISABLED` è di progetto, quindi vale per qualunque token
+e qualunque copia di Env.h.
+
+## Vincoli del firmware
+
+`Calendar.h` (`refreshGoogleToken()`) e `Mail.h` condividono un unico `GOOGLE_REFRESH_TOKEN` e la
+stessa cache di access token (vedi [[mail_module]]): una sola app con **entrambi** gli scope, due
+app separate non sono utilizzabili. Il refresh omette `scope`, che quindi viene ereditato dal
+token. Un token non eredita uno scope aggiunto dopo la sua emissione: aggiungerne uno richiede di
+rifare l'autorizzazione da capo.
 
 ## Contratto dello script
 
-Tutto è relativo a `PROJECT_DIR`, la cartella superiore a `tools/` (`Env.h` e il
-`client_secret_*.json` stanno nella root), quindi va lanciato da qualunque cwd. Si adatta toccando solo tre costanti in
-testa: `ENV_FILENAME`, `SCOPES`, `MACRO`.
+Tutto è relativo a `PROJECT_DIR`, la cartella superiore a `tools/`, quindi si lancia da qualunque
+cwd. Si adatta toccando solo tre costanti in testa: `ENV_FILENAME`, `SCOPES`, `MACRO`.
+L'interprete del framework 3.13 è obbligatorio: il `python3` di Homebrew non ha
+`google-auth-oauthlib`.
 
-- credenziale da due provenienze, stesso percorso di codice (`from_client_config`):
-  il `client_secret_*.json` della root se c'è, **altrimenti `GOOGLE_CLIENT_ID`
-  e `GOOGLE_CLIENT_SECRET` già scritti nell'header** — dopo la prima
-  configurazione il JSON è quindi superfluo e il token resta rigenerabile. Con
-  due JSON si ferma (sceglierne uno userebbe il progetto sbagliato); senza JSON e
-  con l'header ancora a placeholder spiega come scaricarlo;
-- dal JSON pretende la sezione `installed`, cioè credenziale di tipo
-  **Applicazione desktop** (`web` non ha il redirect su loopback);
-- sostituisce solo il testo fra virgolette di `#define` già esistenti, con regex
-  `^([ \t]*#define[ \t]+MACRO[ \t]+)"[^"]*"`, quindi **preserva allineamento,
-  commenti e ordine** del file; se una macro manca si ferma e la nomina invece di
-  appendere righe;
-- scrittura **atomica**: tempfile nella stessa dir + `os.replace`, così
-  un'interruzione non lascia un Env.h troncato (che bloccherebbe la build);
-- il JSON resta nella root perchè lì lo copre il `/*.json` del `.gitignore`, come `Env.h`.
+- credenziale da due provenienze, stesso percorso di codice (`from_client_config`): il
+  `client_secret_*.json` della root se c'è, **altrimenti `GOOGLE_CLIENT_ID` e
+  `GOOGLE_CLIENT_SECRET` già scritti nell'header**: dopo la prima configurazione il JSON è
+  superfluo e il token resta rigenerabile. Con due JSON si ferma; senza JSON e con l'header a
+  placeholder spiega come scaricarlo;
+- dal JSON pretende la sezione `installed`;
+- sostituisce solo il testo fra virgolette di `#define` esistenti con regex
+  `^([ \t]*#define[ \t]+MACRO[ \t]+)"[^"]*"`, preservando allineamento, commenti e ordine; se una
+  macro manca si ferma e la nomina;
+- scrittura **atomica** (tempfile nella stessa dir + `os.replace`).
 
-`prompt="consent"` e `access_type="offline"` sono entrambi obbligatori: senza, a un
-consenso già dato Google restituisce solo l'access token e il refresh resta vuoto.
+`prompt="consent"` e `access_type="offline"` sono entrambi obbligatori: senza, a un consenso già
+dato Google restituisce solo l'access token e il refresh resta vuoto.
 
-## Requisiti del progetto Google Cloud
+## Ciclo di vita delle tre macro
 
-- progetto **fuori da qualsiasi organizzazione Workspace** (alla creazione:
-  "Nessuna organizzazione");
-- schermata consenso di tipo **Esterno**;
-- **Calendar API e Gmail API abilitate nello stesso progetto**, e una sola app con
-  **entrambi** gli scope: `Calendar.h` (`refreshGoogleToken()`) e `Mail.h`
-  condividono un unico `GOOGLE_REFRESH_TOKEN` e la stessa cache di access token,
-  quindi due app separate non sono utilizzabili — vedi [[mail_module]];
-- un refresh token vale solo per gli scope con cui è stato emesso: aggiungerne uno
-  dopo richiede di rifare l'autorizzazione da capo.
+- `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` sono del **progetto Cloud**: stabili, copiabili a
+  mano da `/auth/clients`;
+- `GOOGLE_REFRESH_TOKEN` nasce solo dal consenso nel browser, non è copiabile da nessuna parte:
+  è l'unico valore che lo script produce davvero; gli altri due li riscrive per garantire che i tre
+  vengano dalla stessa credenziale.
 
-Progetto in uso: `awesome-gist-508310-j4`, numero **756177182449** (= prefisso del
-client id, il modo per verificare di stare guardando il progetto giusto), account
-`alesimattia@gmail.com`. Link diretto che evita di editare un progetto omonimo:
-`https://console.cloud.google.com/auth/audience?project=<project-id>`.
+Si rigenera il solo token, senza JSON, quando: viene revocato o cambia la password; l'app era in
+Test e sono passati 7 giorni, o non lo si usa da sei mesi; cambiano gli scope; si vuole leggere un
+**account Google diverso** (client id e secret restano identici).
 
-## I tre errori del consenso, e cosa significano
-
-| Errore | Causa | Rimedio |
-|---|---|---|
-| `403 org_internal` | schermata consenso **Interna**: il progetto sta dentro un Workspace e accetta solo account di quel dominio | ricreare il progetto senza organizzazione (o passare a Esterno, se l'admin lo consente) |
-| `403 access_denied` "app in fase di test" | account non fra gli **utenti di test** — essere proprietario del progetto non include automaticamente | aggiungere l'indirizzo ai tester **e salvare**, oppure pubblicare l'app |
-| `500` su accounts.google.com | lato Google, **propagazione**: compare dopo ogni modifica al consenso, anche su `/signin/oauth/v3/consent` subito dopo il passaggio in produzione, con un client id che poco prima funzionava | **riprovare dopo qualche minuto**, si risolve da sé; se insiste, incognito con un solo account loggato |
-
-Il messaggio d'errore nomina il **display name** dell'app, non il progetto: due
-progetti con nomi simili si confondono facilmente, ed è per questo che va
-verificato il numero progetto contro il prefisso del client id.
-
-## Ciclo di vita: perché lo script serve anche a Env.h già popolato
-
-Le tre macro **non hanno lo stesso ciclo di vita**, ed è la ragione d'essere dello
-script:
-
-- `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` sono proprietà del **progetto
-  Cloud**: stabili, copiabili a mano dalla pagina Credenziali;
-- `GOOGLE_REFRESH_TOKEN` è il prodotto di un'**autorizzazione interattiva**: non
-  esiste nessun posto da cui copiarlo, nasce solo dal consenso nel browser. È
-  l'unico valore che lo script produce davvero; gli altri due li riscrive per
-  garantire che i tre provengano dalla stessa credenziale e non da due progetti
-  mescolati.
-
-Il token va rigenerato — client id e secret già in Env.h, quindi **senza JSON** —
-quando:
-
-- viene revocato dalle autorizzazioni dell'account, o cambia la password;
-- l'app è rimasta in stato *Test* e sono passati **7 giorni**, o non lo si usa da
-  **sei mesi**;
-- **cambiano gli scope**: un token non eredita uno scope aggiunto dopo la sua
-  emissione, serve riautorizzare da capo;
-- si vuole far leggere al pannello un **account Google diverso**: client id e
-  secret restano identici, cambia solo chi autorizza.
-
-## Scadenza e stato di pubblicazione
-
-Con l'app in stato **Test** Google invalida i refresh token dopo **7 giorni**: per
-un pannello a muro va portata **In produzione** dalla schermata consenso, e poi il
-token va **rigenerato**, perché quello emesso in Test si porta dietro la sua
-scadenza. Resta un'app non verificata (si passa da *Avanzate → Apri comunque*, con
-tetto di 100 utenti): **la verifica di Google non serve** — è per app distribuite a
-terzi e con scope Gmail comporta un audit — e non c'entra con la scadenza, che
-dipende solo dallo stato *Testing*.
+Stato di pubblicazione: con l'app in **Test** i refresh token scadono dopo 7 giorni; dopo il
+passaggio **In produzione** il token va rigenerato, perchè quello emesso in Test si porta dietro la
+scadenza. Resta un'app non verificata (tetto di 100 utenti): la verifica Google è per app
+distribuite a terzi, con scope Gmail comporta un audit e non c'entra con la scadenza.
 
 ## Gemello per Outlook
 
-`tools/msgraph_oauth_setup.py` fa lo stesso per `MSGRAPH_CLIENT_ID` /
-`MSGRAPH_REFRESH_TOKEN` con **device code flow** e **sola stdlib** (nessun MSAL):
-l'app Azure è un client pubblico senza secret, quindi non serve né un JSON da
-scaricare né un redirect su loopback. `TENANT` e `SCOPE` in testa allo script
-ricalcano quelli che `Calendar.h` usa nel refresh — tenant `common`,
-`https://graph.microsoft.com/Calendars.Read offline_access` — e vanno tenuti
-allineati, altrimenti il refresh token non è spendibile dal firmware. Il client id
-viene riusato da Env.h se già scritto, chiesto da stdin solo la prima volta
-(quindi va lanciato da un terminale interattivo, o si pre-scrive la macro).
-Sull'app Azure serve **Allow public client flows = Sì**, senza cui il device code
-flow non parte.
-`aggiorna_header()` è duplicata nei due script di proposito: restano autonomi e
-copiabili in un altro progetto senza portarsi dietro un modulo comune.
+`tools/msgraph_oauth_setup.py` fa lo stesso per `MSGRAPH_CLIENT_ID` / `MSGRAPH_REFRESH_TOKEN` con
+**device code flow** e sola stdlib (nessun MSAL): l'app Azure è un client pubblico senza secret,
+quindi niente JSON nè redirect su loopback. `TENANT` e `SCOPE` in testa allo script ricalcano
+quelli del refresh in `Calendar.h` (tenant `common`,
+`https://graph.microsoft.com/Calendars.Read offline_access`) e vanno tenuti allineati. Il client id
+viene riusato da Env.h se già scritto, chiesto da stdin solo la prima volta (terminale
+interattivo, o macro pre-scritta). Sull'app Azure serve **Allow public client flows = Sì**.
+`aggiorna_header()` è duplicata nei due script di proposito: restano autonomi e copiabili.

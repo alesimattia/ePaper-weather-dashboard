@@ -8,7 +8,7 @@ type: project
 - `&img_la_grande_onda_desc` → buffer in `PROGMEM` (Flash readonly).
 - `&g_cinema_dynamic_desc` → buffer in `RAM` (heap interno) o `PSRAM` (SPI external RAM).
 
-`drawTestBackground()` chiama `GxEPDImage::showImage(display, *g_cinema_desc)` senza distinguere il caso.
+`drawTestBackground()` chiama `GxEPDImage::showImage(display, *g_cinema_desc, Layout::CINEMA_X, Layout::CINEMA_Y)` senza distinguere il caso.
 
 **Why (deduzione architetturale, non documentata esplicitamente nel driver):**
 - Su AVR (Arduino UNO, Mega) `PROGMEM` vive in spazio Harvard separato dalla RAM: per leggere serve `pgm_read_byte()` con un opcode dedicato.
@@ -22,7 +22,7 @@ type: project
 
 **Effetto sulla progettazione del fetch:**
 - `freeCinemaBuffers()` libera la RAM e ripuntare `g_cinema_desc` al descrittore del wallpaper riporta a un descrittore in Flash. Lo swap è atomico per il rendering perchè il puntatore è una variabile statica (anche se non `volatile`, il loop del display è single-thread sul core principale: nessun lock necessario).
-- L'immagine fallback PROGMEM costa solo Flash, già inclusa nel firmware: nessun runtime overhead. Quanto costa lo dice il formato, non una misura: un piano a 1 bpp da 620 px di larghezza ha stride 78 byte, quindi 78 x altezza.
+- L'immagine fallback PROGMEM costa solo Flash, già inclusa nel firmware: nessun runtime overhead. Quanto costa lo dice il formato, non una misura: un piano a 1 bpp ha stride `ceil(larghezza/8)` byte, 77 a 610 px, quindi 77 x altezza.
 
 **Guardia del descrittore.** Il wallpaper in `wallpaper/` definisce il proprio `_desc` solo
 dentro `#ifdef _GxEPDImage_H_`, cioè la include guard dell'header che definisce il namespace
@@ -31,13 +31,15 @@ disponibili, il descrittore solo se il tipo esiste. La guardia la emette `GxEPD2
 quindi va corretta lì oltre che nel file generato. Nominare un driver specifico romperebbe la build
 su tutte le altre varianti di display.
 
-**Il fallback deve combaciare con l'area del wallpaper.** Il descrittore in
-`wallpaper/` è generato a `620x300`, cioè esattamente `Layout::CINEMA_W x CINEMA_H` del 097c, ed
-è un vincolo da rispettare a ogni rigenerazione: `showImage` **non clippa**, disegna da `(0,0)`
-usando width e height del `Descriptor`. Un fallback più alto invaderebbe la fascia mail
-(`MAIL_Y = CINEMA_H`), che `Mail::draw()` non ripulisce perchè conta sul `fillScreen(GxEPD_WHITE)`
-del loop paged, e le righe delle mail finirebbero disegnate sopra l'immagine; uno più largo
-entrerebbe nella sidebar del calendario.
+**Il fallback deve combaciare con l'area del wallpaper.** Il descrittore in `wallpaper/` va
+generato dall'utente con `epd_image_converter.pyw` a `Layout::CINEMA_W x CINEMA_H` del 097c,
+cioè `610x290`: `showImage` **non clippa** e disegna da (`CINEMA_X`, `CINEMA_Y`) = (10, 10)
+usando width e height del `Descriptor`. Un fallback più alto invade il titolo del riquadro Posta,
+che `Mail::draw()` non ripulisce perchè conta sul `fillScreen(GxEPD_WHITE)` del loop paged; uno più
+largo finisce nella colonna destra, che `renderFrame()` sbianca da `LEFT_COLUMN_END` in poi. Il
+fallback è unico per i due pannelli: sul 122c (area 610x325) resta più basso e lascia una fascia
+bianca. Nessuno `static_assert` sulla misura, per scelta dell'utente: un'immagine sovrapposta è
+preferibile a un errore di compilazione.
 
 **Il fallback è monocromatico** (`FORMAT_BW_1BPP`, un solo piano, `data1` e `data2` a `nullptr`),
 mentre il descrittore dinamico scaricato è a due piani su questi pannelli. Il formato viaggia

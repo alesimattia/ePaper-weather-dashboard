@@ -56,6 +56,23 @@ incompatibile con uno split di sorgenti.
 **59067 ms** di refresh — la waveform dell'OTP si allunga di 2,5x verso il freddo. È il caso
 peggiore *in specifica* che `full_refresh_time` e `busy_timeout` devono coprire.
 
+**Pin, init, reset e BUSY dalla base `GxEPD2_EPD`**, senza copie nel driver (regola in
+[[feedback_native_methods]]). I pin del master sono `_cs`/`_dc`/`_rst`/`_busy` della base; quelli
+del bus si chiamano `_bus_sck`/`_bus_miso`/`_bus_mosi` perchè `_sck`/`_mosi` della base servono alla
+lettura software dei registri. `init()` sovrascrive solo l'overload completo (l'altro arriva con
+`using GxEPD2_EPD::init`, `reset_duration` 10 ms come la base): configura CS e BUSY dello slave,
+chiama `GxEPD2_EPD::init()` e riapre il bus sui pin del costruttore con `end()` + `begin()`, perchè
+su ESP32 `begin()` su un bus già aperto ritorna senza fare niente. Il reset è un solo pin per i due
+controller ed è `_reset()` della base, anche in `_InitDisplay()` dopo un hibernate; con
+`pulldown_rst_mode` `init()` della base lascia RST in uscita alta dopo l'impulso, come per ogni
+driver GxEPD2. `_waitWhileAnyBusy` attende il master con `_waitWhileBusy()` della base, che chiama
+la busy callback solo mentre il master è occupato (il firmware si risveglia dal light sleep sul suo
+BUSY), poi lo slave con un polling a `delay(1)`. `_writeCommandAll`/`_writeDataAll` delegano a
+`_writeCommand`/`_writeData` della base quando c'è un solo CS da abbassare; con due, il CS dello
+slave si abbassa dentro la transazione SPI come fa la base con il master.
+
+**Il pannello è a tre colori**, come il 9.7", e il firmware chiede due piani al server cinema.
+
 **Il quarto colore e il codice modello.** §3.6 decodifica il campo ⑤ come **"4 = RED, YELLOW
 (BWRY)"** e lista il 12.2" PRO come `EL122F6W4A`. Ma la riga *Display Colors* di §3.1 porta la nota
 del produttore stesso — **"color options are not available for all sizes"** — quindi il campo è una
@@ -86,7 +103,7 @@ e LUT3 a VSH2.
 | `hasPartialUpdate` | `true` | vale l'indirizzamento a finestra, non un refresh più corto |
 | `isYellowPreserved()` | `false` | non c'è un terzo piano da preservare: le tre primitive del giallo restano senza corpo |
 | `hibernate()` | `0x10 = 0x03` più `_initial_write = true` | con quel parametro la RAM non sopravvive ("Cannot retain RAM data"), e sul 9.7" al risveglio i piani contengono pixel casuali. L'alternativa `0x10 = 0x01` — Mode 1 del SSD1683, misurato sul 9.7" — ritiene la RAM a ~2 µA in più, e renderebbe inutile il riarmo |
-| `_InitDisplay()` in cascade | init mandato **due volte**, nuda e con `\| CASCADE_CMD_OFFSET` | `_writeCommandAll()` in cascade abbassa il solo `_cs_m` e trasmette l'opcode nudo: senza il secondo giro lo slave non vedrebbe mai SWRESET, soft start, MUX, border, temperatura nè entry mode. `0x21` col secondo byte va invece al **solo master**, perchè arma lui a emettere CL |
+| `_InitDisplay()` in cascade | init mandato **due volte**, nuda e con `\| CASCADE_CMD_OFFSET` | `_writeCommandAll()` in cascade abbassa il solo CS del master e trasmette l'opcode nudo: senza il secondo giro lo slave non vedrebbe mai SWRESET, soft start, MUX, border, temperatura nè entry mode. `0x21` col secondo byte va invece al **solo master**, perchè arma lui a emettere CL |
 | `ScreenPart::_setPartialRamArea` | riposizionamento simmetrico con guardia | la sottrazione è su `uint16_t`: una finestra che sfora andrebbe in underflow silenzioso |
 | clock SPI dei costruttori | 10 MHz | scelta, non limite: il datasheet dà *"Maximum 20MHz for write"* |
 
@@ -241,8 +258,11 @@ pretende il template `showImage()` condiviso e le chiamano i moduli applicativi 
 9.7" senza sapere quale pannello è montato. Il ramo `FORMAT_BWRY_1BPP` non ci arriva mai, lo
 esclude il formato del descrittore.
 
-**Bus SPI**: passa da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`, ScreenPart comprese —
-che ne tengono un **riferimento**, non una copia, così un `selectSPI()` vale anche per loro. I
+**Bus SPI**: passa da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`. Le `ScreenPart` non ne
+tengono nè una copia nè un riferimento: la classe esterna glieli passa a ogni scrittura in una
+struct `Bus` temporanea, perchè `GxEPD2_3C` copia il driver dal parametro del costruttore e un
+riferimento resterebbe legato all'oggetto d'origine, distrutto subito dopo. Così un `selectSPI()`
+dello sketch vale anche per le ScreenPart. I
 costruttori impostano come default `SPI` globale a **10 MHz** — era 20, abbassato perchè alcuni
 SSD1677 non tollerano clock superiori e con una sola banda validata un clock fuori specifica è una
 variabile in più; costa ~130 ms su un refresh da 25 s. Lo sketch lo sostituisce chiamando

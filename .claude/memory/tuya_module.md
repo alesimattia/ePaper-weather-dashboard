@@ -1,6 +1,6 @@
 ---
 name: Modulo Tuya (TuyaLink su MQTT)
-description: Tuya.h pubblica il BME680 su TuyaLink; protocollo verificato sull'SDK ufficiale, catena TLS reale del broker EU, esp-mqtt e bundle CA nativi del core, task dello scheduler con un solo tentativo per slot, badge [TUYA ERR] sul pannello
+description: Tuya.h pubblica il BME680 su TuyaLink; protocollo verificato sull'SDK ufficiale, catena TLS reale del broker EU, esp-mqtt e bundle CA nativi del core, task dello scheduler con un solo tentativo per slot, badge TUYA ERR sul pannello
 type: project
 ---
 
@@ -236,31 +236,19 @@ Trappole dell'API, tutte pagate almeno una volta:
    `readyToPublish()` la copra già: pubblicare senza campione manderebbe cinque
    zeri al cloud, indistinguibili nell'app da una misura vera.
 
-## Badge [TUYA ERR] sul pannello
+## Badge TUYA ERR sul pannello
 
-`Weather::detail::drawIndoorTuyaBadge()` affianca `[TUYA ERR]` al titolo del
-riquadro Indoor quando `Tuya::hasFailed()`. Il ridisegno lo chiede `dopoTuya()`
-nel `.ino`, **solo quando il badge compare o sparisce**, confrontando
-`hasFailed()` con lo stato del pannello disegnato (`g_tuya_badge_mostrato`): un
-refresh pieno costa ~24 s.
+`Weather::detail::drawIndoorTuyaBadge()` disegna `TUYA ERR` in FONT_SMALL rosso,
+seduto sul bordo inferiore del riquadro Interno e allineato al suo margine destro
+(con la striscia bianca che interrompe il bordo), quando `Tuya::hasFailed()`. Il
+ridisegno lo chiede `dopoTuya()` nel `.ino`, **solo quando il badge compare o
+sparisce**, confrontando `hasFailed()` con lo stato del pannello disegnato
+(`g_tuya_badge_mostrato`): un refresh pieno costa ~24 s.
 
-Le misure che vincolano la resa, dalle tabelle GFXglyph: la riga del titolo ha
-`INDOOR_RR_W - BANNER_TITLE_LEFT_OFFSET` = **140 px utili**, di cui "Indoor" in
-FONT_BODY occupa 67 e ne restano 67 per il badge. `[NO TUYA]`/`[TUYA ERR]` in
-FONT_BODY misurano 121/122 px, quindi **in FONT_BODY il badge non ci sta**; in
-FONT_SMALL 90, ancora fuori; in FONT_MICRO 36, entra. Il titolo intero
-`"Indoor [NO TUYA]"` in FONT_BODY vuole 194 px.
-
-Due dettagli che evitano bug:
-
-- il badge va disegnato **dopo tutti e tre i fieldset**, perchè cambia il font:
-  inserito fra le chiamate, "Weather" e "Forecast" escono in Picopixel;
-- con la baseline del titolo il testo in FONT_MICRO resta 5 px **sotto** il
-  bordo superiore del riquadro, quindi **non serve** la striscia di sfondo che
-  `Graphics::drawFieldsetRect` usa per spezzare il bordo.
-
-`INDOOR_TUYA_BADGE_GAP` sta in entrambi i `Layout_*.h`, come vuole la regola
-delle coordinate (vedi [[layout_separation]]).
+Perchè sul bordo inferiore, misurato dalle tabelle GFXglyph: sul bordo superiore
+il titolo "Interno" in FONT_TITLE occupa 80 px e il badge in FONT_SMALL 100,
+contro i 168 utili del riquadro largo 200. Accanto al titolo entrerebbe solo in
+Picopixel, che sul vetro è alto circa 1 mm e il firmware non usa.
 
 ## How to apply
 

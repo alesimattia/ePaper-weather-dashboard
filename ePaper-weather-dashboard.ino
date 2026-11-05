@@ -99,15 +99,13 @@
 #include "Timings.h"
 
 /**
- * Endpoint del ping di sveglia del server cinema. Non e' un tempo, quindi non
- * sta in Timings.h; il suo timeout invece si' (CINEMA_PREWARM_TIMEOUT_MS).
- *
- * L'host deve restare uguale a quello di Layout::CINEMA_URL (Layout_097c.h,
- * Layout_122c.h). La', l'URL vive nei layout perche' la query string codifica
- * width/height/colors del pannello; /health non dipende dal pannello e sta
- * quindi qui. Cambiando dominio vanno aggiornati tutti e tre i punti.
+ * Origine del server cinema, unico punto in cui compare il dominio: il ping
+ * di sveglia e l'URL dell'immagine, composto in fetchCinemaImage() dalle
+ * misure del layout, ci aggiungono solo il percorso. Non e' un tempo, quindi
+ * non sta in Timings.h; il timeout del ping invece si' (CINEMA_PREWARM_TIMEOUT_MS).
  */
-#define CINEMA_PREWARM_URL "https://cinema-epd.onrender.com/health"
+#define CINEMA_ORIGIN      "https://cinema-epd.onrender.com"
+#define CINEMA_PREWARM_URL CINEMA_ORIGIN "/health"
 
 #include <GxEPD2_3C.h>
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
@@ -258,14 +256,11 @@ void initDisplay()
 // ===========================================================================
 // Background cinema
 //
-// Area disponibile per l'immagine: Layout::CINEMA_W x Layout::CINEMA_H
-// (a sinistra della sidebar calendario x=Layout::SIDEBAR_X..960). La fascia
-// y=Layout::CINEMA_H..Layout::BANNER_Y resta bianca per ospitare la futura
-// UI mail. L'immagine va disegnata a (x=0, y=0).
-// Valori attuali per variante:
-//   097c (960w x 672h):  CINEMA = 620w x 300h, fascia mail 160h px
-//   122c (960w x 768h):  CINEMA = 620w x 335h, fascia mail 221h px
-// Convenzione: NwxMh = N px larghezza x M px altezza.
+// L'immagine occupa Layout::CINEMA_W x Layout::CINEMA_H a partire da
+// (Layout::CINEMA_X, Layout::CINEMA_Y), dentro i margini in cima alla colonna
+// sinistra; sotto c'e' il riquadro Posta, a destra la scheda del calendario.
+// Le misure le deriva Layout_common.h: 610w x 290h sul 9.7", 610w x 325h sul
+// 12.2". Convenzione: NwxMh = N px larghezza x M px altezza.
 //
 // Flusso:
 //   1. Boot: g_cinema_desc punta a img_la_grande_onda_desc (fallback PROGMEM).
@@ -280,43 +275,44 @@ void initDisplay()
 // ===========================================================================
 
 /**
- * URL e dimensioni dell'area wallpaper sono in Layout::CINEMA_URL /
- * CINEMA_W (larghezza X) / CINEMA_H (altezza Y) / CINEMA_STRIDE /
- * CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ.
- * Cambiare display (097c <-> 122c) regola automaticamente sia la query
- * string al server cinema sia la dimensione dei buffer in PSRAM/heap.
+ * Le dimensioni dell'area wallpaper sono in Layout::CINEMA_W (larghezza X) /
+ * CINEMA_H (altezza Y) / CINEMA_STRIDE / CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ, e
+ * l'URL del server si compone da quelle: cambiare display regola da solo sia
+ * la query string sia la dimensione dei buffer in PSRAM/heap.
  *
- * NOTA: Layout::CINEMA_W (larghezza X) / CINEMA_H (altezza Y) NON sono un viewport che ritaglia.
- * GxEPDImage::showImage() disegna pixel per pixel da (0,0) usando la
- * width/height del Descriptor, senza clipping. La sorgente (dinamica
- * dal server cinema o fallback PROGMEM img_la_grande_onda_desc) deve essere
- * generata esattamente a Layout::CINEMA_W (X) x Layout::CINEMA_H (Y). Una sorgente
- * piu' alta invade la fascia bianca fino a Layout::BANNER_Y; una piu'
- * larga entra nella sidebar (Layout::SIDEBAR_X), coperta con fillRect
- * bianco solo fino a Layout::BANNER_Y.
+ * NOTA: CINEMA_W x CINEMA_H NON e' un viewport che ritaglia.
+ * GxEPDImage::showImage() disegna pixel per pixel a partire da
+ * (CINEMA_X, CINEMA_Y) usando la width/height del Descriptor, senza clipping.
+ * La sorgente (dinamica dal server cinema o fallback PROGMEM
+ * img_la_grande_onda_desc) va generata esattamente a CINEMA_W x CINEMA_H: una
+ * piu' alta invade il titolo del riquadro Posta, una piu' larga finisce nella
+ * colonna destra, che viene sbiancata da Layout::LEFT_COLUMN_END in poi.
  */
 
-// Buffer dinamici dei piani scaricati (nullptr finchè il fetch non riesce).
-// Quanti ne vengono davvero allocati e letti lo dice Layout::CINEMA_PLANES,
-// che vale 2 sui pannelli a tre colori: così allocazione, free e lettura
-// restano un solo pezzo di codice per entrambe le varianti di display.
-// L'array è dimensionato al massimo dei formati serviti dall'endpoint, in
-// modo che i tre campi del descrittore siano sempre indicizzabili.
-static constexpr uint8_t CINEMA_PLANES_MAX = 3;
-static uint8_t *g_cinema_planes[CINEMA_PLANES_MAX] = {};
+// Buffer dinamici dei piani scaricati (nullptr finchè il fetch non riesce),
+// uno per ciascuno dei Layout::CINEMA_PLANES piani che i pannelli rendono:
+// black e accent, perchè nessuno dei due ha il giallo.
+static uint8_t *g_cinema_planes[Layout::CINEMA_PLANES] = {};
 
-// Nomi dei piani nell'ordine in cui il server li concatena, per i log. Il terzo
-// piano lo chiede solo il 12.2", il cui quarto colore non è determinato.
-static const char *const g_cinema_plane_names[CINEMA_PLANES_MAX] = {"black", "red", "third"};
+// Nomi dei piani nell'ordine in cui il server li concatena, per i log.
+static const char *const g_cinema_plane_names[Layout::CINEMA_PLANES] = {"black", "red"};
 
-static_assert(Layout::CINEMA_PLANES >= 2 && Layout::CINEMA_PLANES <= CINEMA_PLANES_MAX,
-			  "Layout::CINEMA_PLANES fuori dai formati serviti da /cinema/arduino");
+static_assert(Layout::CINEMA_PLANES == 2,
+			  "Layout::CINEMA_PLANES: il descrittore e l'URL del cinema prevedono black e red");
+
+/**
+ * Valore del parametro colors dell'endpoint /cinema/arduino per un numero di
+ * piani: un piano solo e' bianco e nero, due sono black e red.
+ */
+static constexpr const char *cinemaColorsParam(uint8_t planes)
+{
+	return planes <= 1 ? "bw" : "bwr";
+}
 
 // Descrittore dinamico che punta ai buffer sopra. Popolato quando il fetch
 // ha successo.
 static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
-	Layout::CINEMA_PLANES >= 3 ? GxEPDImage::FORMAT_BWRY_1BPP
-							   : GxEPDImage::FORMAT_BWR_1BPP,
+	GxEPDImage::FORMAT_BWR_1BPP,
 	Layout::CINEMA_W,
 	Layout::CINEMA_H,
 	nullptr,
@@ -370,7 +366,6 @@ static void freeCinemaBuffers()
 	}
 	g_cinema_dynamic_desc.data0 = nullptr;
 	g_cinema_dynamic_desc.data1 = nullptr;
-	g_cinema_dynamic_desc.data2 = nullptr;
 }
 
 /**
@@ -453,7 +448,23 @@ static bool fetchCinemaImage()
 	freeCinemaBuffers();
 	g_cinema_desc = &img_la_grande_onda_desc;
 
-	LOG("cinema", "fetching %s", Layout::CINEMA_URL);
+	/**
+	 * URL composto dalle misure del layout, cosi' larghezza, altezza e piani
+	 * chiesti al server non possono divergere dai buffer. Un troncamento
+	 * manderebbe al server un'altra misura: si ferma il fetch e resta il
+	 * fallback, come per gli altri errori.
+	 */
+	char url[160];
+	const int urlLength = snprintf(url, sizeof(url),
+		CINEMA_ORIGIN "/cinema/arduino?width=%d&height=%d&colors=%s&dither=floyd",
+		(int)Layout::CINEMA_W, (int)Layout::CINEMA_H, cinemaColorsParam(Layout::CINEMA_PLANES));
+	if (urlLength < 0 || urlLength >= (int)sizeof(url))
+	{
+		LOG("cinema", "URL troncato (%d caratteri), fallback PROGMEM", urlLength);
+		return false;
+	}
+
+	LOG("cinema", "fetching %s", url);
 	LOG("cinema", "PSRAM %s, free heap: %u byte",
 		psramFound() ? "presente" : "assente (uso heap interno)",
 		(unsigned)ESP.getFreeHeap());
@@ -480,7 +491,7 @@ static bool fetchCinemaImage()
 	// completare il boot dell'istanza prima di arrivare qui. Vale anche come
 	// attesa massima senza dati durante la lettura del corpo.
 	http.setTimeout(CINEMA_HTTP_TIMEOUT_MS);
-	if (!Net::beginHttps(http, client, Layout::CINEMA_URL))
+	if (!Net::beginHttps(http, client, url))
 	{
 		LOG("cinema", "HTTP begin fallita");
 		freeCinemaBuffers();
@@ -524,7 +535,6 @@ static bool fetchCinemaImage()
 
 	g_cinema_dynamic_desc.data0 = g_cinema_planes[0];
 	g_cinema_dynamic_desc.data1 = g_cinema_planes[1];
-	g_cinema_dynamic_desc.data2 = Layout::CINEMA_PLANES >= 3 ? g_cinema_planes[2] : nullptr;
 	g_cinema_desc = &g_cinema_dynamic_desc;
 	LOG("cinema", "download completato, immagine remappata");
 	return true;
@@ -723,7 +733,8 @@ static constexpr uint8_t N_TASK = sizeof(TABELLA_TASK) / sizeof(TABELLA_TASK[0])
 
 /**
  * Disegna il background corrente (PROGMEM fallback o dinamico scaricato)
- * dentro il paged loop di Weather::renderFrame().
+ * dentro il paged loop di Weather::renderFrame(), con l'angolo in alto a
+ * sinistra su (Layout::CINEMA_X, Layout::CINEMA_Y).
  *
  * GxEPDImage::showImage() è compatibile con entrambi i tipi di buffer:
  * su ESP32 pgm_read_byte() è una normale dereferenza, funziona identica
@@ -734,18 +745,18 @@ static constexpr uint8_t N_TASK = sizeof(TABELLA_TASK) / sizeof(TABELLA_TASK[0])
  *   // slideshow multi-immagine generato da epd_image_converter.pyw):
  *   //
  *   // #include "wallpaper/my_image.h"   // genera my_image_desc
- *   // GxEPDImage::showImage(display, my_image_desc);
+ *   // GxEPDImage::showImage(display, my_image_desc, Layout::CINEMA_X, Layout::CINEMA_Y);
  *   //
  *   // Per piu' immagini in rotazione:
  *   // static const GxEPDImage::Descriptor* const IMGS[] = {
  *   //   &img1_desc, &img2_desc, &img3_desc,
  *   // };
- *   // GxEPDImage::showImage(display, *IMGS[idx % 3]);
+ *   // GxEPDImage::showImage(display, *IMGS[idx % 3], Layout::CINEMA_X, Layout::CINEMA_Y);
  * -------------------------------------------------------------------------
  */
 void drawTestBackground()
 {
-	GxEPDImage::showImage(display, *g_cinema_desc);
+	GxEPDImage::showImage(display, *g_cinema_desc, Layout::CINEMA_X, Layout::CINEMA_Y);
 }
 
 /** Canale e BSSID dell'ultima connessione riuscita. Stanno in RAM, che il

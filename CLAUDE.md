@@ -48,7 +48,7 @@ Sono **etichette elettroniche SOLUM (ESL) recuperate** e ripilotate, senza datas
 
 **SOLUM 9.7"** (`EL097R2CRN`): 672×960 nativi, usato come **960w × 672h**. Controller **SSD1677**, un solo COF. **Tre colori, il quarto non esiste** (misurato: con `(0x26, 0x24)` = `(0,0)` nero, `(0,1)` bianco, `(1,x)` rosso; VSH1 = nero, VSH2 = rosso, punto di lavoro del nero 15 V). Sotto un pixel di accent il piano BW è indifferente.
 
-**SOLUM Newton PRO 12.2"** (`EL122H6W4A`): 768×960 nativi, usato come **960w × 768h**. Due controller SSD16xx da 960×384, uno per coda FFC, divisi per righe (l'SSD1677 ha 680 gate, il pannello 768): BUSY attivo alto, banda slave specchiata nel data path. Il driver pilota una sola banda: **la seconda coda FFC non risponde**. Il quarto colore del film non è determinato.
+**SOLUM Newton PRO 12.2"** (`EL122H6W4A`): 768×960 nativi, usato come **960w × 768h**. Due controller SSD16xx da 960×384, uno per coda FFC, divisi per righe (l'SSD1677 ha 680 gate, il pannello 768): BUSY attivo alto, banda slave specchiata nel data path. Il driver pilota una sola banda: **la seconda coda FFC non risponde**. Tre colori come il 9.7": nessuno dei due pannelli ha il giallo, quindi il firmware chiede al server cinema due piani per entrambi.
 
 Vincoli comuni, misurati:
 - **Read-back inesistente** (vedi board) e **nessuna waveform di Mode 2 in OTP**: il refresh differenziale del silicio non è una scorciatoia.
@@ -83,16 +83,20 @@ Struttura di `src/`: `GxEPD2_SOLUM.h` (ombrello), `GxEPD2_SOLUM_Pins.h` (pinout 
 Un solo codice applicativo, due pannelli:
 
 - **`Layout.h`** è un dispatcher: include `Layout_097c.h` o `Layout_122c.h` secondo `#define DISPLAY_VARIANT_097C` / `DISPLAY_VARIANT_122C` in testa al `.ino`, ed emette `#error` se nessuno o entrambi sono definiti.
-- **`Layout_097c.h` / `Layout_122c.h`** definiscono lo stesso namespace `Layout` con simboli identici (`Panel`, `PAGE_HEIGHT`, `makePanel()`, pin, font, ~50 costanti di coordinate). Sono gli **unici** file che includono la libreria dei driver e che contengono valori pixel.
+- **`Layout_097c.h` / `Layout_122c.h`** definiscono nel namespace `Layout` solo il pannello (`Panel`, `PAGE_HEIGHT`, `makePanel()`, pin, `ROTATION`, `SCREEN_W/H` presi dal driver) e due manopole, `CINEMA_H` e `MAIL_ROWS_PER_COL`; poi includono **`Layout_common.h`**, che ne deriva token, font e tutte le coordinate. Sono gli **unici** file che includono la libreria dei driver e che contengono valori pixel.
 - I moduli (`Weather.h`, `Calendar.h`, `Mail.h`, `Indoor.h`, `Graphics.h`, `icons.h`, `Maintenance.h` e il `.ino`) referenziano tutto via `Layout::*`.
+- Le icone meteo stanno in **`icons_weather.h`**, generato da `tools/weather_icons.py` a partire da `icons/weather/` (icone base, `icons.json` con colori e tabella codice OpenWeather → icona ed etichetta): non si modifica a mano. Le icone piccole restano in `icons.h`.
+- Le anteprime del layout (`preview.svg`, che il README mostra su GitHub, `preview_<pannello>.html` per vedere il frame in un browser, `docs/layout_<pannello>.png`) sono generate da `tools/layout_preview.py` con gli stessi algoritmi di disegno del firmware: non si modificano a mano e non si eliminano, si rigenerano dopo ogni modifica di coordinate, font, icone o disegno dei moduli.
 
 Vincoli da non violare:
 
 - `Weather.h`, `Calendar.h`, `Graphics.h` dichiarano `extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;`: **devono usare `Layout::PAGE_HEIGHT`, non ricalcolare `Panel::HEIGHT / 8`**. Sono argomenti template: un valore diverso produce un tipo diverso e il **link fallisce**.
 - `PAGE_HEIGHT = Panel::HEIGHT / 8` è deliberato: `SOLUM_MAX_HEIGHT()` spenderebbe ~65 KB di buffer, mentre la RAM serve anche al resto del firmware.
-- Modifiche di coordinate e font: **solo** nei `Layout_*.h`, mai hardcoded nei moduli. Le baseline del banner sono `BANNER_Y + offset`, così lo scaling 097c→122c si propaga da sè.
+- Modifiche di coordinate e font: **solo** in `Layout_common.h` o nelle manopole dei `Layout_<pannello>.h`, mai hardcoded nei moduli. Le baseline del banner sono `BANNER_Y + offset` e `BANNER_Y` deriva da `SCREEN_H`, così lo scaling 097c→122c si propaga da sè.
+- Nessun `static_assert` sulla misura del wallpaper: un'immagine più grande dell'area si sovrappone, ed è preferibile a un errore di compilazione. Gli `static_assert` di `Layout_common.h` coprono solo righe troppo basse e aree non positive.
+- `Mail.h` ha la guardia `MAIL_MODULE_H` e non `MAIL_H`, perchè `MAIL_H` è il nome della costante `Layout::MAIL_H`: una guardia omonima la cancellerebbe.
 - Nei `Layout_*.h` **non** stanno le cadenze (`*_FETCH_MIN`, `OTA_WINDOW_MIN`, `WIFI_ACTIVE_HOUR_*`, `CINEMA_DAILY_FETCH_HOUR`): sono timing e vivono in `Timings.h`, mentre l'orchestrazione sta in `Scheduler.h` e nella tabella dei task del `.ino`.
-- **Per aggiungere un terzo pannello**: driver nella libreria (rispettando il contratto), nuovo `Layout_<nome>.h` con gli stessi simboli, ramo `#elif` nel dispatcher e `#define DISPLAY_VARIANT_<NOME>` nel `.ino`. Nè i moduli nè la riga di costruzione del display si toccano.
+- **Per aggiungere un terzo pannello**: driver nella libreria (rispettando il contratto), nuovo `Layout_<nome>.h` con gli stessi simboli di pannello e le due manopole, `#define LAYOUT_PANEL_SELECTED` e include di `Layout_common.h`, ramo `#elif` nel dispatcher e `#define DISPLAY_VARIANT_<NOME>` nel `.ino`. Nè i moduli nè la riga di costruzione del display si toccano.
 
 
 ## Build su questa macchina
