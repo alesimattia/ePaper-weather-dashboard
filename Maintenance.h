@@ -86,22 +86,15 @@ namespace Maintenance
     inline uint32_t ultimaRichiestaMs = 0;  // ultima richiesta servita, per clientAttivo()
     inline bool     richiestaServita  = false;
 
-    /**
-     * Ogni richiesta servita sposta la scadenza in avanti, con un tetto
-     * assoluto: senza, una pagina aperta a ridosso della fine porterebbe a un
-     * upload rifiutato a meta' compilazione del form.
-     */
-    inline constexpr uint32_t PROROGA_MS  = 60UL * 1000UL;
-    inline constexpr uint8_t  TETTO_FATT  = 2;
-
     inline uint32_t finestraMs() { return Timings::ms(Timings::get().finestraManutenzioneMin); }
     inline uint32_t attesaStaMs() { return (uint32_t)MAINT_STA_TIMEOUT_S * 1000UL; }
 
-    /** Secondi che restano alla chiusura, 0 se gia' scaduta. */
+    /** Secondi che restano alla chiusura, per eccesso: subito dopo una
+     *  richiesta danno la durata piena della finestra. 0 se gia' scaduta. */
     inline uint32_t secondiResidui()
     {
       const int32_t d = (int32_t)(scadenzaMs - millis());
-      return d <= 0 ? 0 : (uint32_t)d / 1000UL;
+      return d <= 0 ? 0 : ((uint32_t)d + 999UL) / 1000UL;
     }
 
     /**
@@ -134,23 +127,18 @@ namespace Maintenance
       return origine == String("http://") + server.header("Host");
     }
 
-    /** Ogni handler la chiama: oltre a spostare la scadenza registra l'ultima
-     *  richiesta, che clientAttivo() usa per tenere fermo lo scheduler. */
+    /**
+     * Ogni handler la chiama: riporta la scadenza alla durata piena della
+     * finestra, senza tetto assoluto, quindi la finestra si chiude maint_min
+     * dopo l'ultima richiesta e chi sta compilando un form non si vede
+     * rifiutare l'upload a meta'. Registra anche l'ultima richiesta, che
+     * clientAttivo() usa per tenere fermo lo scheduler.
+     */
     inline void proroga()
     {
       ultimaRichiestaMs = millis();
       richiestaServita  = true;
-      const uint32_t nuova = millis() + PROROGA_MS;
-      const uint32_t tetto = apertaMs + finestraMs() * TETTO_FATT;
-      const uint32_t limite = ((int32_t)(nuova - tetto) > 0) ? tetto : nuova;
-      if ((int32_t)(limite - scadenzaMs) > 0) scadenzaMs = limite;
-    }
-
-    /** Dopo un salvataggio la nuova durata vale anche per la finestra in corso. */
-    inline void ricalcolaScadenza()
-    {
-      const uint32_t nuova = apertaMs + finestraMs();
-      if ((int32_t)(nuova - scadenzaMs) > 0) scadenzaMs = nuova;
+      scadenzaMs        = ultimaRichiestaMs + finestraMs();
     }
 
     inline void avviaMdns()
@@ -199,36 +187,30 @@ namespace Maintenance
     }
 
     // -----------------------------------------------------------------------
-    // Pagine. I pezzi fissi stanno in PROGMEM; quelle con valori correnti si
-    // compongono a blocchi (Transfer-Encoding chunked) per non costruire una
-    // String grande in RAM.
+    // Pagine. Tutte si aprono con apriPagina() e si chiudono con
+    // chiudiPagina(): stessa testa, e in basso i collegamenti a tutte le
+    // funzioni della finestra. Si compongono a blocchi (Transfer-Encoding
+    // chunked) per non costruire una String grande in RAM; i pezzi fissi
+    // stanno in PROGMEM.
     // -----------------------------------------------------------------------
 
-    static const char PAGINA_UPDATE[] PROGMEM =
-        "<!DOCTYPE html>"
-        "<title>Firmware</title>"
-        "<meta name=viewport content=\"width=device-width\">"
-        "<h2>Aggiornamento firmware</h2>"
-        "<form method=POST action=/update enctype=multipart/form-data>"
-        "<input type=file name=update accept=.bin required>"
-        "<button>Carica</button>"
-        "</form>"
-        "<p><a href=/>Home</a>";
-
-    static const char INDICE_FMT[] PROGMEM =
+    static const char TESTA_FMT[] PROGMEM =
         "<!DOCTYPE html>"
         "<title>%s</title>"
         "<meta name=viewport content=\"width=device-width\">"
-        "<h2>%s</h2>"
-        "<p>Manutenzione via %s, indirizzo %s"
-        "<p>Finestra aperta ancora %lu s; ogni richiesta la prolunga."
-        "<p><a href=/config>Tempi</a> | <a href=/update>Firmware</a> | <a href=/status>Stato</a>";
+        "<h2>%s</h2>";
+
+    static const char PIEDE[] PROGMEM =
+        "<hr><p><a href=/>Stato</a> | <a href=/config>Tempi</a>"
+        " | <a href=/update>Firmware</a>";
+
+    static const char PAGINA_UPDATE[] PROGMEM =
+        "<form method=POST action=/update enctype=multipart/form-data>"
+        "<input type=file name=update accept=.bin required>"
+        "<button>Carica</button>"
+        "</form>";
 
     static const char CONFIG_TESTA[] PROGMEM =
-        "<!DOCTYPE html>"
-        "<title>Tempi</title>"
-        "<meta name=viewport content=\"width=device-width\">"
-        "<h2>Tempi</h2>"
         "<form method=POST action=/config>";
 
     static const char CONFIG_RIGA_FMT[] PROGMEM =
@@ -237,42 +219,42 @@ namespace Maintenance
 
     static const char CONFIG_CODA[] PROGMEM =
         "<p><button>Salva</button></form>"
-        "<form method=POST action=/config/reset><button>Ripristina predefiniti</button></form>"
-        "<p><a href=/>Home</a> | <a href=/update>Firmware</a> | <a href=/status>Stato</a>";
+        "<form method=POST action=/config/reset><button>Ripristina predefiniti</button></form>";
 
-    static const char ESITO_TESTA[] PROGMEM =
-        "<!DOCTYPE html><title>Tempi</title>"
-        "<meta name=viewport content=\"width=device-width\"><h2>Esito</h2><ul>";
-
-    static const char ESITO_CODA[] PROGMEM =
-        "</ul><p><a href=/config>Torna ai tempi</a> | <a href=/>Home</a>";
-
-    inline void handleIndice()
+    /** Avvia una risposta HTML a blocchi con la testa comune, dove il
+     *  titolo della scheda e l'intestazione coincidono. */
+    inline void apriPagina(const char* titolo)
     {
-      if (!autorizzato()) return;
-      proroga();
-      const char* via = (stato == Stato::ServerAp) ? "access point" : "rete di casa";
-      const String ip = (stato == Stato::ServerAp) ? WiFi.softAPIP().toString()
-                                                   : WiFi.localIP().toString();
-      char buf[512];
-      snprintf_P(buf, sizeof buf, INDICE_FMT, MAINT_HOSTNAME, MAINT_HOSTNAME, via, ip.c_str(),
-                 (unsigned long)secondiResidui());
-      server.send(200, "text/html", buf);
+      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+      server.send(200, "text/html", "");
+      char testa[192];
+      snprintf_P(testa, sizeof testa, TESTA_FMT, titolo, titolo);
+      server.sendContent(testa, strlen(testa));
+    }
+
+    /** Chiude la pagina avviata da apriPagina() con i collegamenti a tutte
+     *  le funzioni, e termina la risposta a blocchi. */
+    inline void chiudiPagina()
+    {
+      server.sendContent_P(PIEDE);
+      server.sendContent("", 0);
     }
 
     inline void handleUpdate()
     {
       if (!autorizzato()) return;
       proroga();
-      server.send_P(200, PSTR("text/html"), PAGINA_UPDATE);
+      apriPagina("Firmware");
+      server.sendContent_P(PAGINA_UPDATE);
+      chiudiPagina();
     }
 
     inline void handleConfigGet()
     {
       if (!autorizzato()) return;
       proroga();
-      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-      server.send_P(200, PSTR("text/html"), CONFIG_TESTA);
+      apriPagina("Tempi");
+      server.sendContent_P(CONFIG_TESTA);
       char riga[256];
       for (size_t i = 0; i < Timings::nCampi(); ++i)
       {
@@ -285,7 +267,7 @@ namespace Maintenance
         server.sendContent(riga, (size_t)n);
       }
       server.sendContent_P(CONFIG_CODA);
-      server.sendContent("", 0);
+      chiudiPagina();
     }
 
     /** Solo cifre: strtoul accetterebbe segno e spazi iniziali. */
@@ -307,9 +289,8 @@ namespace Maintenance
     {
       if (!autorizzato()) return;
       if (!origineValida()) { server.send(403, "text/plain", "origine non valida"); return; }
-      proroga();
-      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-      server.send_P(200, PSTR("text/html"), ESITO_TESTA);
+      apriPagina("Esito");
+      server.sendContent_P(PSTR("<ul>"));
 
       char riga[224];
       uint8_t proposti = 0, malformati = 0;
@@ -351,7 +332,6 @@ namespace Maintenance
         server.sendContent_P(salvato
             ? PSTR("</ul><p>Salvato, attivo dal prossimo giro senza riavvio<ul>")
             : PSTR("</ul><p><b>Salvataggio fallito</b>: valori attivi solo fino al riavvio<ul>"));
-        ricalcolaScadenza();
       }
       else if (proposti)
       {
@@ -360,8 +340,10 @@ namespace Maintenance
                                motivo ? motivo : "combinazione non valida");
         server.sendContent(riga, (size_t)n);
       }
-      server.sendContent_P(ESITO_CODA);
-      server.sendContent("", 0);
+      server.sendContent_P(PSTR("</ul>"));
+      // Dopo l'eventuale salvataggio: la nuova durata vale gia' per la finestra in corso.
+      proroga();
+      chiudiPagina();
       LOG("MAINT", "config: %u campi proposti, %u malformati, esito %s",
           (unsigned)proposti, (unsigned)malformati,
           salvato ? "salvato" : (proposti ? "rifiutato" : "niente da fare"));
@@ -371,14 +353,12 @@ namespace Maintenance
     {
       if (!autorizzato()) return;
       if (!origineValida()) { server.send(403, "text/plain", "origine non valida"); return; }
-      proroga();
       const bool ok = Timings::ripristinaDefault();
-      ricalcolaScadenza();
-      server.send_P(200, PSTR("text/html"), ok
-          ? PSTR("<!DOCTYPE html><title>Tempi</title><p>Predefiniti ripristinati"
-                 "<p><a href=/config>Torna ai tempi</a>")
-          : PSTR("<!DOCTYPE html><title>Tempi</title><p><b>Ripristino fallito</b>"
-                 "<p><a href=/config>Torna ai tempi</a>"));
+      proroga();   // dopo il ripristino, con la durata predefinita
+      apriPagina("Esito");
+      server.sendContent_P(ok ? PSTR("<p>Predefiniti ripristinati")
+                              : PSTR("<p><b>Ripristino fallito</b>"));
+      chiudiPagina();
       LOG("MAINT", "config: ripristino predefiniti %s", ok ? "riuscito" : "fallito");
     }
 
@@ -393,14 +373,17 @@ namespace Maintenance
       }
     };
 
+    /** Pagina principale della finestra, servita su "/": stato del
+     *  dispositivo e dump dello scheduler. */
     inline void handleStato()
     {
       if (!autorizzato()) return;
       proroga();
-      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-      server.send(200, "text/plain", "");
+      apriPagina("Stato");
+      // Nel <pre> finiscono solo stringhe del firmware e numeri, niente da
+      // sanificare: le colonne dello scheduler restano allineate.
+      server.sendContent_P(PSTR("<pre>"));
       UscitaHttp out;
-      out.printf("hostname: %s\n", MAINT_HOSTNAME);
       out.printf("uptime: %lu s\n", (unsigned long)(millis() / 1000UL));
       out.printf("heap libero: %lu byte\n", (unsigned long)ESP.getFreeHeap());
       // Minimo dal boot, blocco contiguo e stack residuo del loop: sono le
@@ -414,7 +397,8 @@ namespace Maintenance
                  (unsigned long)secondiResidui());
       out.print("\n");
       Scheduler::stampaStato(out);
-      server.sendContent("", 0);
+      server.sendContent_P(PSTR("</pre>"));
+      chiudiPagina();
     }
   }
 
@@ -439,11 +423,10 @@ namespace Maintenance
 
     // La nostra pagina di /update va registrata PRIMA di updater.setup():
     // il WebServer sceglie il primo handler che combacia.
-    server.on("/", HTTP_GET, handleIndice);
+    server.on("/", HTTP_GET, handleStato);
     server.on("/config", HTTP_GET, handleConfigGet);
     server.on("/config", HTTP_POST, handleConfigPost);
     server.on("/config/reset", HTTP_POST, handleConfigReset);
-    server.on("/status", HTTP_GET, handleStato);
     server.on("/update", HTTP_GET, handleUpdate);
   #ifdef MAINT_HTTP_PASSWORD
     updater.setup(&server, "/update", MAINT_HTTP_USER, MAINT_HTTP_PASSWORD);
@@ -470,7 +453,9 @@ namespace Maintenance
    * associato all'access point di emergenza, oppure una richiesta servita da
    * meno di MAINT_CLIENT_IDLE_MS. Il loop() del .ino tiene fermo lo scheduler
    * finchè è vero, perchè un fetch o un refresh lascerebbe il web server senza
-   * risposta per decine di secondi. Il tetto assoluto della finestra resta.
+   * risposta per decine di secondi. La finestra non ha un tetto assoluto: un
+   * client che continua a fare richieste tiene fermo lo scheduler finchè
+   * continua.
    */
   inline bool clientAttivo()
   {

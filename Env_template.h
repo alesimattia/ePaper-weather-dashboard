@@ -36,8 +36,8 @@
 #define OTA_AP_PASSWORD "epaperota"
 
 /**
- * Password della finestra di manutenzione (Basic Auth su /update, /config e
- * /status). Commentata = nessuna autenticazione.
+ * Password della finestra di manutenzione (Basic Auth su /, /config e
+ * /update). Commentata = nessuna autenticazione.
  *
  * Va definita: sulla rete di casa la pagina e' raggiungibile da chiunque sia
  * sulla LAN per tutta la durata della finestra, e /update accetta un firmware

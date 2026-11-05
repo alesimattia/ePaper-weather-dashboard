@@ -506,6 +506,8 @@ namespace Scheduler
     out.printf("giri: %lu  orologio: %s  fascia: %s\n", (unsigned long)detail::giri,
                Clock::valido() ? "sincronizzato" : "non sincronizzato",
                inFascia() ? "aperta" : "chiusa");
+    // Separa la riga dei giri dalla tabella dei task, larga quanto la tabella.
+    out.printf("-----------------------------------------------------\n");
     out.printf("%-9s %-6s %-9s %8s %8s %8s\n", "task", "radio", "prossimo", "esiti", "ok", "falliti");
     for (uint8_t i = 0; i < detail::nTask; ++i)
     {

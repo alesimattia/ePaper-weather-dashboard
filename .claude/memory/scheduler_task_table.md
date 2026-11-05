@@ -37,7 +37,7 @@ type: project
 
 **Il primo frame** non aspetta dati validi: `primoFrameConsentito()` è vero appena un task di rete ha prodotto un esito **qualsiasi**, anche un fallimento, oppure sono passati `PRIMO_FRAME_ATTESA_MS` dal boot. Con la rete a posto il frame arriva in pochi secondi coi dati veri; senza rete arriva comunque, coi placeholder `--`. Il gate vive interamente nello scheduler: Weather disegna e basta.
 
-**Diagnostica.** Con lo scheduler "perché questo task non parte" non è più una riga di codice ma la combinazione di sei campi: per questo `stampaStato(Print&)` non è decorativa, ed è esposta su `/status` della finestra di manutenzione. Ogni esito è loggato con durata, tentativo e prossima scadenza.
+**Diagnostica.** Con lo scheduler "perché questo task non parte" non è più una riga di codice ma la combinazione di sei campi: per questo `stampaStato(Print&)` non è decorativa, ed è esposta su `/` (pagina di stato) della finestra di manutenzione. Ogni esito è loggato con durata, tentativo e prossima scadenza.
 
 **Aggiungere un task** = una riga di tabella più gli adattatori, ed è tutto: nessun modulo e nessun ramo di `loop()` si toccano. Tuya è l'esempio già in tabella, e l'unico che usa due campi altrimenti dormienti — `maxTentativi = 0` e `ignoraFascia` — più un `dopo()` che non è `marcaSuOk`: chiede il ridisegno solo quando `hasFailed()` **cambia** rispetto al badge già disegnato, non su successo (vedi [[tuya_module]]).
 

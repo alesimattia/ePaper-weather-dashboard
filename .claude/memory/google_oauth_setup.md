@@ -40,12 +40,11 @@ saltato emerge solo a runtime sul dispositivo.
    `/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 tools/google_oauth_setup.py`.
    Dal browser: *Avanzate → Apri comunque* (app non verificata), spuntare **entrambi** gli scope
    `calendar.readonly` e `gmail.readonly`.
-6. **Verifica dal Mac, prima di flashare**: POST `https://oauth2.googleapis.com/token` con le tre
-   macro di Env.h e `grant_type=refresh_token`; il campo `scope` della risposta deve contenere
-   entrambi gli scope. Poi GET
-   `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&fields=messages(id)` col
-   bearer: 200 = Gmail ok, altrimenti stampare il corpo d'errore. Lo script di verifica non deve
-   stampare i valori delle macro.
+6. **Verifica dal Mac, prima di flashare**: `python3 tools/google_api_check.py` (sola stdlib,
+   qualunque interprete, nessun argomento). Rinnova il token dalle tre macro di Env.h come il
+   firmware e stampa il campo `scope` (devono esserci entrambi), poi una richiesta minima a
+   Calendar API e Gmail API: `HTTP 200` su tutte e due = collegamento corretto; altrimenti stampa
+   messaggio e motivi di Google. Exit 1 se un passo fallisce. Non stampa macro, eventi o messaggi.
 7. **Env.h è gitignored**: ogni macchina che compila ne ha una copia propria; dopo una
    rigenerazione va copiata a mano su quella che builda e flasha.
 
@@ -64,7 +63,7 @@ Atteso sul seriale: `[Google] token OK`, `[Mail] fetched N message ids`,
 | seriale | idem | corpo `ACCESS_TOKEN_SCOPE_INSUFFICIENT`: token emesso senza `gmail.readonly` | passo 5 spuntando entrambi gli scope |
 
 Il firmware logga solo il codice HTTP, mai il corpo: i due 403 di Gmail si distinguono solo con
-la verifica del passo 6. Un 403 `SERVICE_DISABLED` è di progetto, quindi vale per qualunque token
+`tools/google_api_check.py` (passo 6). Un 403 `SERVICE_DISABLED` è di progetto, quindi vale per qualunque token
 e qualunque copia di Env.h.
 
 ## Vincoli del firmware

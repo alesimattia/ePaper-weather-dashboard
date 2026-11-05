@@ -390,6 +390,9 @@ dominio non-sensibili stanno nei moduli consumer: `CLOCK_POSIX_TZ`
 > usa il Calendar: ri-esegui il flusso OAuth (con `prompt=consent`)
 > chiedendo entrambi gli scope, sostituisci `GOOGLE_REFRESH_TOKEN` con il
 > nuovo valore e abilita la **Gmail API** sullo stesso progetto Cloud.
+> Prima di flashare, `python3 tools/google_api_check.py` rifà da PC il
+> rinnovo del token e una richiesta a Calendar API e Gmail API con le
+> credenziali di `Env.h`, e per ogni errore stampa il motivo di Google.
 
 > ⚠️ **Non committare `Env.h`** dopo averlo editato: è gitignored, si parte da
 > `Env_template.h`.
@@ -455,7 +458,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 
 Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo la propria funzionalità:
 
-- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `pronto()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" in `/status`. Tuya fa lo stesso con `readyToPublish()`.
+- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `pronto()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
 - **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
 - **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
 - **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
@@ -722,16 +725,20 @@ entrambe.
 Finchè la finestra è aperta la radio è sua: lo scheduler esegue i task dovuti quando la
 STA è connessa, ma non la accende nè la spegne. Alla chiusura la radio viene consegnata
 **spenta**. La scadenza parte quando il server diventa raggiungibile e ogni richiesta la
-prolunga di 60 s fino a un tetto del doppio della finestra.
+riporta alla durata piena, senza tetto assoluto: la finestra si chiude `maint_min` dopo
+l'ultima richiesta.
 
 | Route | Metodo | Cosa fa |
 |---|---|---|
-| `/` | GET | stato, indirizzo, secondi residui, collegamenti |
+| `/` | GET | stato: uptime, heap, secondi residui della finestra e dump dello scheduler (prossima scadenza, esiti e fallimenti per task) |
 | `/config` | GET | form dei tempi, con minimo e predefinito accanto a ogni campo |
 | `/config` | POST | valida i campi ricevuti e li salva su NVS |
 | `/config/reset` | POST | cancella gli override e torna ai valori compilati |
 | `/update` | GET / POST | pagina di upload e POST gestito da `HTTPUpdateServer` |
-| `/status` | GET | dump testuale dello scheduler: prossima scadenza, esiti e fallimenti per task, heap libero |
+
+Tutte le pagine hanno la stessa testa e in basso i collegamenti a `/`, `/config` e
+`/update`. Fa eccezione l'esito dell'upload, generato da `HTTPUpdateServer`:
+in caso di successo torna a `/` da sè dopo il riavvio.
 
 **Tempi da riga di comando.** I nomi dei campi POST di `/config` sono le **chiavi NVS**
 elencate in [Cadenze configurabili](#cadenze-configurabili-timingsh-modificabili-da-config):
@@ -753,7 +760,7 @@ curl -u admin:PASSWORD -d "owm_min=30&mail_min=15" http://epd-dashboard.local/co
 **Sicurezza.** La pagina è raggiungibile da chiunque sia sulla LAN per la durata della
 finestra e `/update` accetta un firmware qualunque, che conterrebbe le credenziali di
 `Env.h`. Le mitigazioni sono proporzionate a un dispositivo domestico: finestra breve
-con tetto assoluto, Basic Auth opzionale (le credenziali vanno anche a
+che si chiude `maint_min` dopo l'ultima richiesta, Basic Auth opzionale (le credenziali vanno anche a
 `updater.setup()`, così il controllo avviene prima che la partizione venga scritta),
 controllo dell'origine sulle POST. Non ci sono HTTPS nè token.
 
