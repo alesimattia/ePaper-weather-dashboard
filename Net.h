@@ -59,7 +59,7 @@ namespace Net
    *
    * Il buffer da 128 byte serve ad ArduinoJson, che legge un carattere alla
    * volta: senza, ogni carattere costerebbe due letture mbedTLS. Le letture
-   * grandi (i piani del cinema) vanno direttamente nella destinazione.
+   * grandi (i blocchi da 1 KB del cinema) vanno direttamente nella destinazione.
    * Usato da Weather.h, Calendar.h e dal download cinema del .ino.
    */
   class BodyStream : public Stream

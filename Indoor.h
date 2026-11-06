@@ -102,8 +102,12 @@ namespace Indoor
     inline Bsec2    bsec;
     inline Sample   current          = {};
     inline bool     bsecOk           = false;
-    inline bool     hasNewSample     = false;
     inline uint32_t lastStateSaveMs  = 0;
+
+    /** Timestamp BSEC (ns) delle ultime uscite applicate: le uscite restano
+     *  nella libreria fra un run() e l'altro, e solo un timestamp diverso
+     *  indica un campione nuovo. */
+    inline int64_t  lastOutputTimestampNs = 0;
 
     /** Istante dell'ultima chiamata a refresh(): la cadenza delle
      *  interrogazioni si conta da qui e non dal campione, così un sensore che
@@ -148,33 +152,13 @@ namespace Indoor
     }
 
     /**
-     * Callback invocato da BSEC quando è pronto un nuovo set di output.
-     * Aggiorna la cache `current` e setta il flag `hasNewSample` che
-     * Indoor::refresh() leggera' al ritorno da bsec.run().
-     *
-     * La firma a 3 parametri è imposta dalla libreria Bsec2 (typedef
-     * bsecCallback). Due dei tre parametri non vengono usati nel corpo:
-     *
-     *  - rawData (bme68xData): campione "raw" letto dal BME68x prima della
-     *    fusion BSEC (T/RH/P grezzi + resistenza VOC). Non lo leggiamo
-     *    perchè il firmware mostra solo i valori heat-compensated calcolati
-     *    da BSEC (signal degli OUTPUT_SENSOR_HEAT_COMPENSATED_*), già piu'
-     *    accurati e gia' calibrati.
-     *
-     *  - bsec (Bsec2): copia/handle dell'istanza che ha generato l'evento.
-     *    Non serve perchè la stessa istanza è disponibile come singleton
-     *    `detail::bsec` definito a livello di namespace e gia' accessibile
-     *    dalla callback (non gestiamo piu' di un BME680 sullo stesso ESP32).
-     *
-     * Lasciati senza nome "rawData" e  "bsec" per silenziare
-     * il warning -Wunused-parameter senza alterare la firma attesa da Bsec2.
+     * Copia nella cache `current` le uscite di un campione BSEC appena
+     * elaborato. Le uscite si leggono per riferimento con getOutputs() dopo
+     * bsec.run(), invece che dalla callback della libreria, che riceve per
+     * valore sia le uscite sia l'intero Bsec2.
      */
-    inline void onBsecData(const bme68xData /*rawData*/,
-                           const bsecOutputs outputs,
-                           Bsec2 /*bsec*/)
+    inline void applyOutputs(const bsecOutputs& outputs)
     {
-      if (outputs.nOutputs == 0) return;
-
       for (uint8_t i = 0; i < outputs.nOutputs; i++)
       {
         const bsecData& out = outputs.output[i];
@@ -201,7 +185,6 @@ namespace Indoor
 
       current.valid        = true;
       current.lastUpdateMs = millis();
-      hasNewSample         = true;
     }
 
     /**
@@ -405,10 +388,10 @@ namespace Indoor
     using namespace detail;
     current         = {};
     bsecOk          = false;
-    hasNewSample    = false;
     lastStateSaveMs = 0;
     lastPollMs      = 0;
     everPolled      = false;
+    lastOutputTimestampNs = 0;
 
     Wire.begin(BME680_SDA_PIN, BME680_SCL_PIN);
     // Bsec2 e Bme68x usano l'oggetto Wire senza reinizializzarlo, quindi il
@@ -446,15 +429,13 @@ namespace Indoor
       return;
     }
 
-    bsec.attachCallback(onBsecData);
-
     bsecOk          = true;
     lastStateSaveMs = millis();
     LOG("BME680", "init ok, ULP 5 min");
   }
 
   /** Vero quando il sensore e' stato inizializzato con successo. È l'hook
-   *  pronto() del task del sensore nel .ino: senza sensore il task è sospeso. */
+   *  preconditionsMet() del task del sensore nel .ino: senza sensore il task è sospeso. */
   inline bool attivo() { return detail::bsecOk; }
 
   /**
@@ -488,7 +469,6 @@ namespace Indoor
 
     lastPollMs = millis();
     everPolled = true;
-    hasNewSample = false;
     if (!bsec.run())
     {
       /**
@@ -503,7 +483,13 @@ namespace Indoor
       return expireIfStale();
     }
 
-    if (!hasNewSample) return expireIfStale();
+    // Le uscite restano nella libreria fra un run() e l'altro: è nuovo solo un
+    // campione con un timestamp diverso dall'ultimo applicato.
+    const bsecOutputs* outputs = bsec.getOutputs();
+    if (outputs == nullptr || outputs->output[0].time_stamp == lastOutputTimestampNs)
+      return expireIfStale();
+    lastOutputTimestampNs = outputs->output[0].time_stamp;
+    applyOutputs(*outputs);
 
     LOGV("BME680", "T=%.1fC RH=%u%% P=%umBar IAQ=%u acc=%u",
          current.temperature, (unsigned)current.humidity,

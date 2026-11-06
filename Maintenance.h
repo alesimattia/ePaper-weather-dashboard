@@ -396,7 +396,7 @@ namespace Maintenance
       out.printf("finestra: ancora %lu s\n",
                  (unsigned long)secondiResidui());
       out.print("\n");
-      Scheduler::stampaStato(out);
+      Scheduler::printStatus(out);
       server.sendContent_P(PSTR("</pre>"));
       chiudiPagina();
     }

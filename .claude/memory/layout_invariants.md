@@ -16,10 +16,12 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 - banner: Interno 200 + 10 + Meteo 280 + 10 + Previsioni 440 = 940 = 960 - 2 × 10. Meteo = blocco corrente 162 + colonna sole 118; Previsioni = 3 blocchi da 146.
 
 **Altezze (097c / 122c):**
-- banner alto 196, `BANNER_Y` = `SCREEN_H - MARGIN - 196` = 466 / 562; la fascia sbiancata parte da `BANNER_CLEAR_Y` = `BANNER_Y - 10`, per coprire i titoli che sporgono;
+- banner alto 196, `BANNER_Y` = `SCREEN_H - MARGIN - 196` = 466 / 562; i suoi titoli sporgono di circa 10 px sopra il bordo;
 - wallpaper y=10..300 / 10..335;
 - Posta da `CINEMA_Y + CINEMA_H + 16` a `BANNER_Y - 16`: 316..450 / 351..546, righe da 57 / 58 px (contenuto da +14 a -6 del riquadro);
 - scheda calendario y=14..450 / 14..546: griglia del mese 6 righe da 24, filetto a y=207 su entrambi, eventi da y=213 alti 231 / 327.
+
+**Culling per pagina.** Il loop paged ha 8 pagine (fasce da 84 px sul 097c, 96 sul 122c; con `ROTATION 0` la pagina k è [k·PH, (k+1)·PH)). `Weather::renderFrame()` chiama `Calendar::draw()`, `Mail::draw()` e `drawBanner()` solo se il loro riquadro, allargato in alto di `STACK_GAP` per il titolo, tocca la fascia; dentro, intestazione e celle della griglia, righe evento (`EVT_ROW_H`) e celle posta (`MAIL_ROW_H`) si saltano fuori fascia. Il criterio regge perchè ogni testo, filetto, badge e icona sta dentro la propria riga o il proprio riquadro, discendenti compresi (misurato sui font): un elemento nuovo che sporge oltre il suo riquadro verrebbe tagliato. Non ci sono sbiancamenti: il buffer di ogni pagina lo azzera il template, e prima dei riquadri disegna solo il wallpaper, tagliato all'altezza `CINEMA_H`. `GxEPD2_3C` non ridefinisce `fillRect`, quindi Adafruit_GFX la esegue pixel per pixel attraverso `drawPixel` virtuale, e il clip sulla pagina avviene solo lì dentro: uno sbiancamento di un'area grande costa centinaia di migliaia di chiamate per pagina, e non se ne aggiungono. Il log `render` (LOGV) misura i ms di solo disegno per frame.
 
 **Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 45 px (`MIN_EVT_ROW_H` in `Calendar.h`): 5 righe da 46 sul 097c, 7 da 46 sul 122c. Una riga di Posta deve contenere i 41 px di mittente più oggetto. Entrambi i limiti, e le aree non positive, fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
 

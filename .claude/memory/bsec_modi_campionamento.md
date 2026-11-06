@@ -1,6 +1,6 @@
 ---
 name: BSEC2 - modi di campionamento, warning positivi, e perchè la misura on-demand non si usa
-description: 300 s è un modo non un intervallo; run() ritorna true quando non c'è niente da leggere; perchè ULP plus è stata valutata e scartata
+description: 300 s è un modo non un intervallo; run() ritorna true quando non c'è niente da leggere, quindi le uscite si leggono con getOutputs() e il campione nuovo dal time_stamp; callback del wrapper non usata perchè copia uscite e Bsec2 per valore; perchè ULP plus è stata valutata e scartata
 type: reference
 ---
 
@@ -8,16 +8,17 @@ type: reference
 
 ## Due comportamenti del wrapper che non si vedono dall'API
 
-1. **`Bsec2::run()` ritorna `true` anche quando non c'è niente da leggere.** Il corpo è tutto dentro `if (currTimeNs >= bmeConf.next_call)` e la funzione cade sul `return true` finale (`bsec2.cpp:146-209`); ritorna `false` solo su errore vero. Quindi "nessun dato" e "tutto bene" sono indistinguibili dal valore di ritorno: chi deve sapere se è arrivato un campione guarda `hasNewSample`, non `run()`.
+1. **`Bsec2::run()` ritorna `true` anche quando non c'è niente da leggere.** Il corpo è tutto dentro `if (currTimeNs >= bmeConf.next_call)` e la funzione cade sul `return true` finale (`bsec2.cpp:146-209`); ritorna `false` solo su errore vero. Quindi "nessun dato" e "tutto bene" sono indistinguibili dal valore di ritorno, e le uscite restano nella libreria fra un `run()` e l'altro: `Indoor::refresh()` le legge con `getOutputs()` (puntatore costante, `nullptr` senza uscite) e riconosce un campione nuovo dal `time_stamp` in ns delle uscite, diverso dall'ultimo applicato (`lastOutputTimestampNs`).
+3. **La callback del wrapper copia tutto per valore.** La firma imposta da `bsec2.h:80` riceve `bsecOutputs` (23 uscite da 16 B) e l'intero `Bsec2` per valore, e la copia la fa la libreria al punto di chiamata (`bsec2.cpp:379`): circa 1 KB di stack per campione, più una copia superficiale del puntatore `bsecInstance` allocato con `new[]`, innocua solo perchè né `Bsec2` né `Bme68x` hanno distruttore. Per questo `Indoor.h` non registra `attachCallback()`, che il wrapper tratta come facoltativa (`bsec2.cpp:378` controlla il `nullptr`), e la libreria non si modifica.
 2. **`bmeConf` è privato** (`bsec2.h:239`) e gatea `run()`: prima di `next_call` la chiamata non fa nulla, e al primo `run()` dopo il boot `next_call` vale 0, quindi la misura parte subito. Il trigger e la lettura avvengono nella stessa chiamata: `bme68x_get_data()` attende il dato fino a 5 × 10 ms (`bme68x.c`).
 
 ## Cadenza delle interrogazioni e scadenza del campione
 
-**La cadenza si conta dall'ultima interrogazione, non dal campione.** `Indoor::refresh()` registra l'istante di ogni chiamata e `Indoor::msUntilNextPoll()` restituisce 0 se il sensore non è mai stato interrogato, altrimenti il tempo a ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`. È la scadenza custom del task `bsec`. Interrogare più spesso non anticipa nessun campione, per il punto 2; contare dal campione invece bloccherebbe il task quando il campione non c'è, perchè nello scheduler la scadenza custom precede `maiEseguito` (vedi [[scheduler_task_table]]), e farebbe svegliare il dispositivo a ogni giro con il sensore guasto.
+**La cadenza si conta dall'ultima interrogazione, non dal campione.** `Indoor::refresh()` registra l'istante di ogni chiamata e `Indoor::msUntilNextPoll()` restituisce 0 se il sensore non è mai stato interrogato, altrimenti il tempo a ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`. È la scadenza custom del task `bsec`. Interrogare più spesso non anticipa nessun campione, per il punto 2; contare dal campione invece bloccherebbe il task quando il campione non c'è, perchè nello scheduler la scadenza custom precede `neverRun` (vedi [[scheduler_task_table]]), e farebbe svegliare il dispositivo a ogni giro con il sensore guasto.
 
 **Il campione scade al secondo campione perso.** Se una chiamata non porta un campione nuovo e l'ultimo è più vecchio di `INDOOR_SAMPLE_MAX_AGE_MS` (2 × 300 s + 1 s), `valid` torna falso: il riquadro mostra "--" e Tuya si sospende, perchè `readyToPublish()` richiede `valid`. `refresh()` restituisce `true` anche in quel caso, perchè il dato da mostrare è cambiato e serve un ridisegno.
 
-**Senza sensore** il task è sospeso: il suo `pronto` è `Indoor::attivo()`, falso se `bsec.begin()` è fallito.
+**Senza sensore** il task è sospeso: il suo `preconditionsMet` è `Indoor::attivo()`, falso se `bsec.begin()` è fallito.
 
 ## I warning di BSEC sono positivi, e vanno filtrati con `!=`
 

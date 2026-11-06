@@ -246,6 +246,11 @@
  *  WebServer::handleClient(), che non e' asincrono. */
 #define MAINTENANCE_LOOP_DELAY_MS 10
 
+/** Distanza minima fra due giri dello scheduler nella finestra di
+ *  manutenzione: il loop gira ogni MAINTENANCE_LOOP_DELAY_MS per il web
+ *  server, mentre nessun task ha una granularità più fine del secondo. */
+#define MAINTENANCE_SCHEDULER_PERIOD_MS 1000UL
+
 /**
  * Orologio di sistema.
  *

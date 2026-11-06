@@ -17,7 +17,7 @@ Tutti i tempi stanno in `Timings.h`; il **quando** lo decide `Scheduler.h`, mai 
 | Display | 24 s (refresh pieno) | hard fisico |
 | Radio | 2-15 s per accensione | costo |
 
-**Sleep dinamico:** `Scheduler::dormi()` dorme fino al minimo delle scadenze effettive, clampato in `[SLEEP_MIN_S 30, SLEEP_MAX_S 300]`. Il tetto **è** il periodo ULP.
+**Sleep dinamico:** `Scheduler::sleepUntilNextEvent()` dorme fino al minimo delle scadenze effettive, clampato in `[SLEEP_MIN_S 30, SLEEP_MAX_S 300]`. Il tetto **è** il periodo ULP.
 
 ## Tetti di tempo delle connessioni
 
@@ -28,19 +28,19 @@ I produttori girano in sequenza nello stesso `loop()`, quindi il tempo che uno c
 - Mail è l'eccezione: resta in HTTP/1.1 per riusare la connessione fra lista e batch e legge le risposte con `getString()`, che gestisce il chunked (vedi [[mail_module]]).
 - Costo stimato dell'handshake a 80 MHz: 1-2 s con X25519 (Google, OpenWeather, render.com), 2-4 s con P-384 (Microsoft impone quella curva). Lato ESP32 il core offre solo TLS 1.2, accelera MPI, AES e SHA ma non le curve ellittiche.
 
-**Ping del cinema.** È un `prima()`, quindi gira prima di tutti gli altri fetch: per questo usa anch'esso il tetto di 15 s. Il tetto non tocca il cold start di render.com, che riguarda la **risposta** (misurato 22,4 s, coperto da `CINEMA_HTTP_TIMEOUT_MS` 45 s), non l'handshake, che chiude l'edge di render anche a istanza ferma. Dopo il boot `/cinema/arduino` risponde in 0,54 s.
+**Ping del cinema.** È un `onRoundStart()`, quindi gira prima di tutti gli altri fetch: per questo usa anch'esso il tetto di 15 s. Il tetto non tocca il cold start di render.com, che riguarda la **risposta** (misurato 22,4 s, coperto da `CINEMA_HTTP_TIMEOUT_MS` 45 s), non l'handshake, che chiude l'edge di render anche a istanza ferma. Dopo il boot `/cinema/arduino` risponde in 0,54 s.
 
 **Worst case del cinema:** 15 s (WiFi) + fino a 22 s (cold start) + 2-3 s (download) ≈ 40 s, dentro i 45 s.
 
 ## Radio e pannello
 
 - **Riconnessione WiFi veloce.** `wifiOn()` ricorda in RAM canale e BSSID dell'ultima connessione e li passa a `WiFi.begin()`. Senza, il core scandisce i canali dal primo (`WIFI_FAST_SCAN`) finchè trova la rete: il risparmio cresce col numero del canale, da circa 0 a 1,5 s. Se il tentativo veloce non riesce entro `WIFI_FAST_CONNECT_TIMEOUT_MS` (5 s) si ripiega sulla connessione normale nel resto di `WIFI_CONNECT_TIMEOUT_MS`. Il canale compare nel log di connessione.
-- **Ridisegno notturno.** Il campione del sensore chiede il ridisegno solo dentro la fascia WiFi (`dopoIndoor()` con `Scheduler::inFascia()`): di notte non c'è nè radio nè refresh, restano 12 risvegli brevi all'ora per il sensore. Fra mezzanotte e l'apertura della fascia il pannello mostra la data del giorno prima.
+- **Ridisegno notturno.** Il campione del sensore chiede il ridisegno solo dentro la fascia WiFi (`onIndoorOutcome()` con `Scheduler::isInsideRadioHours()`): di notte non c'è nè radio nè refresh, restano 12 risvegli brevi all'ora per il sensore. Fra mezzanotte e l'apertura della fascia il pannello mostra la data del giorno prima.
 - **Light sleep durante il refresh.** `initDisplay()` registra `setBusyCallback()` di GxEPD2: a radio spenta l'attesa del BUSY (24 s per refresh) avviene in light sleep, con risveglio sul BUSY basso (`Layout::BUSY_WAKE_PIN`) e un timer di sicurezza `DISPLAY_BUSY_SLEEP_SLICE_MS`. Il timeout del driver resta valido perchè `micros()` avanza durante il light sleep. A radio accesa, nella finestra di manutenzione, resta l'attesa attiva. Dopo il risveglio va tolta la sorgente GPIO, altrimenti il BUSY basso sveglierebbe subito ogni sleep dello scheduler.
 
 **Bilancio in fascia, per ora (stime):** circa 12 finestre radio (6 complete ogni 10 minuti più 6 per il solo Tuya a 5 minuti), 100-130 s di radio, 12 refresh del pannello. Le leve residue sono di configurazione: `TUYA_REQUEST_ACK` a 0 dopo il bring-up toglie fino a 4 s di radio a publish, `disp_min` a 10 dimezza i refresh.
 
-**Durante la finestra di manutenzione** `loop()` gira con `delay(10)` e lo scheduler aspetta finchè un client usa le pagine (vedi [[maintenance_window]]). Un fetch già partito blocca comunque il web server per la sua durata.
+**Durante la finestra di manutenzione** `loop()` gira con `delay(10)`, lo scheduler valuta il giro al più ogni `MAINTENANCE_SCHEDULER_PERIOD_MS` (1 s) e aspetta finchè un client usa le pagine (vedi [[maintenance_window]]). Un fetch già partito blocca comunque il web server per la sua durata.
 
 **Ogni confronto su `tm_hour` di questa catena** (giornaliera del cinema, fascia WiFi) vale solo con l'orologio sincronizzato: vedi [[clock_sntp]].
 

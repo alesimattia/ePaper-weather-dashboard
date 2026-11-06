@@ -3,7 +3,6 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_sleep.h>
-#include <esp_heap_caps.h>
 #include <driver/gpio.h>
 
 /**
@@ -77,7 +76,7 @@
  * calendari, mail e refresh del pannello restano confinati alla finestra. A 0
  * di notte non si pubblica e nell'app resta visibile l'ultimo dato della sera.
  *
- * Alimenta il campo `ignoraFascia` della tabella dei task: e' l'unico task che
+ * Alimenta il campo `runsOutsideRadioHours` della tabella dei task: è l'unico task che
  * lo usa, tutti gli altri stanno dentro la fascia.
  */
 #define TUYA_IGNORE_ACTIVE_HOUR 0
@@ -131,6 +130,7 @@
 #include "Clock.h"
 #include "Net.h"
 #include "Scheduler.h"
+#include "CinemaStore.h"
 
 SPIClass hspi(HSPI);
 
@@ -262,40 +262,24 @@ void initDisplay()
 // Le misure le deriva Layout_common.h: 610w x 290h sul 9.7", 610w x 325h sul
 // 12.2". Convenzione: NwxMh = N px larghezza x M px altezza.
 //
-// Flusso:
-//   1. Boot: g_cinema_desc punta a img_la_grande_onda_desc (fallback PROGMEM).
-//   2. Al primo ciclo con WiFi connesso, come ultima chiamata di rete del
-//      giro (ultimo task di rete della tabella), fetchCinemaImage() scarica i
-//      Layout::CINEMA_PLANES piani dall'endpoint render.com e li mette in
-//      RAM (o PSRAM se disponibile).
-//   3. g_cinema_desc viene riassegnato al descrittore dinamico che punta ai
-//      buffer RAM: da qui in poi ogni refresh del display mostra l'immagine
-//      scaricata, senza ulteriori chiamate HTTP.
-//   4. Se il fetch fallisce, g_cinema_desc resta sul fallback PROGMEM.
+// L'immagine scaricata vive in flash, in uno dei due slot di CinemaStore, e
+// sopravvive al reboot; senza un'immagine valida si mostra il fallback PROGMEM.
+// Il fetch giornaliero scrive lo slot libero e lo rende attivo solo a download
+// completo, quindi un fetch fallito lascia a schermo l'immagine precedente.
 // ===========================================================================
 
 /**
  * Le dimensioni dell'area wallpaper sono in Layout::CINEMA_W (larghezza X) /
  * CINEMA_H (altezza Y) / CINEMA_STRIDE / CINEMA_PLANE_SZ / CINEMA_TOTAL_SZ, e
  * l'URL del server si compone da quelle: cambiare display regola da solo sia
- * la query string sia la dimensione dei buffer in PSRAM/heap.
+ * la query string sia la misura dell'immagine salvata in flash.
  *
- * NOTA: CINEMA_W x CINEMA_H NON e' un viewport che ritaglia.
- * GxEPDImage::showImage() disegna pixel per pixel a partire da
- * (CINEMA_X, CINEMA_Y) usando la width/height del Descriptor, senza clipping.
- * La sorgente (dinamica dal server cinema o fallback PROGMEM
- * img_la_grande_onda_desc) va generata esattamente a CINEMA_W x CINEMA_H: una
- * piu' alta invade il titolo del riquadro Posta, una piu' larga finisce nella
- * colonna destra, che viene sbiancata da Layout::LEFT_COLUMN_END in poi.
+ * GxEPDImage::showImage() non clippa e disegna dalla width/height del
+ * Descriptor: drawTestBackground() taglia le righe all'altezza CINEMA_H, mentre
+ * un'immagine più larga di CINEMA_W sconfina nella colonna destra. Quella
+ * scaricata ha sempre la misura esatta; il fallback PROGMEM va generato a
+ * CINEMA_W x CINEMA_H.
  */
-
-// Buffer dinamici dei piani scaricati (nullptr finchè il fetch non riesce),
-// uno per ciascuno dei Layout::CINEMA_PLANES piani che i pannelli rendono:
-// black e accent, perchè nessuno dei due ha il giallo.
-static uint8_t *g_cinema_planes[Layout::CINEMA_PLANES] = {};
-
-// Nomi dei piani nell'ordine in cui il server li concatena, per i log.
-static const char *const g_cinema_plane_names[Layout::CINEMA_PLANES] = {"black", "red"};
 
 static_assert(Layout::CINEMA_PLANES == 2,
 			  "Layout::CINEMA_PLANES: il descrittore e l'URL del cinema prevedono black e red");
@@ -307,65 +291,6 @@ static_assert(Layout::CINEMA_PLANES == 2,
 static constexpr const char *cinemaColorsParam(uint8_t planes)
 {
 	return planes <= 1 ? "bw" : "bwr";
-}
-
-// Descrittore dinamico che punta ai buffer sopra. Popolato quando il fetch
-// ha successo.
-static GxEPDImage::Descriptor g_cinema_dynamic_desc = {
-	GxEPDImage::FORMAT_BWR_1BPP,
-	Layout::CINEMA_W,
-	Layout::CINEMA_H,
-	nullptr,
-	nullptr,
-	nullptr,
-};
-
-// Puntatore all'immagine correntemente visualizzata: fallback PROGMEM al
-// boot, rimappato al descrittore dinamico dopo un fetch riuscito.
-static const GxEPDImage::Descriptor *g_cinema_desc = &img_la_grande_onda_desc;
-
-
-/**
- * Alloca un buffer da Layout::CINEMA_PLANE_SZ byte, preferendo PSRAM se
- * disponibile. Ritorna nullptr su OOM. Logga la provenienza del buffer per
- * diagnostica.
- */
-static uint8_t *allocPlaneBuffer(const char *label)
-{
-	uint8_t *p = nullptr;
-	if (psramFound())
-	{
-		p = (uint8_t *)heap_caps_malloc(Layout::CINEMA_PLANE_SZ, MALLOC_CAP_SPIRAM);
-		if (p)
-		{
-			LOG("cinema", "%s: alloc %u byte in PSRAM", label, (unsigned)Layout::CINEMA_PLANE_SZ);
-			return p;
-		}
-		LOG("cinema", "%s: PSRAM alloc fallita, provo heap interno", label);
-	}
-	p = (uint8_t *)malloc(Layout::CINEMA_PLANE_SZ);
-	if (p)
-		LOG("cinema", "%s: alloc %u byte in heap interno (free: %u)",
-			label, (unsigned)Layout::CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
-	else
-		LOG("cinema", "%s: allocazione fallita (%u byte richiesti, %u disponibili)",
-			label, (unsigned)Layout::CINEMA_PLANE_SZ, (unsigned)ESP.getFreeHeap());
-	return p;
-}
-
-/**
- * Libera tutti i buffer dei piani. Chiamata in caso di errore HTTP/parsing
- * per non tenere memoria occupata inutilmente.
- */
-static void freeCinemaBuffers()
-{
-	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
-	{
-		free(g_cinema_planes[p]);
-		g_cinema_planes[p] = nullptr;
-	}
-	g_cinema_dynamic_desc.data0 = nullptr;
-	g_cinema_dynamic_desc.data1 = nullptr;
 }
 
 /**
@@ -416,43 +341,27 @@ static void prewarmCinemaServer()
 }
 
 /**
- * Scarica l'immagine cinema dal server render.com.
+ * Scarica l'immagine cinema dal server render.com e la salva in flash.
  *
- * Ultima chiamata di rete del giro, dopo meteo, mail e calendari: e' l'unica
- * che puo' pagare il cold start di render.com, e il tempo speso dagli altri
- * fetch e' il tempo che il server ha per completare il boot avviato da
+ * Ultima chiamata di rete del giro, dopo meteo, mail e calendari: è l'unica
+ * che può pagare il cold start di render.com, e il tempo speso dagli altri
+ * fetch è il tempo che il server ha per completare il boot avviato da
  * prewarmCinemaServer(). Cadenza (giornaliera) e ritenti sono dello
- * scheduler; qui si scarica e basta, con la radio gia' connessa.
+ * scheduler; qui si scarica e basta, con la radio già connessa.
  *
- * Sequenza:
- *   1. Libera i buffer dell'immagine precedente (se presenti da un fetch
- *      riuscito in un giro precedente) e riporta g_cinema_desc al fallback
- *      PROGMEM: se il fetch fallisce o il refresh avviene durante un
- *      render, il display mostra il fallback invece di un'immagine corrotta.
- *   2. Alloca Layout::CINEMA_PLANES buffer da Layout::CINEMA_PLANE_SZ byte
- *      (PSRAM preferita, heap interno come fallback).
- *   3. HTTP GET -> verifica status 200 e Content-Length == Layout::CINEMA_TOTAL_SZ.
- *   4. Legge in stream i piani nell'ordine in cui il server li concatena via
- *      Net::BodyStream, direttamente nei buffer.
- *   5. Ripuntamento di g_cinema_desc al descrittore dinamico.
- *
- * In caso di qualunque errore (OOM, HTTP != 200, size mismatch, read short)
- * libera i buffer e mantiene il fallback PROGMEM.
- * @return true se l'immagine e' stata scaricata e rimappata.
+ * Lo slot libero di CinemaStore si cancella prima della GET, poi il corpo
+ * passa in flash a blocchi da 1 KB letti da Net::BodyStream, senza buffer
+ * grandi in heap. Su qualunque errore (HTTP diverso da 200, Content-Length
+ * diverso da Layout::CINEMA_TOTAL_SZ, corpo interrotto, scrittura fallita) la
+ * scrittura si annulla e resta l'immagine precedente.
+ * @return true se l'immagine è stata scaricata e resa attiva.
  */
 static bool fetchCinemaImage()
 {
-	// Libera l'immagine precedente (no-op al primo boot) e ripristina il
-	// fallback PROGMEM come "immagine corrente" finchè il nuovo download
-	// non completa con successo.
-	freeCinemaBuffers();
-	g_cinema_desc = &img_la_grande_onda_desc;
-
 	/**
-	 * URL composto dalle misure del layout, cosi' larghezza, altezza e piani
-	 * chiesti al server non possono divergere dai buffer. Un troncamento
-	 * manderebbe al server un'altra misura: si ferma il fetch e resta il
-	 * fallback, come per gli altri errori.
+	 * URL composto dalle misure del layout, così larghezza, altezza e piani
+	 * chiesti al server non possono divergere dall'immagine salvata. Un
+	 * troncamento manderebbe al server un'altra misura: si ferma il fetch.
 	 */
 	char url[160];
 	const int urlLength = snprintf(url, sizeof(url),
@@ -460,24 +369,17 @@ static bool fetchCinemaImage()
 		(int)Layout::CINEMA_W, (int)Layout::CINEMA_H, cinemaColorsParam(Layout::CINEMA_PLANES));
 	if (urlLength < 0 || urlLength >= (int)sizeof(url))
 	{
-		LOG("cinema", "URL troncato (%d caratteri), fallback PROGMEM", urlLength);
+		LOG("cinema", "URL troncato (%d caratteri), resta l'immagine precedente", urlLength);
 		return false;
 	}
 
 	LOG("cinema", "fetching %s", url);
-	LOG("cinema", "PSRAM %s, free heap: %u byte",
-		psramFound() ? "presente" : "assente (uso heap interno)",
-		(unsigned)ESP.getFreeHeap());
-
-	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
+	// L'erase dello slot libero ferma la cache della flash: avviene prima che
+	// la connessione TLS esista.
+	if (!CinemaStore::beginWrite())
 	{
-		g_cinema_planes[p] = allocPlaneBuffer(g_cinema_plane_names[p]);
-		if (!g_cinema_planes[p])
-		{
-			LOG("cinema", "allocazione buffer fallita, fallback PROGMEM");
-			freeCinemaBuffers();
-			return false;
-		}
+		LOG("cinema", "slot in flash non disponibile, resta l'immagine precedente");
+		return false;
 	}
 
 	// Client esplicito, dichiarato prima di HTTPClient perchè il distruttore di
@@ -494,49 +396,56 @@ static bool fetchCinemaImage()
 	if (!Net::beginHttps(http, client, url))
 	{
 		LOG("cinema", "HTTP begin fallita");
-		freeCinemaBuffers();
+		CinemaStore::abortWrite();
 		return false;
 	}
 	int code = http.GET();
 	if (code != 200)
 	{
-		LOG("cinema", "HTTP status %d, fallback PROGMEM", code);
+		LOG("cinema", "HTTP status %d, resta l'immagine precedente", code);
 		http.end();
-		freeCinemaBuffers();
+		CinemaStore::abortWrite();
 		return false;
 	}
 	int size = http.getSize();
 	if (size != (int)Layout::CINEMA_TOTAL_SZ)
 	{
-		LOG("cinema", "Content-Length %d atteso %u, fallback PROGMEM",
+		LOG("cinema", "Content-Length %d atteso %u, resta l'immagine precedente",
 			size, (unsigned)Layout::CINEMA_TOTAL_SZ);
 		http.end();
-		freeCinemaBuffers();
+		CinemaStore::abortWrite();
 		return false;
 	}
 
-	// BodyStream attende le pause fra i blocchi del corpo: un piano resta corto
+	// BodyStream attende le pause fra i blocchi del corpo: un blocco resta corto
 	// solo a connessione chiusa, su errore TLS o dopo CINEMA_HTTP_TIMEOUT_MS
 	// senza dati, il timeout che http.setTimeout() ha dato allo stream.
 	Net::BodyStream body(http.getStream());
-	for (uint8_t p = 0; p < Layout::CINEMA_PLANES; ++p)
+	uint8_t chunk[1024];
+	uint32_t received = 0;
+	while (received < Layout::CINEMA_TOTAL_SZ)
 	{
-		size_t read = body.readBytes(g_cinema_planes[p], Layout::CINEMA_PLANE_SZ);
-		if (read != Layout::CINEMA_PLANE_SZ)
+		const uint32_t remaining = Layout::CINEMA_TOTAL_SZ - received;
+		const size_t wanted = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+		const size_t got = body.readBytes(chunk, wanted);
+		if (got != wanted || !CinemaStore::writeChunk(chunk, got))
 		{
-			LOG("cinema", "piano %s letto parzialmente (%u/%u)",
-				g_cinema_plane_names[p], (unsigned)read, (unsigned)Layout::CINEMA_PLANE_SZ);
+			LOG("cinema", "corpo interrotto a %lu/%lu byte, resta l'immagine precedente",
+				(unsigned long)(received + got), (unsigned long)Layout::CINEMA_TOTAL_SZ);
 			http.end();
-			freeCinemaBuffers();
+			CinemaStore::abortWrite();
 			return false;
 		}
+		received += got;
 	}
 	http.end();
 
-	g_cinema_dynamic_desc.data0 = g_cinema_planes[0];
-	g_cinema_dynamic_desc.data1 = g_cinema_planes[1];
-	g_cinema_desc = &g_cinema_dynamic_desc;
-	LOG("cinema", "download completato, immagine remappata");
+	if (!CinemaStore::commitWrite())
+	{
+		LOG("cinema", "salvataggio in flash fallito, resta l'immagine precedente");
+		return false;
+	}
+	LOG("cinema", "download completato e salvato in flash");
 	return true;
 }
 
@@ -545,28 +454,28 @@ static bool fetchCinemaImage()
  * Restano nel .ino perche' la tabella nomina anche il cinema, che e' fatto di
  * statici di questo file.
  */
-static Scheduler::Esito eseguiMeteo()
+static Scheduler::Outcome runWeatherFetch()
 {
-	return Weather::runFetch() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return Weather::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
 /** Corrente senza previsioni non basta a disegnare il banner: lo scheduler
  *  ritenta invece di attendere la cadenza piena. */
-static bool meteoIncompleto() { return !Weather::datiCompleti(); }
+static bool isWeatherIncomplete() { return !Weather::datiCompleti(); }
 
-static Scheduler::Esito eseguiMail()
+static Scheduler::Outcome runMailFetch()
 {
-	return Mail::runFetch() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return Mail::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
-static Scheduler::Esito eseguiGoogle()
+static Scheduler::Outcome runGoogleCalendarFetch()
 {
-	return Calendar::Google::runFetch() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return Calendar::Google::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
-static Scheduler::Esito eseguiOutlook()
+static Scheduler::Outcome runOutlookCalendarFetch()
 {
-	return Calendar::Outlook::runFetch() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return Calendar::Outlook::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
 /**
@@ -577,7 +486,7 @@ static Scheduler::Esito eseguiOutlook()
  * Meglio non partire: il task resta sospeso e diventa dovuto da se' appena
  * l'ora e' vera.
  */
-static bool calendarioPronto() { return Clock::valido(); }
+static bool isClockValidForCalendars() { return Clock::valido(); }
 
 /**
  * Precondizioni sulle credenziali di Env.h: un produttore con i valori del
@@ -586,85 +495,89 @@ static bool calendarioPronto() { return Clock::valido(); }
  */
 static bool weatherReady() { return Weather::isConfigured(); }
 static bool mailReady() { return Mail::isConfigured(); }
-static bool googleReady() { return calendarioPronto() && Calendar::Google::isConfigured(); }
-static bool outlookReady() { return calendarioPronto() && Calendar::Outlook::isConfigured(); }
+static bool googleReady() { return isClockValidForCalendars() && Calendar::Google::isConfigured(); }
+static bool outlookReady() { return isClockValidForCalendars() && Calendar::Outlook::isConfigured(); }
 
-static Scheduler::Esito eseguiCinema()
+static Scheduler::Outcome runCinemaFetch()
 {
-	return fetchCinemaImage() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return fetchCinemaImage() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
-static Scheduler::Esito eseguiTuya()
+/** Senza la partizione del wallpaper non c'è dove salvare l'immagine: il task
+ *  resta sospeso e non manda nemmeno il ping di sveglia. */
+static bool cinemaReady() { return CinemaStore::isAvailable(); }
+
+static Scheduler::Outcome runTuyaPublish()
 {
-	return Tuya::runPublish() ? Scheduler::Esito::OK : Scheduler::Esito::FALLITO;
+	return Tuya::runPublish() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
 /** Senza credenziali, senza un campione del sensore o senza orologio non c'e'
  *  niente da pubblicare: il task resta sospeso, non accende la radio e non
  *  brucia il suo unico tentativo per cadenza. */
-static bool tuyaPronto() { return Tuya::readyToPublish(); }
+static bool tuyaReady() { return Tuya::readyToPublish(); }
 
 /** Stato del badge di guasto come si trova sul pannello disegnato. */
-static bool g_tuya_badge_mostrato = false;
+static bool g_tuya_badge_shown = false;
 
 /**
  * Ridisegno solo quando il badge [TUYA ERR] compare o sparisce: un refresh
  * pieno costa ~24 s e la telemetria, a parte quel badge, non cambia niente a
- * schermo. Non passa da marcaSuOk perche' qui conta la transizione, non
+ * schermo. Non passa da markDirtyOnOk perche' qui conta la transizione, non
  * l'esito del singolo giro.
  */
-static void dopoTuya(Scheduler::Esito)
+static void onTuyaOutcome(Scheduler::Outcome)
 {
-	if (Tuya::hasFailed() == g_tuya_badge_mostrato) return;
-	g_tuya_badge_mostrato = Tuya::hasFailed();
+	if (Tuya::hasFailed() == g_tuya_badge_shown) return;
+	g_tuya_badge_shown = Tuya::hasFailed();
 	Weather::markDirty();
 }
 
 /** Interrogazione del sensore: OK quando il dato da mostrare è cambiato, cioè
  *  per un campione nuovo o per uno appena scaduto. */
-static Scheduler::Esito eseguiIndoor()
+static Scheduler::Outcome runIndoorSample()
 {
-	return Indoor::refresh() ? Scheduler::Esito::OK : Scheduler::Esito::SALTATO;
+	return Indoor::refresh() ? Scheduler::Outcome::OK : Scheduler::Outcome::SKIPPED;
 }
 
 /** Scadenza custom del task del sensore. La scadenza custom precede ogni altra
  *  regola dello scheduler, mai eseguito compreso, quindi deve valere 0 al boot:
  *  è Indoor a garantirlo. */
-static uint32_t scadenzaIndoor() { return Indoor::msUntilNextPoll(); }
+static uint32_t msUntilIndoorPoll() { return Indoor::msUntilNextPoll(); }
 
 /**
  * Il dato del sensore chiede il ridisegno solo dentro la fascia WiFi: di notte
  * un refresh pieno ogni 5 minuti non servirebbe a nessuno. Il campione viene
  * comunque acquisito, e il primo ridisegno del mattino mostra il più recente.
  */
-static void dopoIndoor(Scheduler::Esito e)
+static void onIndoorOutcome(Scheduler::Outcome e)
 {
-	if (e == Scheduler::Esito::OK && Scheduler::inFascia()) Weather::markDirty();
+	if (e == Scheduler::Outcome::OK && Scheduler::isInsideRadioHours()) Weather::markDirty();
 }
 
 /** Chiede il ridisegno quando il task ha portato dati nuovi. */
-static void marcaSuOk(Scheduler::Esito e)
+static void markDirtyOnOk(Scheduler::Outcome e)
 {
-	if (e == Scheduler::Esito::OK) Weather::markDirty();
+	if (e == Scheduler::Outcome::OK) Weather::markDirty();
 }
 
 /** Il pannello si ridisegna solo con dati nuovi da mostrare, e non prima che
  *  la rete abbia dato un esito o sia scaduta l'attesa del primo frame. */
-static bool displayPronto()
+static bool displayReady()
 {
-	return Weather::sporco() && Scheduler::primoFrameConsentito();
+	return Weather::sporco() && Scheduler::isFirstFrameAllowed();
 }
 
 /** render() azzera da se' il flag dei dati nuovi. */
-static Scheduler::Esito eseguiDisplay()
+static Scheduler::Outcome runDisplayRender()
 {
 	Weather::render();
-	return Scheduler::Esito::OK;
+	return Scheduler::Outcome::OK;
 }
 
 /** Il display non si auto-sporca: senza questo hook il ridisegno si
  *  richiederebbe da solo a ogni giro. */
-static void dopoDisplay(Scheduler::Esito) {}
+static void onDisplayOutcome(Scheduler::Outcome) {}
 
 /**
  * Tutti i flussi temporizzati del dispositivo. L'ordine delle righe e'
@@ -677,86 +590,82 @@ static void dopoDisplay(Scheduler::Esito) {}
  *     sono altro tempo di copertura del boot di render.com;
  *   - cinema per ultimo perche' e' l'unico che puo' pagare il cold start di
  *     render.com, e il tempo di rete degli altri e' la copertura di quel
- *     boot; il suo prima() manda il ping di sveglia all'inizio del giro;
+ *     boot; il suo onRoundStart() manda il ping di sveglia all'inizio del giro;
  *   - il sensore precede il display cosi' un campione appena prodotto entra
  *     nel frame dello stesso giro.
  *
- * Tuya e' l'unico task di rete con maxTentativi a 0, cioe' un tentativo per slot
+ * Tuya è l'unico task di rete con maxAttempts a 0, cioè un tentativo per slot
  * comunque vada: i suoi modi di fallimento sono permanenti sulla scala dei
  * minuti (credenziali, region, device model) e ogni ritento costerebbe un
- * altro handshake TLS senza cambiare l'esito. Ed e' l'unico con ignoraFascia
+ * altro handshake TLS senza cambiare l'esito. Ed è l'unico con runsOutsideRadioHours
  * potenzialmente a 1, vedi TUYA_IGNORE_ACTIVE_HOUR in testa al file.
  */
-static Scheduler::Task TABELLA_TASK[] = {
-	{"meteo", Scheduler::Cadenza::PERIODICA, true, false,
+static Scheduler::Task TASK_TABLE[] = {
+	{"meteo", Scheduler::Cadence::PERIODIC, true, false,
 	 &Timings::Valori::owmMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiMeteo, weatherReady, meteoIncompleto, nullptr, marcaSuOk, nullptr},
+	 runWeatherFetch, weatherReady, isWeatherIncomplete, nullptr, markDirtyOnOk, nullptr},
 
-	{"mail", Scheduler::Cadenza::PERIODICA, true, false,
+	{"mail", Scheduler::Cadence::PERIODIC, true, false,
 	 &Timings::Valori::mailMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiMail, mailReady, nullptr, nullptr, marcaSuOk, nullptr},
+	 runMailFetch, mailReady, nullptr, nullptr, markDirtyOnOk, nullptr},
 
-	{"google", Scheduler::Cadenza::PERIODICA, true, false,
+	{"google", Scheduler::Cadence::PERIODIC, true, false,
 	 &Timings::Valori::googleMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiGoogle, googleReady, nullptr, nullptr, marcaSuOk, nullptr},
+	 runGoogleCalendarFetch, googleReady, nullptr, nullptr, markDirtyOnOk, nullptr},
 
-	{"outlook", Scheduler::Cadenza::PERIODICA, true, false,
+	{"outlook", Scheduler::Cadence::PERIODIC, true, false,
 	 &Timings::Valori::outlookMin, nullptr,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiOutlook, outlookReady, nullptr, nullptr, marcaSuOk, nullptr},
+	 runOutlookCalendarFetch, outlookReady, nullptr, nullptr, markDirtyOnOk, nullptr},
 
-	{"tuya", Scheduler::Cadenza::PERIODICA, true, TUYA_IGNORE_ACTIVE_HOUR,
+	{"tuya", Scheduler::Cadence::PERIODIC, true, TUYA_IGNORE_ACTIVE_HOUR,
 	 &Timings::Valori::tuyaMin, nullptr,
 	 FETCH_RITENTO_MS, 0,
-	 eseguiTuya, tuyaPronto, nullptr, nullptr, dopoTuya, nullptr},
+	 runTuyaPublish, tuyaReady, nullptr, nullptr, onTuyaOutcome, nullptr},
 
-	{"cinema", Scheduler::Cadenza::GIORNALIERA, true, false,
+	{"cinema", Scheduler::Cadence::DAILY, true, false,
 	 nullptr, &Timings::Valori::cinemaOra,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 eseguiCinema, nullptr, nullptr, prewarmCinemaServer, marcaSuOk, nullptr},
+	 runCinemaFetch, cinemaReady, nullptr, prewarmCinemaServer, markDirtyOnOk, nullptr},
 
-	{"bsec", Scheduler::Cadenza::PERIODICA, false, false,
+	{"bsec", Scheduler::Cadence::PERIODIC, false, false,
 	 &Timings::Valori::displayRefreshMin, nullptr,
 	 FETCH_RITENTO_MS, 0,
-	 eseguiIndoor, Indoor::attivo, nullptr, nullptr, dopoIndoor, scadenzaIndoor},
+	 runIndoorSample, Indoor::attivo, nullptr, nullptr, onIndoorOutcome, msUntilIndoorPoll},
 
-	{"display", Scheduler::Cadenza::PERIODICA, false, false,
+	{"display", Scheduler::Cadence::PERIODIC, false, false,
 	 &Timings::Valori::displayRefreshMin, nullptr,
 	 FETCH_RITENTO_MS, 0,
-	 eseguiDisplay, displayPronto, nullptr, nullptr, dopoDisplay, nullptr},
+	 runDisplayRender, displayReady, nullptr, nullptr, onDisplayOutcome, nullptr},
 };
 
-static constexpr uint8_t N_TASK = sizeof(TABELLA_TASK) / sizeof(TABELLA_TASK[0]);
+static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0]);
 
 /**
- * Disegna il background corrente (PROGMEM fallback o dinamico scaricato)
- * dentro il paged loop di Weather::renderFrame(), con l'angolo in alto a
- * sinistra su (Layout::CINEMA_X, Layout::CINEMA_Y).
- *
- * GxEPDImage::showImage() è compatibile con entrambi i tipi di buffer:
- * su ESP32 pgm_read_byte() è una normale dereferenza, funziona identica
- * su PROGMEM e su RAM/PSRAM.
- *
- * --- ESEMPIO USO CON IMMAGINE PROGMEM (storica, commentato) --------------
- *   // Se in futuro vuoi tornare a un'immagine PROGMEM hardcoded (es.
- *   // slideshow multi-immagine generato da epd_image_converter.pyw):
- *   //
- *   // #include "wallpaper/my_image.h"   // genera my_image_desc
- *   // GxEPDImage::showImage(display, my_image_desc, Layout::CINEMA_X, Layout::CINEMA_Y);
- *   //
- *   // Per piu' immagini in rotazione:
- *   // static const GxEPDImage::Descriptor* const IMGS[] = {
- *   //   &img1_desc, &img2_desc, &img3_desc,
- *   // };
- *   // GxEPDImage::showImage(display, *IMGS[idx % 3], Layout::CINEMA_X, Layout::CINEMA_Y);
- * -------------------------------------------------------------------------
+ * Disegna, dentro il loop paged di Weather::renderFrame(), le sole righe del
+ * wallpaper che cadono nella pagina corrente: l'immagine in flash se c'è,
+ * altrimenti il fallback PROGMEM. Le righe si tagliano anche all'altezza
+ * CINEMA_H, e il descrittore ridotto punta agli stessi dati, senza copie.
  */
 void drawTestBackground()
 {
-	GxEPDImage::showImage(display, *g_cinema_desc, Layout::CINEMA_X, Layout::CINEMA_Y);
+	const GxEPDImage::Descriptor *stored = CinemaStore::image();
+	const GxEPDImage::Descriptor &image = stored ? *stored : img_la_grande_onda_desc;
+	int16_t top = Layout::CINEMA_Y;
+	int16_t height = (int16_t)(image.height < Layout::CINEMA_H ? image.height : Layout::CINEMA_H);
+	if (!Graphics::clipToPage(top, height)) return;
+
+	const uint32_t skippedBytes = (uint32_t)(top - Layout::CINEMA_Y) * ((image.width + 7) / 8);
+	const GxEPDImage::Descriptor rows = {
+		image.format, image.width, (uint16_t)height,
+		image.data0 + skippedBytes,
+		image.data1 ? image.data1 + skippedBytes : nullptr,
+		image.data2 ? image.data2 + skippedBytes : nullptr,
+	};
+	GxEPDImage::showImage(display, rows, Layout::CINEMA_X, top);
 }
 
 /** Canale e BSSID dell'ultima connessione riuscita. Stanno in RAM, che il
@@ -886,13 +795,18 @@ void setup()
 	 */
 	Tuya::begin();
 	/**
+	 * Archivio in flash dell'immagine cinema: l'ultima scaricata torna a schermo
+	 * già dal primo frame. Nessuna rete qui dentro.
+	 */
+	CinemaStore::begin();
+	/**
 	 * Apre subito la finestra OTA (OTA_WINDOW_MIN): AP per l'aggiornamento firmware +
 	 * STA in parallelo per il fetch meteo. Scaduta la finestra, loop() chiamera'
 	 * Maintenance::chiudi() che spegne AP e WiFi, ripristinando
 	 * il ciclo originario STA on-demand + light sleep DISPLAY_REFRESH_MIN.
 	 */
 	Maintenance::begin();
-	Scheduler::begin(TABELLA_TASK, N_TASK, wifiOn, wifiOff);
+	Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
 	// Riferimento temporale per il timeout di boot WiFi (vedi PRIMO_FRAME_ATTESA_MS).
 }
 
@@ -924,7 +838,7 @@ void loop()
 		 * refresh lascerebbero il web server muto per decine di secondi.
 		 */
 		if (!Maintenance::clientAttivo())
-			Scheduler::giro(Scheduler::Radio::ESTERNA);
+			Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
 		delay(MAINTENANCE_LOOP_DELAY_MS);
 		return;
 	}
@@ -932,7 +846,7 @@ void loop()
 	// Finestra chiusa: consegna la radio spenta allo scheduler (idempotente).
 	Maintenance::chiudi();
 
-	Scheduler::giro(Scheduler::Radio::PROPRIA);
+	Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
 
 	/**
 	 * Pannello in deep sleep prima del light sleep dell'MCU: porta il
@@ -959,5 +873,5 @@ void loop()
 			 (unsigned long)ESP.getMinFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(),
 			 (unsigned long)uxTaskGetStackHighWaterMark(nullptr));
 
-	Scheduler::dormi();
+	Scheduler::sleepUntilNextEvent();
 }

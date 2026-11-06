@@ -50,7 +50,7 @@ solo se esiste.
 
 Soglie e server stanno in `Timings.h` con tutti gli altri tempi. `valido()` è
 l'**unica** definizione di "ora valida" del firmware: ci poggiano lo scheduler
-(`inFascia`, la cadenza giornaliera, `stampaStato`), la precondizione dei due
+(`isInsideRadioHours`, la cadenza giornaliera, `printStatus`), la precondizione dei due
 task calendario e la guardia di `Tuya::runPublish()`.
 
 ## I due agganci, uno per proprietario della radio
@@ -63,7 +63,7 @@ appartiene a nessuno dei due.
   forma **bloccante**, fino a `TIME_SYNC_TIMEOUT_MS`. Lì si può attendere: i
   fetch di quel giro stanno tutti dentro quella accensione.
 - **Finestra di manutenzione**: la radio è di `Maintenance`, lo scheduler gira
-  in `Radio::ESTERNA` e `wifiOn()` non viene mai chiamata. La macchina a stati
+  in `RadioMode::MANAGED_BY_MAINTENANCE` e `wifiOn()` non viene mai chiamata. La macchina a stati
   chiama `Clock::sincronizza(0)`, **non bloccante**, nei due punti in cui
   constata di avere la rete di casa con un indirizzo: `apri(Stato::ServerSta)`
   e la risalita della STA nel ramo `ServerAp`. Bloccare lì congelerebbe web
@@ -91,10 +91,10 @@ appartiene a nessuno dei due.
 
 ## Chi dipende dall'ora assoluta
 
-- `Scheduler::inFascia()` e la cadenza `GIORNALIERA` del cinema: senza orologio
+- `Scheduler::isInsideRadioHours()` e la cadenza `DAILY` del cinema: senza orologio
   la fascia è **fail-open** e la giornaliera resta sospesa, perchè
-  `consumaSlot()` non registra `tm_yday` con un'ora finta.
-- **I due task calendario**, che lo dichiarano con `pronto = calendarioPronto`,
+  `closeSlot()` non registra `tm_yday` con un'ora finta; nel ciclo normale `runRound()` rilegge l'ora dopo `wifiOn()`, così il giro in cui avviene la prima sincronizzazione registra già il giorno.
+- **I due task calendario**, che lo dichiarano con `preconditionsMet` = `isClockValidForCalendars()`,
   cioè `Clock::valido()`. `Calendar::detail::nowUtcEpoch()` ritorna 0 a
   orologio non valido e le query filtrerebbero da `1970-01-01T00:00:00Z`:
   ordinando per data il device riceverebbe i **primi** eventi del calendario
@@ -109,7 +109,7 @@ appartiene a nessuno dei due.
 
 **Non può andare in stallo**: meteo e mail non dipendono dall'ora e continuano
 ad aprire la finestra radio, dove la sincronizzazione avviene. È la stessa
-ragione per cui `inFascia()` è fail-open.
+ragione per cui `isInsideRadioHours()` è fail-open.
 
 **Modo di fallire su una rete che blocca NTP**: l'orologio non diventa mai
 valido, i due calendari non girano affatto e la lista eventi resta ai
@@ -135,7 +135,7 @@ invece di "Gennaio 1970". `recordHistory()` usa il `dt` di OpenWeather.
 Se serve un'ora reale in un modulo nuovo, non aggiungere una seconda
 sincronizzazione e non riscrivere il confronto con la soglia: chiamare
 `Clock::valido()`. Se il flusso è un task, la precondizione va nell'hook
-`pronto()` della sua riga di tabella, che è il modo in cui il difetto è stato
+`preconditionsMet()` della sua riga di tabella, che è il modo in cui il difetto è stato
 reso inesprimibile; una guardia dentro l'esecuzione resta come difesa, non
 come meccanismo. Non chiamare `configTime()` da nessuna parte, per il motivo
 sul TZ spiegato sopra.

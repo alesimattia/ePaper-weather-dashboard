@@ -16,10 +16,10 @@ Una sessione MQTT per messaggio: connect, publish QoS 1, PUBACK, teardown.
 ## Posto nell'architettura
 
 Il modulo non possiede nessun tempo: è una riga della tabella dei task del
-`.ino` (vedi [[scheduler_task_table]]), con gli adattatori `eseguiTuya`,
-`tuyaPronto` e `dopoTuya`. Quattro conseguenze da tenere a mente:
+`.ino` (vedi [[scheduler_task_table]]), con gli adattatori `runTuyaPublish`,
+`tuyaReady` e `onTuyaOutcome`. Quattro conseguenze da tenere a mente:
 
-- `readyToPublish()` è l'hook `pronto()`: credenziali presenti (riconosciute
+- `readyToPublish()` è l'hook `preconditionsMet()`: credenziali presenti (riconosciute
   con `Net::isCredentialSet()`, lo stesso criterio degli altri produttori),
   campione BSEC valido **e orologio sincronizzato**. Il campione scade al
   secondo campione perso (vedi [[bsec_modi_campionamento]]), quindi con il
@@ -30,14 +30,14 @@ Il modulo non possiede nessun tempo: è una riga della tabella dei task del
   dove la finestra di manutenzione non chiama `wifiOn()` e quindi non
   sincronizza: senza quella guardia il primo giro segnalerebbe un guasto Tuya
   che è solo un'ora non ancora pronta, pagandolo con due refresh pieni.
-- **`maxTentativi` a 0**, unico task del firmware: un tentativo per slot
+- **`maxAttempts` a 0**, unico task del firmware: un tentativo per slot
   comunque vada. I modi di fallimento di Tuya sono permanenti sulla scala dei
   minuti (credenziali, region, device model) e ogni ritento costerebbe un altro
   handshake TLS senza cambiare l'esito.
-- **`ignoraFascia`** vale `TUYA_IGNORE_ACTIVE_HOUR` (default 0), ed è l'unico
+- **`runsOutsideRadioHours`** vale `TUYA_IGNORE_ACTIVE_HOUR` (default 0), ed è l'unico
   task che può alzarlo: a 1 la radio si accende per il solo publish anche fuori
   dalla fascia WiFi, mentre tutto il resto resta confinato.
-- Radio giù non alza il guasto: lo scheduler registra `SALTATO` senza chiamare
+- Radio giù non alza il guasto: lo scheduler registra `SKIPPED` senza chiamare
   `runPublish()`, quindi lo slot resta intatto e il badge non compare.
 
 Cadenza in `Timings.h` come `tuya_min`, quindi modificabile da `/config` con

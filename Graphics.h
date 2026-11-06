@@ -23,6 +23,63 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
 
 namespace Graphics
 {
+  namespace detail
+  {
+    // Fascia di righe della pagina corrente del loop paged, in coordinate dopo
+    // setRotation(); fuori dal loop copre l'intero schermo.
+    inline int16_t pageTop    = 0;
+    inline int16_t pageBottom = INT16_MAX;
+  }
+
+  /**
+   * Imposta la fascia di righe coperta dalla pagina pageIndex del loop paged a
+   * schermo pieno, così chi disegna può saltare ciò che cade fuori. Con
+   * ROTATION 0 la pagina k del template è [k * PAGE_HEIGHT, (k + 1) * PAGE_HEIGHT);
+   * con le altre rotazioni la fascia resta lo schermo intero, corretta ma
+   * senza risparmio. Usato da Weather::renderFrame().
+   */
+  inline void beginPage(uint16_t pageIndex)
+  {
+    if constexpr (Layout::ROTATION != 0)
+    {
+      detail::pageTop    = 0;
+      detail::pageBottom = INT16_MAX;
+      return;
+    }
+    const int32_t top    = (int32_t)pageIndex * Layout::PAGE_HEIGHT;
+    const int32_t bottom = top + Layout::PAGE_HEIGHT;
+    detail::pageTop    = (int16_t)top;
+    detail::pageBottom = (int16_t)(bottom < Layout::SCREEN_H ? bottom : Layout::SCREEN_H);
+  }
+
+  /** Riporta la fascia all'intero schermo a loop paged concluso. Usato da
+   *  Weather::renderFrame(). */
+  inline void endPages()
+  {
+    detail::pageTop    = 0;
+    detail::pageBottom = INT16_MAX;
+  }
+
+  /** Vero se le righe [top, top + height) toccano la pagina corrente. Usato
+   *  da Weather.h, Calendar.h e Mail.h per saltare gli elementi fuori pagina. */
+  inline bool intersectsPage(int16_t top, int16_t height)
+  {
+    return top < detail::pageBottom && (int32_t)top + height > detail::pageTop;
+  }
+
+  /** Restringe le righe [top, top + height) alla pagina corrente; false se non
+   *  ne resta nessuna. Usato dal disegno del wallpaper nel .ino. */
+  inline bool clipToPage(int16_t& top, int16_t& height)
+  {
+    const int32_t first = top > detail::pageTop ? top : detail::pageTop;
+    const int32_t end   = (int32_t)top + height;
+    const int32_t last  = end < detail::pageBottom ? end : detail::pageBottom;
+    if (last <= first) return false;
+    top    = (int16_t)first;
+    height = (int16_t)(last - first);
+    return true;
+  }
+
   /**
    * Cap height del font corrente, misurata sulla "H": è la stessa per ogni
    * stringa, quindi allinea testi e icone senza dipendere da ascendenti e

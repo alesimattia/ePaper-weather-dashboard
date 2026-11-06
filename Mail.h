@@ -168,32 +168,17 @@ namespace Mail
     }
 
     /**
-     * Parsea una singola sub-response del batch (gia' separata dai boundary
-     * esterni) e popola out. Il blocco contiene:
-     *   <part headers>\r\n\r\n<inner HTTP status + headers>\r\n\r\n<JSON body>
+     * Popola out dal JSON di una sotto-risposta del batch, letto sul posto
+     * dentro la risposta completa: json punta al corpo e length arriva fino al
+     * boundary successivo, i cui \r\n finali ArduinoJson ignora dopo l'oggetto.
      * Ritorna true solo se ha estratto un JSON valido con almeno un header.
      */
-    inline bool parseBatchPart(const String &part, MailMessage &out)
+    inline bool parseBatchPart(const char *json, size_t length, const JsonDocument &filter,
+                               MailMessage &out)
     {
-      // Scarta gli header della parte (Content-Type: application/http, ecc.)
-      int p1 = part.indexOf("\r\n\r\n");
-      if (p1 < 0) return false;
-      // Scarta status line + header HTTP della sub-response
-      int p2 = part.indexOf("\r\n\r\n", p1 + 4);
-      if (p2 < 0) return false;
-      String json = part.substring(p2 + 4);
-      json.trim(); // rimuove eventuali \r\n residui prima del prossimo boundary
-
-      // Filter ArduinoJson: scarta in fase di parse tutto cio' che non serve
-      JsonDocument filter;
-      filter["internalDate"]                   = true;
-      filter["labelIds"]                       = true;
-      filter["payload"]["headers"][0]["name"]  = true;
-      filter["payload"]["headers"][0]["value"] = true;
-
       JsonDocument doc;
       DeserializationError err =
-          deserializeJson(doc, json, DeserializationOption::Filter(filter));
+          deserializeJson(doc, json, length, DeserializationOption::Filter(filter));
       if (err)
       {
         LOG("Mail", "sub-response json parse: %s", err.c_str());
@@ -426,6 +411,14 @@ namespace Mail
       }
       searchFrom = firstBoundary + sep.length();
 
+      // Filtro ArduinoJson, uguale per tutte le parti: scarta in fase di parse
+      // tutto ciò che non serve.
+      JsonDocument filter;
+      filter["internalDate"]                   = true;
+      filter["labelIds"]                       = true;
+      filter["payload"]["headers"][0]["name"]  = true;
+      filter["payload"]["headers"][0]["value"] = true;
+
       while (searchFrom < (int)resp.length() && outCount < MAX_MESSAGES)
       {
         // Closing boundary "--": fine multipart
@@ -435,11 +428,18 @@ namespace Mail
         int nextBoundary = resp.indexOf(sep, searchFrom);
         if (nextBoundary < 0) break;
 
-        String part = resp.substring(searchFrom, nextBoundary);
-        MailMessage m{};
-        if (parseBatchPart(part, m))
+        // Una parte è <header della parte>\r\n\r\n<status e header della
+        // sotto-risposta>\r\n\r\n<JSON>: il JSON si legge sul posto, fino al
+        // boundary successivo, senza copiare la parte.
+        const int partHeadersEnd  = resp.indexOf("\r\n\r\n", searchFrom);
+        const int innerHeadersEnd = (partHeadersEnd >= 0 && partHeadersEnd < nextBoundary)
+                                    ? resp.indexOf("\r\n\r\n", partHeadersEnd + 4) : -1;
+        if (innerHeadersEnd >= 0 && innerHeadersEnd < nextBoundary)
         {
-          outMsgs[outCount++] = m;
+          const int jsonStart = innerHeadersEnd + 4;
+          MailMessage m{};
+          if (parseBatchPart(resp.c_str() + jsonStart, (size_t)(nextBoundary - jsonStart), filter, m))
+            outMsgs[outCount++] = m;
         }
         searchFrom = nextBoundary + sep.length();
       }
@@ -487,6 +487,9 @@ namespace Mail
       const int16_t line1  = rowTop + Layout::MAIL_LINE1_BASELINE;
       const int16_t line2  = line1 + Layout::MAIL_LINE_GAP;
 
+      // Filetto, due righe di testo e busta stanno dentro la cella: fuori pagina non c'è niente da fare.
+      if (!Graphics::intersectsPage(rowTop, Layout::MAIL_ROW_H)) return;
+
       if (row > 0)
         display.drawFastHLine(left, rowTop, right - left, GxEPD_BLACK);
 
@@ -503,8 +506,10 @@ namespace Mail
       {
         struct tm tmL;
         localtime_r(&m.receivedUtc, &tmL);
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
-        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
+        // strftime() e non snprintf(): formatta i campi di struct tm, quindi il
+        // compilatore non stima date da 11 cifre e non dà falsi -Wformat-truncation.
+        strftime(timeBuf, sizeof(timeBuf), "%H:%M", &tmL);
+        strftime(dateBuf, sizeof(dateBuf), "%d/%m", &tmL);
       }
       else
       {

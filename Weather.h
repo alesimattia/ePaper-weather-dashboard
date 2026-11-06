@@ -252,10 +252,18 @@ namespace Weather
      */
     inline bool fetchOneCall()
     {
-      String url = String("https://api.openweathermap.org/data/3.0/onecall?lat=")
-                 + String(LAT, 4) + "&lon=" + String(LON, 4)
-                 + "&exclude=minutely,alerts"
-                 + "&units=metric&appid=" + OWM_API_KEY;
+      // Composto in un buffer locale: la concatenazione di String allocherebbe
+      // un temporaneo a ogni pezzo.
+      char url[256];
+      const int urlLength = snprintf(url, sizeof(url),
+          "https://api.openweathermap.org/data/3.0/onecall?lat=%.4f&lon=%.4f"
+          "&exclude=minutely,alerts&units=metric&appid=%s",
+          (double)LAT, (double)LON, OWM_API_KEY);
+      if (urlLength < 0 || urlLength >= (int)sizeof(url))
+      {
+        LOG("OWM", "URL troncato (%d caratteri)", urlLength);
+        return false;
+      }
 
       // Filtro campi: memorizza solo quelli effettivamente utilizzati.
       JsonDocument filter;
@@ -352,17 +360,6 @@ namespace Weather
     // =======================================================================
     // Rendering
     // =======================================================================
-
-    /**
-     * Delega al .ino il disegno dell'immagine di background corrente.
-     * Vedi drawTestBackground() in ePaper-weather-dashboard.ino: il .ino
-     * decide se mostrare l'immagine scaricata dal server cinema (se il
-     * fetch ha avuto successo) o il fallback PROGMEM (se offline).
-     */
-    inline void drawBackground()
-    {
-      drawTestBackground();
-    }
 
     /**
      * Scrive in out la temperatura arrotondata all'intero più vicino. Passa da
@@ -772,8 +769,9 @@ namespace Weather
 
       /** Disegno curva: per ogni segmento [pts[i], pts[i+1]] interpolazione
        *  Catmull-Rom con vicini pts[i-1] e pts[i+2] (clamp ai bordi).
-       *  Colore: nero se il tempo del campione e' < now, rosso altrimenti.
-       *  Il cambio avviene esattamente nel pixel corrispondente a "now". */
+       *  "Adesso" è sempre un vertice, perchè lo storico sta strettamente prima
+       *  di slots[0] e le previsioni dopo: ogni segmento è tutto passato (nero)
+       *  o tutto previsione (rosso), e il colore cambia sul vertice "adesso". */
       if (n >= 2)
       {
         for (size_t i = 0; i < n - 1; ++i)
@@ -782,6 +780,7 @@ namespace Weather
           const TempSample& p2 = pts[i + 1];
           const TempSample& p0 = (i == 0)         ? p1 : pts[i - 1];
           const TempSample& p3 = (i + 2 >= n)     ? p2 : pts[i + 2];
+          const uint16_t color = (p1.epoch < now) ? GxEPD_BLACK : GxEPD_RED;
 
           const int16_t x1 = mapX(p1.epoch);
           const int16_t x2 = mapX(p2.epoch);
@@ -793,11 +792,9 @@ namespace Weather
           for (int16_t s = 1; s <= steps; ++s)
           {
             const float   u  = (float)s / (float)steps;
-            const time_t  eu = p1.epoch + (time_t)((double)(p2.epoch - p1.epoch) * (double)u);
             const float   tu = catmull(p0.t, p1.t, p2.t, p3.t, u);
             const int16_t cx = x1 + (int16_t)(((long)(x2 - x1) * (long)s) / (long)steps);
             const int16_t cy = mapY(tu);
-            const uint16_t color = (eu < now) ? GxEPD_BLACK : GxEPD_RED;
             display.drawLine(prevX, prevY, cx, cy, color);
             prevX = cx;
             prevY = cy;
@@ -964,16 +961,14 @@ namespace Weather
     }
 
     /**
-     * Disegna il banner meteo: sbianca la fascia in fondo allo schermo, poi i
-     * riquadri Interno, Meteo (blocco corrente e colonna sole) e Previsioni
-     * (tre blocchi affiancati), con i titoli sul bordo superiore.
+     * Disegna il banner meteo in fondo allo schermo: i riquadri Interno, Meteo
+     * (blocco corrente e colonna sole) e Previsioni (tre blocchi affiancati),
+     * con i titoli sul bordo superiore. Il fondo è già bianco, perchè il
+     * template azzera il buffer a ogni pagina e sopra il banner disegna solo il
+     * wallpaper, tagliato all'altezza della sua area.
      */
     inline void drawBanner()
     {
-      // La fascia parte sopra il banner per coprire anche i titoli che sporgono.
-      display.fillRect(0, Layout::BANNER_CLEAR_Y, Layout::SCREEN_W,
-                       Layout::SCREEN_H - Layout::BANNER_CLEAR_Y, GxEPD_WHITE);
-
       display.setFont(Layout::FONT_TITLE);
       Graphics::drawFieldsetRect(Layout::INDOOR_X, Layout::BANNER_Y, Layout::INDOOR_W, Layout::BANNER_H,
                                  Layout::BOX_RADIUS, "Interno", Layout::TITLE_INSET, GxEPD_WHITE);
@@ -1013,30 +1008,32 @@ namespace Weather
       const time_t calEpoch = Clock::valido() ? time(nullptr)
                                               : (slots[0].valid ? slots[0].epoch : 0);
 
+      /**
+       * Ogni pagina parte da un buffer bianco, perchè firstPage() e nextPage()
+       * lo azzerano, e disegna solo i riquadri che toccano la sua fascia: quelli
+       * con il titolo sul bordo superiore si allargano in alto di STACK_GAP,
+       * perchè il titolo sporge sopra il bordo. Il tempo misurato è il solo
+       * disegno, senza nextPage(), che contiene SPI e refresh.
+       */
+      uint32_t drawUs = 0;
+      uint16_t page = 0;
       display.firstPage();
       do
       {
-        display.fillScreen(GxEPD_WHITE);
-        drawBackground();
-        /**
-         * Colonna destra bianca dal bordo della colonna sinistra in poi: copre
-         * un wallpaper più largo di CINEMA_W e fa da fondo alla scheda del
-         * calendario.
-         */
-        display.fillRect(Layout::LEFT_COLUMN_END, 0, Layout::SCREEN_W - Layout::LEFT_COLUMN_END,
-                         Layout::BANNER_CLEAR_Y, GxEPD_WHITE);
-        /**
-         * Scheda della sidebar con mese ed eventi, nel TZ impostato da
-         * Clock::begin() in setup().
-         */
-        Calendar::draw(calEpoch);
-        /**
-         * Riquadro Posta sotto il wallpaper: l'area è già bianca grazie a
-         * fillScreen, quindi non serve un fillRect dedicato.
-         */
-        Mail::draw();
-        drawBanner();
+        const uint32_t pageStartUs = micros();
+        Graphics::beginPage(page++);
+        drawTestBackground();
+        if (Graphics::intersectsPage(Layout::CAL_Y - Layout::STACK_GAP, Layout::CAL_H + Layout::STACK_GAP))
+          Calendar::draw(calEpoch);
+        if (Graphics::intersectsPage(Layout::MAIL_Y - Layout::STACK_GAP, Layout::MAIL_H + Layout::STACK_GAP))
+          Mail::draw();
+        if (Graphics::intersectsPage(Layout::BANNER_Y - Layout::STACK_GAP,
+                                     Layout::SCREEN_H - Layout::BANNER_Y + Layout::STACK_GAP))
+          drawBanner();
+        drawUs += micros() - pageStartUs;
       } while (display.nextPage());
+      Graphics::endPages();
+      LOGV("render", "disegno %lu ms in %u pagine", (unsigned long)(drawUs / 1000UL), (unsigned)page);
     }
 
     /**

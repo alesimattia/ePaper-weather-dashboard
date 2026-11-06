@@ -19,6 +19,6 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 
 **Padding di riga.** 610 non è multiplo di 8: il server (`pack_mask_msb` di `dithering.py`) riempie con bit a 1 (non colore) i 6 bit bassi dell'ultimo byte di ogni riga. `GxEPDImage::showImage()` usa lo stride `ceil(W/8)` e legge solo i pixel fino a W, quindi il padding non arriva mai al pannello e il suo valore non conta.
 
-**Memoria ESP32.** ~44 KB sul 097c, ~49 KB sul 122c. `allocPlaneBuffer()` preferisce la PSRAM e ripiega sull'heap interno; sulla board di bring-up (WROOM-32E, senza PSRAM) i piani stanno nell'heap interno, che dopo la connessione WiFi ha intorno ai 200 KB liberi.
+**Memoria ESP32.** ~44 KB sul 097c, ~49 KB sul 122c, in flash e non in heap: `CinemaStore.h` li tiene in uno dei due slot della partizione `wallpaper` (13 settori ciascuno, con un'intestazione di 16 B davanti ai piani; 11 settori bastano sul 097c), e il download li scrive a blocchi da 1 KB. Vedi [[esp32_cinema_consumer]].
 
 **Server.** L'endpoint serve qualsiasi misura sotto i suoi massimi (4000 px per lato, 5 MP) esattamente com'è chiesta: niente clamp, niente quantizzazione a 25 px (quella vale solo per la pagina `/cinema` del browser).

@@ -70,7 +70,8 @@ l'istanza è una sola: la ragione dei tipi interi è che descrivono il dato.
 
 Due conseguenze pratiche:
 
-- la conversione a intero avviene nella callback BSEC e passa da un helper che
+- la conversione a intero avviene in `applyOutputs()`, sulle uscite lette con
+  `getOutputs()` dopo `run()`, e passa da un helper che
   **scarta il NaN**, perchè `lroundf()` su NaN ha comportamento indefinito e
   dentro un campo intero un valore arbitrario non è più distinguibile da una
   misura vera, mentre in un float resterebbe riconoscibile;

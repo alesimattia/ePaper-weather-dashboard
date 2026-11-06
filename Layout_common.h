@@ -63,14 +63,12 @@ namespace Layout
   // Colonne: wallpaper e Posta a sinistra, scheda calendario a destra.
   inline constexpr int16_t SIDEBAR_W = 320;
   inline constexpr int16_t SIDEBAR_X = SCREEN_W - MARGIN - SIDEBAR_W;
-  /** Bordo destro della colonna sinistra: da qui in poi la sidebar viene sbiancata. */
+  /** Bordo destro della colonna sinistra, che ne fissa la larghezza utile. */
   inline constexpr int16_t LEFT_COLUMN_END = SIDEBAR_X - GUTTER;
 
   // Banner meteo, ancorato al fondo dello schermo.
   inline constexpr int16_t BANNER_H = 196;
   inline constexpr int16_t BANNER_Y = SCREEN_H - MARGIN - BANNER_H;
-  /** Da qui in giù il banner sbianca tutto, compresa la fascia dei titoli che sporgono. */
-  inline constexpr int16_t BANNER_CLEAR_Y = BANNER_Y - 10;
 
   inline constexpr int16_t INDOOR_X   = MARGIN;
   inline constexpr int16_t INDOOR_W   = 200;

@@ -1,0 +1,14 @@
+# Tabella delle partizioni del firmware, flash da 4 MB. Il core la usa al posto
+# dello schema scelto a menu, che va comunque lasciato su "Minimal SPIFFS": il
+# suo limite di 1920 KB coincide con gli slot qui sotto e tiene giusto il
+# controllo di dimensione della build. Due slot OTA per l'aggiornamento dalla
+# finestra di manutenzione; "wallpaper" contiene due immagini cinema (CinemaStore.h)
+# da 13 settori l'una, la misura del 12.2"; la coredump prende i 24 KB che
+# l'allineamento a 64 KB degli slot lascerebbe inutilizzati.
+# Name,    Type, SubType,   Offset,   Size,     Flags
+nvs,       data, nvs,       0x9000,   0x5000,
+otadata,   data, ota,       0xE000,   0x2000,
+app0,      app,  ota_0,     0x10000,  0x1E0000,
+app1,      app,  ota_1,     0x1F0000, 0x1E0000,
+wallpaper, data, undefined, 0x3D0000, 0x1A000,
+coredump,  data, coredump,  0x3EA000, 0x16000,

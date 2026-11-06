@@ -48,7 +48,7 @@
  *
  * Il modulo non decide QUANDO tocca a lui: cadenza, ritenti e fascia oraria
  * sono dello scheduler, che chiama runPublish() solo con lo slot aperto e la
- * radio su. readyToPublish() è l'hook `pronto()` della tabella dei task.
+ * radio su. readyToPublish() è l'hook `preconditionsMet()` della tabella dei task.
  *
  * Invariante di runPublish(): al ritorno non esiste nessun task esp-mqtt vivo
  * nè nessun handle allocato, in qualunque modo sia andata. È la condizione che
@@ -57,7 +57,7 @@
  * dormire: sarebbe codice morto che suggerisce il contrario.
  *
  * Il modulo non disegna niente e non chiama Weather::markDirty(): il ridisegno
- * lo chiede il `dopo()` del task, e solo quando il badge di guasto compare o
+ * lo chiede l'`onOutcome()` del task, e solo quando il badge di guasto compare o
  * sparisce, perchè un refresh pieno del pannello costa ~24 s.
  */
 
@@ -489,7 +489,7 @@ namespace Tuya
    * del sensore da mandare e l'orologio sincronizzato. Funzione pura, non
    * tocca nè lo stato nè la radio.
    *
-   * È l'hook `pronto()` del task nella tabella del .ino, quindi un falso
+   * È l'hook `preconditionsMet()` del task nella tabella del .ino, quindi un falso
    * esclude il publish anche dal calcolo del prossimo risveglio, e soprattutto
    * non consuma lo slot: il task ha un solo tentativo per cadenza, quindi ogni
    * slot speso senza poter pubblicare sarebbe perso fino alla cadenza piena.
@@ -663,7 +663,7 @@ namespace Tuya
    * caso lo scheduler non chiama nemmeno runPublish().
    *
    * Usato da: Weather.h (drawBanner) per il titolo del riquadro Indoor, e dal
-   * dopo() del task nel .ino per decidere se serve un ridisegno.
+   * onOutcome() del task nel .ino per decidere se serve un ridisegno.
    */
   inline bool hasFailed()
   {

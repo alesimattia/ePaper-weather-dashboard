@@ -38,7 +38,10 @@ disegna in una griglia sotto al wallpaper cinema con `Mail::draw()`. API:
 4. **Risposte lette con `getString()`.** Gmail in HTTP/1.1 risponde
    `Transfer-Encoding: chunked` (misurato con curl) e `deserializeJson()` sullo
    stream grezzo fallirebbe; `getString()` decodifica il chunked. Lista e batch
-   sono di pochi KB.
+   sono di pochi KB. Le sotto-risposte del batch si analizzano sul posto dentro
+   la risposta completa (`deserializeJson` con puntatore e lunghezza fino al
+   boundary successivo, i `\r\n` finali li ignora), senza copie `substring()`
+   e con un solo documento filtro per batch.
 
 5. **`fields=` query filter + `DeserializationOption::Filter` ArduinoJson.**
    Doppia mitigazione (server + client) della pressione di RAM su ESP32.
@@ -52,7 +55,7 @@ disegna in una griglia sotto al wallpaper cinema con `Mail::draw()`. API:
    `runFetch()`, che presuppone la radio già connessa. Il freno all'hammering
    del token endpoint nella finestra di manutenzione è `FETCH_RITENTO_MS` dello
    scheduler (vedi [[fetch_flag_ordering]]). Con credenziali al placeholder il
-   task è sospeso dal suo `pronto()` (vedi [[scheduler_task_table]]).
+   task è sospeso dal suo `preconditionsMet()` (vedi [[scheduler_task_table]]).
 
 8. **Testo.** Mittente e oggetto passano da `Graphics::foldToFontCharset()`
    subito dopo la copia nei buffer (vedi [[resa_testo_pannello]]).

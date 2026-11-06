@@ -534,19 +534,20 @@ class Frame:
 
     # --- frame -----------------------------------------------------------------
     def render(self):
-        """Weather::renderFrame(): wallpaper, colonna destra, calendario, posta, banner."""
+        """Weather::renderFrame(): wallpaper, calendario, posta, banner su fondo bianco."""
         L = self.L
         self.c.fill_rect(0, 0, L["SCREEN_W"], L["SCREEN_H"], WHITE)
         self.draw_wallpaper()
-        self.c.fill_rect(L["LEFT_COLUMN_END"], 0, L["SCREEN_W"] - L["LEFT_COLUMN_END"], L["BANNER_CLEAR_Y"], WHITE)
         self.draw_calendar()
         self.draw_mail()
         self.draw_banner()
         return self.c
 
     def draw_wallpaper(self):
-        """showImage() del fallback, ritagliato all'area cinema: piano nero con bit 0 = nero,
-        piano rosso con bit 0 = rosso, come lo compone GxEPDImage."""
+        """showImage() del fallback ritagliato all'area cinema, larga quanto la Posta: mostra
+        il frame come appare con un'immagine a misura CINEMA_W x CINEMA_H, anche se l'asset
+        ne sborda. Piano nero con bit 0 = nero, piano rosso con bit 0 = rosso, come lo
+        compone GxEPDImage."""
         L = self.L
         width, height, black, red = self.sources["wallpaper"]
         stride = (width + 7) // 8
@@ -565,7 +566,6 @@ class Frame:
         """Calendar::draw(): scheda col mese, griglia di sei settimane ed eventi."""
         L, c = self.L, self.c
         months, weekdays = self.sources["months"], self.sources["weekdays"]
-        c.fill_round_rect(L["CAL_X"], L["CAL_Y"], L["CAL_W"], L["CAL_H"], L["BOX_RADIUS"], WHITE)
         self.font("TITLE")
         self.fieldset(L["CAL_X"], L["CAL_Y"], L["CAL_W"], L["CAL_H"], months[NOW.month - 1])
         c.hline(L["CAL_X"] + L["BOX_PAD"], L["CAL_DIVIDER_Y"], L["CAL_W"] - 2 * L["BOX_PAD"], BLACK)
@@ -592,7 +592,6 @@ class Frame:
         # Calendar::MAX_EVENTS_DISPLAYED: la riga più alta da almeno 45 px fra 7, 6 e 5.
         rows = 7 if L["EVT_H"] // 7 >= 45 else 6 if L["EVT_H"] // 6 >= 45 else 5
         row_h = L["EVT_H"] // rows
-        c.fill_rect(L["EVT_X"], L["EVT_Y"], L["EVT_W"], L["EVT_H"], WHITE)
         right_x = L["EVT_X"] + L["EVT_W"]
         for row in range(rows):
             top = L["EVT_Y"] + row * row_h
@@ -648,9 +647,8 @@ class Frame:
             self.draw_left(self.truncate(subject, max_w), left, line2, BLACK)
 
     def draw_banner(self):
-        """Weather::drawBanner(): fascia bianca, riquadri, badge Tuya, Interno, Meteo e Previsioni."""
+        """Weather::drawBanner(): riquadri, badge Tuya, Interno, Meteo e Previsioni."""
         L, c = self.L, self.c
-        c.fill_rect(0, L["BANNER_CLEAR_Y"], L["SCREEN_W"], L["SCREEN_H"] - L["BANNER_CLEAR_Y"], WHITE)
         self.font("TITLE")
         for x, w, title in ((L["INDOOR_X"], L["INDOOR_W"], "Interno"), (L["WEATHER_X"], L["WEATHER_W"], "Meteo"),
                             (L["FORECAST_X"], L["FORECAST_W"], "Previsioni")):
@@ -800,14 +798,15 @@ class Frame:
             p1, p2 = points[index], points[index + 1]
             p0 = points[index - 1] if index > 0 else p1
             p3 = points[index + 2] if index + 2 < len(points) else p2
+            # Come drawTempChart(): "adesso" è un vertice, quindi il colore è del segmento.
+            color = BLACK if p1[0] < now else RED
             x1, x2 = map_x(p1[0]), map_x(p2[0])
             steps = max(x2 - x1, 1)
             previous = (x1, map_y(p1[1]))
             for step in range(1, steps + 1):
                 u = step / steps
-                epoch = p1[0] + int((p2[0] - p1[0]) * u)
                 current = (x1 + c_div((x2 - x1) * step, steps), map_y(catmull(p0[1], p1[1], p2[1], p3[1], u)))
-                c.line(previous[0], previous[1], current[0], current[1], BLACK if epoch < now else RED)
+                c.line(previous[0], previous[1], current[0], current[1], color)
                 previous = current
 
         c.hline(chart_l, axis_y, chart_r - chart_l, BLACK)

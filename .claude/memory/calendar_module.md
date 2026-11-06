@@ -33,7 +33,7 @@ mostra il titolo "--" senza griglia, e nessun evento risulta "di oggi". Così la
 data non dipende dalla riuscita del meteo (vedi [[clock_sntp]]).
 
 **Credenziali.** `isConfigured()` usa `Net::isCredentialSet()` sulle macro di
-`Env.h`; i task `google` e `outlook` hanno `pronto` = orologio valido e
+`Env.h`; i task `google` e `outlook` hanno `preconditionsMet` = orologio valido e
 credenziali presenti. Con le credenziali Microsoft al placeholder il task outlook
 è sospeso e la lista mostra i soli eventi Google. La guardia Google vale anche
 per Mail, che condivide le credenziali (vedi [[mail_module]],

@@ -302,12 +302,18 @@ namespace Calendar
         return false;
       }
 
+      // Solo i due campi usati: la risposta Microsoft contiene anche un nuovo
+      // refresh_token di oltre 1 KB che il documento non deve tenere.
+      JsonDocument filter;
+      filter["access_token"] = true;
+      filter["expires_in"]   = true;
+
       JsonDocument doc;
       Net::BodyStream response(http.getStream());
-      DeserializationError err = deserializeJson(doc, response);
+      DeserializationError err = deserializeJson(doc, response, DeserializationOption::Filter(filter));
       http.end();
       if (err){
-        LOG("OAuth", "token json parse: %s", err.c_str()); 
+        LOG("OAuth", "token json parse: %s", err.c_str());
         return false; 
       }
 
@@ -334,10 +340,11 @@ namespace Calendar
       if (cachedOutlookToken.length() > 0 && (int32_t)(outlookTokenExpiresAtMs - now) > 0)
         return true;
 
-      String url = String("https://login.microsoftonline.com/") + CAL_MSGRAPH_TENANT_ID + "/oauth2/v2.0/token";
+      static const char* const TOKEN_URL =
+        "https://login.microsoftonline.com/" CAL_MSGRAPH_TENANT_ID "/oauth2/v2.0/token";
       uint32_t expiresIn = 0;
       bool ok = oauthRefreshGeneric(
-        url.c_str(), MSGRAPH_CLIENT_ID, "",
+        TOKEN_URL, MSGRAPH_CLIENT_ID, "",
         MSGRAPH_REFRESH_TOKEN,
         "https%3A%2F%2Fgraph.microsoft.com%2FCalendars.Read%20offline_access",
         cachedOutlookToken, expiresIn);
@@ -391,9 +398,17 @@ namespace Calendar
         return false;
       }
 
+      // Solo i campi usati: Graph aggiunge comunque id, @odata.etag e timeZone,
+      // circa 1 KB su cinque eventi che il documento non deve tenere.
+      JsonDocument filter;
+      filter["value"][0]["subject"]             = true;
+      filter["value"][0]["start"]["dateTime"]   = true;
+      filter["value"][0]["end"]["dateTime"]     = true;
+      filter["value"][0]["isAllDay"]            = true;
+
       JsonDocument doc;
       Net::BodyStream body(http.getStream());
-      DeserializationError err = deserializeJson(doc, body);
+      DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
       http.end();
       if (err) { LOG("Outlook", "events json parse: %s", err.c_str()); return false; }
 
@@ -586,13 +601,12 @@ namespace Calendar
 
     /**
      * Disegna la cornice della scheda con il titolo sul bordo superiore e il
-     * filetto che separa la griglia del mese dagli eventi. La scheda si
-     * sbianca per intero, quindi va disegnata prima di griglia ed eventi.
+     * filetto che separa la griglia del mese dagli eventi. Il fondo è già
+     * bianco: il template azzera il buffer a ogni pagina e nella colonna
+     * destra non disegna nient'altro.
      */
     inline void drawCard(const char* title)
     {
-      display.fillRoundRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
-                            Layout::BOX_RADIUS, GxEPD_WHITE);
       display.setFont(Layout::FONT_TITLE);
       Graphics::drawFieldsetRect(Layout::CAL_X, Layout::CAL_Y, Layout::CAL_W, Layout::CAL_H,
                                  Layout::BOX_RADIUS, title, Layout::TITLE_INSET, GxEPD_WHITE);
@@ -625,10 +639,13 @@ namespace Calendar
       const int16_t cellH = Layout::CAL_CELL_H;
 
       display.setFont(Layout::FONT_BODY);
-      for (int i = 0; i < 7; i++)
+      if (Graphics::intersectsPage(Layout::CAL_GRID_Y, Layout::CAL_HDR_H))
       {
-        int16_t cx = gridX + i * cellW + cellW / 2;
-        Graphics::drawCentered(DOW_IT[i], cx, Layout::CAL_GRID_Y + Layout::CAL_HDR_BASELINE, GxEPD_BLACK);
+        for (int i = 0; i < 7; i++)
+        {
+          int16_t cx = gridX + i * cellW + cellW / 2;
+          Graphics::drawCentered(DOW_IT[i], cx, Layout::CAL_GRID_Y + Layout::CAL_HDR_BASELINE, GxEPD_BLACK);
+        }
       }
 
       display.drawFastHLine(Layout::CAL_X + Layout::BOX_PAD, Layout::CAL_GRID_Y + Layout::CAL_HDR_H,
@@ -644,6 +661,8 @@ namespace Calendar
         int16_t cellX = gridX + col * cellW;
         int16_t cellY = gridTop + row * cellH;
         int16_t cx    = cellX + cellW / 2;
+        // Numero e badge rosso stanno dentro la cella: fuori pagina non si formatta nemmeno.
+        if (!Graphics::intersectsPage(cellY, cellH)) continue;
 
         snprintf(buf, sizeof(buf), "%d", d);
 
@@ -684,6 +703,9 @@ namespace Calendar
       const int16_t rowTop        = Layout::EVT_Y + row * EVT_ROW_H;
       const int16_t titleBaseline = rowTop + EVT_ROW_H / 2 + Layout::EVT_TITLE_FROM_MIDDLE;
 
+      // Filetto, testi e discendenti stanno dentro la riga: fuori pagina non c'è niente da fare.
+      if (!Graphics::intersectsPage(rowTop, EVT_ROW_H)) return;
+
       if (row > 0)
         display.drawFastHLine(Layout::EVT_X, rowTop, Layout::EVT_W, GxEPD_BLACK);
 
@@ -707,16 +729,14 @@ namespace Calendar
                      (tmL.tm_mday         == todayD);
       uint16_t color = isToday ? GxEPD_RED : GxEPD_BLACK;
 
+      // strftime() e non snprintf(): formatta i campi di struct tm, quindi il
+      // compilatore non stima date da 11 cifre e non dà falsi -Wformat-truncation.
       char dateBuf[12];
-      if (tmL.tm_year + 1900 == todayY)
-        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", tmL.tm_mday, tmL.tm_mon + 1);
-      else
-        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d/%02d",
-                 tmL.tm_mday, tmL.tm_mon + 1, (tmL.tm_year + 1900) % 100);
+      strftime(dateBuf, sizeof(dateBuf), (tmL.tm_year + 1900 == todayY) ? "%d/%m" : "%d/%m/%y", &tmL);
 
       char timeBuf[10];
       if (e.allDay) snprintf(timeBuf, sizeof(timeBuf), "tutto gg");
-      else          snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmL.tm_hour, tmL.tm_min);
+      else          strftime(timeBuf, sizeof(timeBuf), "%H:%M", &tmL);
 
       const int16_t dateW     = Graphics::textWidth(dateBuf);
       const int16_t timeW     = Graphics::textWidth(timeBuf);
@@ -750,8 +770,6 @@ namespace Calendar
      */
     inline void drawEventsList(const struct tm& today, time_t nowUtc)
     {
-      display.fillRect(Layout::EVT_X, Layout::EVT_Y, Layout::EVT_W, Layout::EVT_H, GxEPD_WHITE);
-
       constexpr int CAP = Calendar::Outlook::MAX_EVENTS + Calendar::Google::MAX_EVENTS;
       const CalEvent* merged[CAP];
       int count = 0;

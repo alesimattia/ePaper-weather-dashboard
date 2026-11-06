@@ -15,7 +15,7 @@ senza interruzioni". Le mail sono utili ma secondarie rispetto a
 meteo/calendario.
 
 **How to apply:** il return value di `Mail::runFetch()` serve SOLO allo
-scheduler per decidere il ridisegno (`dopo = marcaSuOk`) e per contare il
+scheduler per decidere il ridisegno (`onOutcome` = `markDirtyOnOk`) e per contare il
 tentativo. NON propagare l'errore al flusso: il runner non interrompe mai
 il ciclo, quindi la garanzia è strutturale e non va reintrodotta a mano.
 `Mail::runFetch()` può fallire silenziosamente: la cache resta com'era e i
@@ -35,7 +35,7 @@ un `Mail::runFetch()` riuscito.
 fatto subito prima dei calendari"). Le mail vengono percepite come
 informazione a più alta priorità del calendario.
 
-**How to apply:** l'ordine è quello delle righe di `TABELLA_TASK` nel
+**How to apply:** l'ordine è quello delle righe di `TASK_TABLE` nel
 `.ino`: `mail` sta prima di `google` e `outlook`. C'è anche una ragione
 tecnica oltre alla preferenza dell'utente — mail e Google condividono la
 cache del token OAuth, e chi gira per primo paga il refresh. Se si inverte

@@ -27,9 +27,9 @@ Lo sketch principale compone uno schermo completo con:
 
 - **background cinema scaricato via HTTP** dalla webapp
   [`webapp/`](webapp/) (collage locandine + orari della programmazione del giorno),
-  scaricato una volta al giorno e tenuto in RAM/PSRAM per tutti i refresh
-  successivi. Se il fetch fallisce o il WiFi non c'è si usa il fallback PROGMEM
-  in [`wallpaper/`](wallpaper/). Vedi [Background cinema](#background-cinema);
+  scaricato una volta al giorno e salvato in flash, dove sopravvive al reboot.
+  Finchè non c'è un'immagine scaricata si usa il fallback PROGMEM in
+  [`wallpaper/`](wallpaper/). Vedi [Background cinema](#background-cinema);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
   bordo): **Interno** (BME680: T/RH/IAQ/pressione), **Meteo** (meteo corrente
   OWM + colonna sole con alba/tramonto, barra temp-range e mini-grafico
@@ -441,24 +441,24 @@ esterno.
 
 ### Mappa dei produttori di dati del display
 
-I metodi che producono dati per il pannello sono i "produttori", cioè i task della tabella `TABELLA_TASK` in [ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Ognuno ha un adattatore `eseguiXxx()` nel `.ino`, che chiama il metodo del modulo. Il disegno avviene poi in un solo punto, `Weather::render()`.
+I metodi che producono dati per il pannello sono i "produttori", cioè i task della tabella `TASK_TABLE` in [ePaper-weather-dashboard.ino](ePaper-weather-dashboard.ino). Ognuno ha un adattatore `runXxx()` nel `.ino`, che chiama il metodo del modulo. Il disegno avviene poi in un solo punto, `Weather::render()`.
 
 #### Produttori di dati
 
 | Sorgente | Adattatore nel .ino | Metodo che produce il dato | Cosa arriva sul display |
 |---|---|---|---|
-| Sensore BME680 (BSEC) | `eseguiIndoor()` | [Indoor::refresh()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
-| Meteo OpenWeather | `eseguiMeteo()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
-| Calendario Google | `eseguiGoogle()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
-| Calendario Outlook | `eseguiOutlook()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
-| Posta Gmail | `eseguiMail()` | [Mail::runFetch()](Mail.h), che chiama `refreshToken()`, `fetchMessageIds()` e `parseBatchPart()` | Celle della posta (mittente, oggetto troncato a 60 caratteri, data) |
-| Banner cinema | `eseguiCinema()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp, mostrato nel banner. Se manca, c'è il fallback PROGMEM |
+| Sensore BME680 (BSEC) | `runIndoorSample()` | [Indoor::refresh()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
+| Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
+| Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
+| Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
+| Posta Gmail | `runMailFetch()` | [Mail::runFetch()](Mail.h), che chiama `refreshToken()`, `fetchMessageIds()` e `parseBatchPart()` | Celle della posta (mittente, oggetto troncato a 60 caratteri, data) |
+| Banner cinema | `runCinemaFetch()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp e salvato in flash da [CinemaStore](CinemaStore.h). Se manca, c'è il fallback PROGMEM |
 
 #### Isolamento dei produttori
 
 Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo la propria funzionalità:
 
-- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `pronto()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
+- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `preconditionsMet()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
 - **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
 - **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
 - **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
@@ -466,22 +466,22 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 
 #### Produttori indiretti
 
-- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`calendarioPronto()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
-- Il task `bsec` è sospeso senza sensore (`pronto` = `Indoor::attivo`) e interroga BSEC ogni 300 s dall'ultima chiamata ([Indoor::msUntilNextPoll()](Indoor.h)). Il suo `dopoIndoor()` chiede il ridisegno solo dentro la fascia WiFi: di notte il campione si acquisisce ma il pannello non si aggiorna.
+- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`isClockValidForCalendars()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
+- Il task `bsec` è sospeso senza sensore (`preconditionsMet` = `Indoor::attivo`) e interroga BSEC ogni 300 s dall'ultima chiamata ([Indoor::msUntilNextPoll()](Indoor.h)). Dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia. Il suo `onIndoorOutcome()` chiede il ridisegno solo dentro la fascia WiFi: di notte il campione si acquisisce ma il pannello non si aggiorna.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
-- [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `dopoTuya()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `TUYA ERR`, tramite `Tuya::hasFailed()`.
+- [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `onTuyaOutcome()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `TUYA ERR`, tramite `Tuya::hasFailed()`.
 
 #### Consumatori
 
-- Ogni task che termina con `Esito::OK` chiama `marcaSuOk()`, che esegue `Weather::markDirty()`.
-- Il task `display` parte quando `displayPronto()` vede `Weather::sporco()` e chiama `Weather::render()`.
-- `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()`, `Mail::draw()` e `drawBanner()`. Il banner richiama:
+- Ogni task che termina con `Outcome::OK` chiama `markDirtyOnOk()`, che esegue `Weather::markDirty()`.
+- Il task `display` parte quando `displayReady()` vede `Weather::sporco()` e chiama `Weather::render()`.
+- `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()`, `Mail::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia, eventi e posta e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
   - [renderSunColumn()](Weather.h) per alba, tramonto, barra temp-range e mini-grafico;
   - il badge `TUYA ERR` quando la telemetria è in errore.
 
-Gli stati intermedi dei fetch (`meteoIncompleto()`, `tuyaPronto()`) servono solo a decidere se un task può partire.
+Gli stati intermedi dei fetch (`isWeatherIncomplete()`, `tuyaReady()`) servono solo a decidere se un task può partire.
 
 ### Weather (`Weather.h`)
 
@@ -685,7 +685,7 @@ badge compare o sparisce, perchè un refresh pieno costa ~24 s. Una radio caduta
 alza il badge: lo scheduler non chiama nemmeno il modulo.
 
 Cadenza (`tuya_min`), fascia oraria e ritenti sono dello scheduler. È l'unico task con
-`maxTentativi` a 0 (un tentativo per slot comunque vada, perchè i suoi modi di
+`maxAttempts` a 0 (un tentativo per slot comunque vada, perchè i suoi modi di
 fallimento sono permanenti sulla scala dei minuti) e l'unico che può ignorare la fascia
 WiFi, con `TUYA_IGNORE_ACTIVE_HOUR` a 1 nel `.ino`.
 
@@ -772,8 +772,10 @@ controllo dell'origine sulle POST. Non ci sono HTTPS nè token.
 3. **Le credenziali vanno a `updater.setup()`**: il callback di upload scrive la
    partizione durante il parsing della richiesta, quindi un controllo a valle
    arriverebbe dopo `Update.end()`.
-4. **Schema di partizioni con due slot applicative** (`No FS 4MB`): con `Huge APP`
-   l'aggiornamento via web non è possibile.
+4. **Tabella delle partizioni con due slot applicative**: quella di
+   [`partitions.csv`](partitions.csv) ne ha due da 1920 KB; con `Huge APP`
+   l'aggiornamento via web non è possibile. Un aggiornamento OTA non cambia la
+   tabella: la prima installazione con il csv va fatta via seriale.
 
 mDNS pesa ~34 KB di flash: si spegne con `MAINT_MDNS 0` e il dispositivo resta
 raggiungibile per indirizzo IP.
@@ -802,8 +804,9 @@ void setup()
   Mail::begin();                             // cache mail Gmail (vuota al boot)
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
+  CinemaStore::begin();                      // immagine cinema salvata in flash, se c'è
   Maintenance::begin();                      // finestra su rete di casa, AP di riserva
-  Scheduler::begin(TABELLA_TASK, N_TASK, wifiOn, wifiOff);
+  Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
 }
 
 void loop()
@@ -811,19 +814,19 @@ void loop()
   if (Maintenance::finestraAperta())
   {
     Maintenance::servi();                        // macchina a stati + handleClient()
-    Scheduler::giro(Scheduler::Radio::ESTERNA);  // la radio e' della finestra: si usa, non si tocca
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);  // al più uno al secondo; la radio si usa, non si tocca
     delay(MAINTENANCE_LOOP_DELAY_MS);            // niente light sleep: il server deve rispondere
     return;
   }
 
   Maintenance::chiudi();                         // idempotente, consegna la radio spenta
-  Scheduler::giro(Scheduler::Radio::PROPRIA);    // gate radio -> wifiOn -> fetch -> wifiOff -> task locali
+  Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);    // gate radio -> wifiOn -> fetch -> wifiOff -> task locali
   display.hibernate();
-  Scheduler::dormi();                            // light sleep fino al prossimo evento
+  Scheduler::sleepUntilNextEvent();              // light sleep fino al prossimo evento
 }
 ```
 
-La sequenza dei task sta nella tabella `TABELLA_TASK`, l'unico posto dove l'ordine è
+La sequenza dei task sta nella tabella `TASK_TABLE`, l'unico posto dove l'ordine è
 definito:
 
 | Task | Radio | Cadenza | Note |
@@ -833,7 +836,7 @@ definito:
 | `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | sì | `outl_min` | Stessa precondizione di `google`. |
 | `tuya` | sì | `tuya_min` | Telemetria BME680 sul cloud Tuya. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
-| `cinema` | sì | giornaliera, `cine_h` | Ultimo perchè è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. |
+| `cinema` | sì | giornaliera, `cine_h` | Ultimo perchè è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. Sospeso senza la partizione `wallpaper`. |
 | `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
 | `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
 
@@ -996,12 +999,13 @@ con i placeholder `--` e il wallpaper PROGMEM.
 `Maintenance::chiudi()` consegna la radio spenta. Il `loop()` diventa:
 
 ```
-wake      Scheduler::giro(PROPRIA)
+wake      Scheduler::runRound(MANAGED_BY_SCHEDULER)
             serve la radio?   (scadenza STRETTA di un task di rete, e fascia oraria)
-            si -> wifiOn() -> esegue i task scaduti O in scadenza entro coal_min -> wifiOff()
+            si -> wifiOn() -> rilegge l'ora (SNTP appena fatto) -> esegue i task scaduti
+                  O in scadenza entro coal_min -> wifiOff()
             poi sempre: fase locale (bsec, display)
           display.hibernate()
-          Scheduler::dormi()   // fino al prossimo evento, fra SLEEP_MIN_S e SLEEP_MAX_S
+          Scheduler::sleepUntilNextEvent()   // fino al prossimo evento, fra SLEEP_MIN_S e SLEEP_MAX_S
 ```
 
 Proprietà del ciclo:
@@ -1036,7 +1040,7 @@ Ogni esito è loggato con durata e prossima scadenza:
 | `wifiOn()` fallito | Nessun task di rete riprova per `WIFI_RITENTO_MS` (5 min): evita di pagare 15 s di attesa a ogni risveglio | Fra 5 min |
 | Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Fra 30 s |
 | Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata** e ridisegno richiesto: è una risposta valida, non un errore | Alla cadenza piena |
-| Cinema (HTTP / timeout) | `g_cinema_desc` torna al fallback PROGMEM | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
+| Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
 | BME680 (init failed) | `Indoor::refresh()` no-op, riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
@@ -1073,13 +1077,13 @@ del modulo [`Mail.h`](Mail.h).
 
 ### Flusso
 
-1. **Boot**: `g_cinema_desc` in [`ePaper-weather-dashboard.ino`](ePaper-weather-dashboard.ino)
-   punta al fallback PROGMEM `img_la_grande_onda_desc`: il display ha comunque
-   un'immagine da mostrare se il WiFi non è ancora connesso o l'endpoint
-   non risponde. Il fallback si genera con
+1. **Boot**: [`CinemaStore::begin()`](CinemaStore.h) cerca la partizione `wallpaper`
+   e rimette a schermo l'ultima immagine scaricata, già dal primo frame. Senza
+   immagine valida [`drawTestBackground()`](ePaper-weather-dashboard.ino) usa il
+   fallback PROGMEM `img_la_grande_onda_desc`. Il fallback si genera con
    [`epd_image_converter.pyw`](#convertitore-immagini-python) a 610w × 290h:
-   `showImage()` non ritaglia, quindi un'immagine più grande invade il titolo
-   della Posta e una più larga finisce nella colonna destra, sbiancata.
+   `drawTestBackground()` ne taglia le righe all'altezza `CINEMA_H`, mentre
+   un'immagine più larga sconfina nella colonna destra.
 2. **Fetch**: `fetchCinemaImage()` è l'**ultimo** task di rete del giro, dopo meteo,
    mail e calendari, perchè è l'unico che può pagare il cold start di render.com e il
    tempo degli altri è la copertura di quel boot. Fa un `HTTP GET` all'URL che
@@ -1089,21 +1093,20 @@ del modulo [`Mail.h`](Mail.h).
    https://cinema-epd.onrender.com/cinema/arduino?width=610&height=325&colors=bwr&dither=floyd   (122c)
    ```
    `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio: lo usa anche il
-   ping `/health`. Larghezza, altezza e piani non possono divergere dai buffer,
-   perchè vengono dalle stesse costanti.
-3. **Allocazione**: `Layout::CINEMA_PLANES` buffer da `Layout::CINEMA_PLANE_SZ` byte
-   ciascuno, cioè 2 × 22 330 = 44 660 byte sul 097c e 2 × 25 025 = 50 050 sul 122c.
-   `allocPlaneBuffer()` prova `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` se
-   `psramFound()` è `true`, altrimenti `malloc()` sull'heap interno, e logga su Serial
-   il segmento usato e la memoria libera residua.
-4. **Lettura**: `Net::BodyStream::readBytes()` in `Layout::CINEMA_PLANES` fasi
-   sequenziali direttamente nei buffer, attendendo le pause fra i blocchi del corpo
+   ping `/health`. Larghezza, altezza e piani non possono divergere dall'immagine
+   salvata, perchè vengono dalle stesse costanti.
+3. **Slot in flash**: prima della GET `CinemaStore::beginWrite()` cancella i settori
+   dello slot libero (11 sul 097c, 13 sul 122c), così l'erase, che ferma la cache
+   della flash per circa mezzo secondo, avviene prima che la connessione TLS esista.
+4. **Lettura**: `Net::BodyStream::readBytes()` a blocchi da 1 KB su stack, scritti in
+   flash con `CinemaStore::writeChunk()`, attendendo le pause fra i blocchi del corpo
    fino a `CINEMA_HTTP_TIMEOUT_MS` senza dati. Il formato binario è header-less (vedi
    [webapp/README.md → Formato binario `/cinema/arduino`](webapp/README.md#formato-binario-cinemaarduino)):
    zero parsing lato ESP32, il body HTTP è già nella rappresentazione attesa dal driver.
-5. **Swap descrittore**: a download riuscito `g_cinema_desc` viene ripuntato al
-   descrittore dinamico che indica i buffer RAM; da quel momento `drawTestBackground()`
-   mostra l'immagine cinema a ogni refresh, senza altre chiamate HTTP.
+5. **Commit**: a download completo `CinemaStore::commitWrite()` scrive per ultima
+   l'intestazione dello slot (magic, sequenza, misure) e lo rende attivo; da quel
+   momento `drawTestBackground()` mostra l'immagine cinema a ogni refresh, letta dalla
+   flash mappata. Su qualunque errore `abortWrite()` lascia attivo lo slot precedente.
 6. **Esito allo scheduler**: la funzione ritorna `true`/`false`. Quando ritentare, e
    quando smettere, lo decide lo scheduler.
 
@@ -1111,10 +1114,9 @@ del modulo [`Mail.h`](Mail.h).
 
 Il fetch è un task a cadenza **giornaliera**: parte al primo giro utile dopo il boot e
 poi una volta al giorno alla prima finestra radio dell'ora `cine_h` locale
-(Europe/Rome, default `7`, allineato all'inizio della fascia WiFi). Al trigger i buffer
-vecchi vengono liberati, `g_cinema_desc` torna temporaneamente al fallback PROGMEM
-durante il download e, a fetch riuscito, vengono swappati i nuovi buffer con la
-programmazione del giorno.
+(Europe/Rome, default `7`, allineato all'inizio della fascia WiFi). Il download scrive
+lo slot libero e, a fetch riuscito, lo rende attivo con la programmazione del giorno;
+un fetch fallito lascia a schermo quella precedente.
 
 Il gate è `tm_hour >= cine_h` con `tm_yday` diverso dall'ultimo giorno servito. Il
 confronto è `>=` e non `==`, così se all'ora prevista la radio era giù il fetch si
@@ -1132,29 +1134,30 @@ mentre l'ESP32 è occupato altrove, e il fetch cinema lo trova caldo o quasi. Pi
 rendering. Il meccanismo non dipende da scheduler esterni, quindi è immune a DST e a
 deriva di cron.
 
-### Dimensionamento e PSRAM
+### Dimensionamento e partizione
 
-| Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` |
-|----------|------------------:|----------------:|------------------:|
-| 097c (610w × 290h, BWR)  | 22 330 byte | 2 | **44 660 byte** (~44 KB) |
-| 122c (610w × 325h, BWR)  | 25 025 byte | 2 | **50 050 byte** (~49 KB) |
+| Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` | Settori per slot |
+|----------|------------------:|----------------:|------------------:|-----------------:|
+| 097c (610w × 290h, BWR)  | 22 330 byte | 2 | **44 660 byte** (~44 KB) | 11 |
+| 122c (610w × 325h, BWR)  | 25 025 byte | 2 | **50 050 byte** (~49 KB) | 13 |
 
-| Configurazione board | Esito allocazione                                 |
-|----------------------|---------------------------------------------------|
-| ESP32-WROVER (PSRAM 4–8 MB) | OK per entrambe le varianti: tutti i buffer in PSRAM, heap interno libero per altro |
-| ESP32 classico senza PSRAM (come la Waveshare Driver Board, WROOM-32E) | OK su entrambe le varianti: ~44 KB sul 097c, ~49 KB sul 122c in heap interno. Verifica `ESP.getFreeHeap()` dopo la connessione WiFi |
-| Heap insufficiente | Allocazione fallita → fallback al PROGMEM, nessun crash |
+L'immagine non occupa heap: sta nella partizione dati `wallpaper` di
+[`partitions.csv`](partitions.csv), 104 KB divisi in due slot da 13 settori, ognuno
+con un'intestazione di 16 byte davanti ai due piani. Se il csv venisse tolto,
+`CinemaStore` usa la partizione `spiffs` dello schema "Minimal SPIFFS". Senza nessuna
+delle due (per esempio un dispositivo aggiornato via OTA da una tabella `no_fs`, che
+l'OTA non cambia) il task `cinema` resta sospeso e il riquadro mostra il fallback
+PROGMEM finchè non si riflasha via seriale.
 
-Il Serial monitor stampa qualcosa come, sul 097c senza PSRAM:
+Il Serial monitor stampa qualcosa come, sul 097c:
 ```
-[cinema] PSRAM assente (uso heap interno), free heap: 180 234 byte
-[cinema] black: alloc 22330 byte in heap interno (free: 180234)
-[cinema] red: alloc 22330 byte in heap interno (free: 157904)
-[cinema] download completato, immagine remappata
+[cinema] partizione wallpaper, slot da 53248 byte, immagine nello slot 0
+[cinema] fetching https://cinema-epd.onrender.com/cinema/arduino?width=610&height=290&colors=bwr&dither=floyd
+[cinema] download completato e salvato in flash
 ```
 
-Se compare `allocazione fallita` o `HTTP status XXX, fallback PROGMEM`, il display
-mostra il wallpaper di fallback: il dispositivo non crasha e la UI resta funzionante.
+Se compare `HTTP status XXX, resta l'immagine precedente`, il display continua a
+mostrare l'ultima immagine salvata, o il fallback se non ce n'è una.
 
 ---
 
@@ -1265,13 +1268,16 @@ Windows) oppure `python tools/epd_image_converter.pyw`.
    verificare che il `#define DISPLAY_VARIANT_*` in testa allo sketch
    corrisponda al pannello collegato (vedi sezione
    [Selezione del display](#selezione-del-display)).
-3. Schema partizione: **"No FS 4MB (2MB APP x2)"** nel menu *Tools →
-   Partition Scheme*. Su flash da 4 MB è quello che lascia più spazio
-   all'applicazione (1984 KB) fra gli schemi con **due slot OTA**, che
-   servono all'aggiornamento firmware via web.
+3. Schema partizione: la tabella vera è [`partitions.csv`](partitions.csv),
+   nella cartella dello sketch, che il core usa al posto dello schema scelto
+   a menu (IDE Arduino, VS Code e `build.ps1`): due slot OTA da 1920 KB per
+   l'aggiornamento via web, la partizione `wallpaper` per l'immagine cinema e
+   la coredump. Nel menu *Tools → Partition Scheme* va comunque scelto
+   **"Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)"**, il cui limite di
+   1920 KB coincide con gli slot e tiene giusto il controllo di dimensione.
 
-   Non usare "Huge APP (3MB No OTA)": ha una sola slot applicativa e
-   l'aggiornamento via web fallisce.
+   La tabella si scrive solo via seriale: il primo flash dopo un cambio del
+   csv va fatto dal cavo, perchè l'aggiornamento via web non la tocca.
 4. Compilare e flashare. Serial monitor a `115200 baud`.
 
 ---

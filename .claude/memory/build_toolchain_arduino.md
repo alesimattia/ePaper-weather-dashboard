@@ -1,6 +1,6 @@
 ---
 name: Toolchain compilazione Arduino/ESP32 su questa macchina
-description: Come compilare il firmware A:\epd da qui - installazione arduino-cli unica in C:\tmp\arduino (core esp32 3.3.11 con index filtrato, librerie, junction sketch), output su A:\tmp\arduino-build, FQBN e partizioni no_fs; più i test su host con MSVC
+description: Come compilare il firmware A:\epd da qui - installazione arduino-cli unica in C:\tmp\arduino (core esp32 3.3.11 con index filtrato, librerie, junction sketch), output su A:\tmp\arduino-build, FQBN, partitions.csv dello sketch con schema a menu min_spiffs; più i test su host con MSVC
 type: reference
 ---
 
@@ -87,7 +87,7 @@ e un `.bin` qui non servirebbe a niente. Gli oggetti intermedi in
 **Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed è il default di `build.ps1`.
 
 **La build che va sulla board la fa il Mac** con la configurazione di `.vscode/arduino.json`:
-`PartitionScheme=no_fs`, `CPUFreq=80`, `EraseFlash=all`, `PSRAM=disabled`, `LoopCore=1`,
+`PartitionScheme=min_spiffs`, `CPUFreq=80`, `EraseFlash=all`, `PSRAM=disabled`, `LoopCore=1`,
 `EventsCore=1` e altre. `build.ps1` usa i default della board (CPU a 240 MHz), quindi una verifica
 fedele si fa con `arduino-cli compile -b "esp32:esp32:esp32:<stringa configuration di
 arduino.json>"` e un build path separato (`A:\tmp\arduino-build\ePaper-weather-dashboard-mac`).
@@ -95,9 +95,9 @@ arduino.json>"` e un build path separato (`A:\tmp\arduino-build\ePaper-weather-d
 la board. `EraseFlash=all` cancella anche la NVS a ogni flash via seriale: calibrazione BSEC e
 cadenze di `/config` ripartono dai default (scelta dell'utente).
 
-**Lo schema di partizioni deve essere `no_fs`**, ed è il default dello script. Le CSV del core lo mostrano senza ambiguità: `huge_app.csv` ha la sola `app0` da 3 MB, `no_fs.csv` ha `app0` e `app1` da 1984 KB ciascuna, `default.csv` due slot da 1280 KB più SPIFFS. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]), e il firmware non usa nessun filesystem, quindi lo spazio di SPIFFS è meglio darlo alle due slot. Con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce: il guasto si manifesta solo al primo aggiornamento via web.
+**La tabella delle partizioni è `partitions.csv` nella root dello sketch**: il core la copia sopra quella dello schema a menu (hook `recipe.hooks.prebuild.3` di `platform.txt`, varianti bash e Windows), quindi vale per IDE Arduino, VS Code e `build.ps1`. Contiene `nvs` 20 KB, `otadata`, `app0`/`app1` da 1920 KB (`0x1E0000`), `wallpaper` 104 KB (dati, sottotipo `undefined`, due immagini cinema da 13 settori, vedi [[esp32_cinema_consumer]]) e `coredump` 88 KB, che prende i 24 KB lasciati liberi dall'offset di `app1`, obbligatoriamente multiplo di 64 KB (`gen_esp32part.py`: offset app allineato a `0x10000`, dimensioni a `0x1000`). Lo schema a menu resta `min_spiffs` in `build.ps1`, in `.vscode/arduino.json` e nell'IDE solo perchè il suo `upload.maximum_size` (1966080) coincide con gli slot e tiene giusto il controllo di dimensione della build. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]); con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce al primo aggiornamento via web. Un OTA non cambia la tabella: dopo una sua modifica il primo flash va fatto via seriale.
 
-Il vincolo di dimensione è quindi la slot da 1984 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero è la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in più della 097c, che sono i buffer di page più alti (96 righe invece di 84), mentre il flash è praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
+Il vincolo di dimensione è quindi lo slot da 1920 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero è la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in più della 097c, che sono i buffer di page più alti (96 righe invece di 84), mentre il flash è praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 
 **Dipendenza non ovvia:** il wallpaper di fallback in `wallpaper/` (ad esempio `img_la_grande_onda.h`) definisce il proprio `Descriptor` sotto `#ifdef _GxEPDImage_H_`, cioè la guardia dell'header che definisce il namespace, non quella di un driver. Se quella guardia tornasse a nominare un driver specifico, la build fallirebbe con `<nome>_desc was not declared` su tutte le varianti tranne una. La emette `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`, raggiungibile anche dal symlink `tools/epd_image_converter.pyw` (riga con `#ifdef _GxEPDImage_H_`), quindi va corretta lì e non solo nel file generato.
 
