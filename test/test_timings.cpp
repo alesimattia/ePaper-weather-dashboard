@@ -60,6 +60,14 @@ int main()
   Valori j = get(); j.coalesceMin = j.tuyaMin;
   ok(!applica(j, nullptr), "coalescing pari alla cadenza Tuya respinto");
 
+  // Il percorso sta sotto la Routes API a pagamento: pavimento a 5 minuti, e il
+  // coalescing non può raggiungerne la cadenza.
+  ok(get().routeMin == 10, "cadenza del percorso al default");
+  Valori k = get(); k.routeMin = 4;
+  ok(!applica(k, nullptr), "percorso sotto il pavimento respinto");
+  Valori l = get(); l.routeMin = 5; l.coalesceMin = 5;
+  ok(!applica(l, nullptr), "coalescing pari alla cadenza del percorso respinto");
+
   Valori g = get(); g.mailMin = 3;
   ok(applica(g, nullptr) && save(), "mail a 3 min: applicato e salvato");
   Timings::begin();

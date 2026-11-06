@@ -25,10 +25,15 @@ del controller dal driver custom, che su un punto era sbagliato. Driver e conseg
 
 ## Estrazione del PDF
 
-`pdftotext` **c'è**: `/mingw64/bin/pdftotext`, versione 4.00, arriva con Git for Windows ed è
-raggiungibile sia dal tool Bash sia da PowerShell (`C:\Program Files\Git\mingw64\bin\pdftotext.exe`).
-`pdftotext -layout file.pdf out.txt` funziona e basta: non serve nessuna decompressione zlib degli
+`pdftotext` **c'è su entrambe le macchine**: su Windows `/mingw64/bin/pdftotext` 4.00, con Git for
+Windows, raggiungibile dal tool Bash e da PowerShell (`C:\Program Files\Git\mingw64\bin\pdftotext.exe`);
+sul Mac `/opt/homebrew/bin/pdftotext` 26.09, con `pdfinfo` e `pdftoppm` (per vedere le figure:
+`pdftoppm -f N -l N -r 110 -png file.pdf out`, poi leggere il PNG).
+`pdftotext -layout file.pdf -` funziona e basta: non serve nessuna decompressione zlib degli
 stream nè ricostruzione per-glifo.
+
+Numerazione: il PDF del SSD1677 ha 46 pagine fisiche ma il piè di pagina dice "P x/47", quindi
+**pagina fisica = stampata − 1** (la fisica 30 è "P 31/47"). Nel SSD1683 coincidono ("P x/49").
 
 Unica cautela, la stessa dei PDF SOLUM: nella command table `-layout` **sfalsa le colonne di una
 riga**, quindi la descrizione che appare accanto a un comando può appartenere a quello precedente o
@@ -142,8 +147,8 @@ non documenta.
 
 Il POR di `0x2C` non compare nella tabella: scriverlo alla cieca è un peggioramento, e il VCOM
 dell'OTP è tarato sul film. `0x2B` serve solo a ridurre il glitch quando ACVCOM commuta, e il
-datasheet prescrive due byte fissi (nell'estrazione testuale sono illeggibili: rileggere il PDF se
-un giorno servisse).
+datasheet prescrive due byte fissi: **`0x2B` = `04 63`** (P30/47: *"Two data bytes D04h and D63h
+should be set for this command"*).
 
 ## 0x22 Display Update Control 2 — tabella parametri completa
 
@@ -260,7 +265,7 @@ mette il chip in cascade e gli fa emettere CL. Terza fonte indipendente dopo l'i
 | | | **Il SSD1683 ha due modi e li distingue la RAM**, verbatim dalla sua tabella elettrica: `Idslp_VCI1` modo 1 (A[1:0]=01) *"Retain RAM data but cannot access the RAM"*, 3 µA tipici / 5 max; `Idslp_VCI2` modo 2 (A[1:0]=11, dato `0x03` nel flusso della Figura 9-2) *"Cannot retain RAM data"*, 1 µA / 4. **MISURATO su questa 9.7": si comporta come l'SSD1683.** `0x10 = 0x01` addormenta e RITIENE la RAM, `0x10 = 0x03` addormenta e la perde, e al risveglio i due piani contengono pixel casuali nei tre colori, cioè sono indefiniti e non azzerati. La sordità la prova la stessa osservazione: mentre dorme la sonda manda un riempimento a nero di tutta la RAM B/N più un refresh, e con `0x01` al risveglio è tornata l'immagine di prima. Il risveglio costa 234 ms di reset più init. Il driver resta su `0x03` perchè il firmware rifà comunque un refresh pieno a ogni risveglio: vedi [[gxepd2_097c_driver]] |
 | `0x13` | **non esiste nella Rev 1.0** | il firmware di fabbrica lo manda **prima** di `0x10` in `epdEnterSleep()` (`unissd.cpp`), aspettando poi il BUSY, e la stessa coppia compare nel driver OEPL "Universal". Un altro indizio che il silicio è più recente del datasheet, insieme a `0x21` a due byte. Se alzi il BUSY, il comando c'è |
 | `0x12` | **SW RESET** | riporta comandi e parametri ai default di reset, **tranne `R10h`**, e alza il BUSY per 2 ms misurati. *"Note: RAM are unaffected by this command"*: il SWRESET **non** pulisce la RAM immagine, quindi non è lui a garantire uno stato noto dei piani. Riporta invece ai POR i registri di tensione `0x03`/`0x04`/`0x2C` |
-| `0x11` | Data Entry mode | A[1:0] = ID: `00` Y-- X--, `01` Y-- X++, `10` Y++ X--, `11` Y++ X++ [POR]. A[2] = AM, direzione di avanzamento del contatore dopo ogni byte: `0` in X [POR], `1` in Y. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0. Attenzione: il decremento cambia **dove atterrano i byte**, e su cosa accada all'ordine dei bit DENTRO un byte scritto **il datasheet non dice niente** — nè §8.2 nè §8.3, che danno solo il contatore "incrementato/decrementato di 1" e la finestra X "per unità di indirizzo" fino a 3BFh. Che il decremento da solo non specchi è quindi un'**inferenza**, e il codice upstream funzionante ne implica un'altra: `GxEPD2_579c_GDEY0579Z93` specchia una metà del proprio pannello con entry mode `0x02` più il remap, e `_writeDataFromImage` legge i byte in ordine naturale **senza rovesciare nè byte nè bit**. Le due si conciliano solo se sulla metà ruotata di 180° la mappatura source->vetro rovescia già i bit. Lo decide la sonda `e` di `examples/12_2c/dual_panel_finder`, con un pattern che ha struttura SOTTO il byte |
+| `0x11` | Data Entry mode | A[1:0] = ID: `00` Y-- X--, `01` Y-- X++, `10` Y++ X--, `11` Y++ X++ [POR]. A[2] = AM, direzione di avanzamento del contatore dopo ogni byte: `0` in X [POR], `1` in Y. Il driver usa `0x03`, l'init di fabbrica `0x02` (X decrescente) con finestra X 959->0. Il SSD1677 non dice cosa accada ai bit DENTRO un byte scritto (§8.2-8.3 danno solo il contatore "incrementato/decrementato di 1"), ma **il SSD1683 sì**, §8.2 P39/49: *"The pixel sequence is defined by the ID [0]"*, e la figura dà i pixel del byte in ordine **4,3,2,1 con X decrescente** e 1,2,3,4 con X crescente. Quindi l'entry mode con X decrescente **specchia X per intero, bit compresi**, ed è così che `GxEPD2_579c_GDEY0579Z93` (SSD1683) specchia una metà con `0x02` leggendo i byte in ordine naturale. In decremento la finestra X va dichiarata **XSA > XEA** (es. 959 -> 0) e il cursore `0x4E` messo a XSA, come fa l'init di fabbrica; dichiararla crescente fa uscire subito il contatore dalla finestra e non scrive niente (§8.5 *"undesirable image"*), che è l'errore della sonda `e` di `dual_panel_finder` nella sessione 3. Sul 12.2" **senza** scrivere `0x11` le scritture non arrivano al vetro: il registro dopo il reset non vale `0x03` come dice il POR ([[gxepd2_122c_driver]]) |
 | `0x14` | **HV Ready Detection** | A[6:4] = n, cool down `10ms x (n+1)`; A[2:0] = m, numero di cicli; durata massima `10ms x (n+1) x m`. `A[7:0] = 00h` fa una detection singola. Richiede **CLKEN=1 e ANALOGEN=1** (cioè power on via `0x22`=0xC0 prima). "BUSY pad will output high during detection", e "the detection will be completed when HV is ready": quindi **la durata del BUSY è l'esito**, leggibile anche senza SDO — molto più corta del massimo = alte tensioni salite, uguale al massimo = mai salite. L'esito esplicito sta in `0x2F` bit 5 |
 | `0x15` | **VCI Detection** | A[2:0] livello di soglia: `011` 2.2 V, `100` 2.3 V [POR], `101` 2.4 V, `110` 2.5 V, `111` 2.6 V. Richiede CLKEN=1 e ANALOGEN=1. BUSY alto durante la misura, esito in `0x2F` bit 4. Qui il datasheet **non** promette una conclusione anticipata, quindi la durata dice meno che in `0x14`: quello che conta è che il BUSY reagisca, cioè che il blocco analogico sia vivo |
 | `0x18` | Temperature Sensor Control | A[7:0] = `0x48` [POR] sensore esterno, `0x80` interno |
@@ -268,7 +273,7 @@ mette il chip in cascade e gli fa emettere CL. Terza fonte indipendente dopo l'i
 | `0x1B` | **Read temperature register** | frame di lettura: byte0 = A[11:4], byte1 = A[3:0] nei bit alti. `(b0<<8\|b1)>>4` dà A[11:0] |
 | `0x1C` | Temperature Sensor Control (I2C write) | |
 | `0x20` | Master Activation | esegue la sequenza di `0x22`. Alza BUSY. "User should not interrupt this operation to avoid corruption of panel images" |
-| `0x2B` | VCOM glitch control | |
+| `0x2B` | VCOM glitch control | due byte fissi `04 63`, prescritti dal datasheet |
 | `0x2E` | **User ID Read** | 10 byte di User ID da OTP (registro `R38`, byte A..J) |
 | `0x2F` | **Status Bit Read** | POR `0x01`. A[5] HV Ready flag (0 ready), A[4] VCI detect flag (0 normale), A[2] Busy flag, A[1:0] **Chip ID** [POR=01]. Qui finiscono anche gli esiti di VCI detect e HV Ready detect |
 | `0x37` | registro opzioni display, 10 byte A..J | B[7:0]..F[3:0] = bit Display Mode per ogni stadio waveform WS[35:0] (`0`=Mode 1, `1`=Mode 2); F[6] = RAM ping-pong, e il datasheet aggiunge la nota che chiude la questione: *"RAM ping-pong function is not support for Display Mode 1"*, quindi va acceso INSIEME al Mode 2 su tutti e trentasei gli stadi, F[3:0] compresi, e con una sequenza di `0x22` di Mode 2. Il primo byte, A[7:0], è **riservato e va a zero**; **G[7:0]~J[7:0] = module ID / waveform version**. Tutto memorizzabile in OTP |
@@ -304,6 +309,13 @@ Quindi `0xF7` = primo step a 1, height 680, width 960 = un unico step su tutta l
 `0x77` = lo stesso a 0. "BUSY pad will output high during operation": il pattern si attende sul
 BUSY. Il generatore emette **un livello per step**, quindi sa esprimere solo `0x00` e `0xFF`, e solo
 sui due piani immagine — qualunque altro valore passa dal bus.
+
+Il datasheet **non dice quale area riempia** (nessun riferimento a finestra `0x44`/`0x45`, cursore o
+MUX). Che i codici `111` coprano l'intera RAM 960x680 è un'inferenza dalle dimensioni, verificata
+sul vetro del 9.7" (~15 ms di BUSY, piani riempiti). **Sul 12.2" gli stessi codici NON riempiono la
+RAM visualizzata** (BUSY 1-6 ms, contenuto invariato): nel SSD1683 il codice `111` è "NA" e il pieno
+formato è `110`, quindi il codice valido dipende dal die. Su quel pannello i piani si riempiono col
+push SPI ([[gxepd2_122c_driver]]).
 
 ## I pin della cascade ci sono, dichiarati riservati
 

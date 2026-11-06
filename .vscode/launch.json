@@ -1,0 +1,38 @@
+{
+  // Debug locale del servizio routefinder (submodule in routefinder/).
+  //
+  // Le chiavi NON stanno qui, perchè .vscode è versionata: GOOGLE_MAPS_API_KEY e
+  // ROUTEFINDER_TOKEN si leggono da routefinder/.env, ignorato da git, con una
+  // riga NOME=valore ciascuna. Senza quel file il server parte lo stesso e
+  // /route risponde 503 (chiave mancante) o 401 (token mancante).
+  //
+  // Interprete: il venv di routefinder/.venv, l'unico ammesso per il servizio.
+  // Niente --reload: con il riavvio automatico il codice gira in un processo
+  // figlio e i breakpoint non si fermano in modo affidabile.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "routefinder: server (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "127.0.0.1", "--port", "8000", "--log-level", "debug"],
+      "cwd": "${workspaceFolder}/routefinder",
+      "python": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+      "envFile": "${workspaceFolder}/routefinder/.env",
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "routefinder: test (pytest)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q", "-p", "no:cacheprovider"],
+      "cwd": "${workspaceFolder}/routefinder",
+      "python": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    }
+  ]
+}

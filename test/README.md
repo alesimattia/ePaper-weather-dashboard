@@ -78,6 +78,15 @@ task di rete alla sua apertura; orologio non sincronizzato con fascia
 fail-open e giornaliera sospesa; cambio dell'ora legale; rollover di
 `millis()` a 49,7 giorni; clamp del light sleep fra 30 e 300 s.
 
+**`test_routefinder`** — parser delle coordinate "lat, lng" (segni, spazi,
+decimali oltre il sesto, fuori range, forme malformate); URL con coordinate
+negative; round-trip su NVS e ritorno ai default quando la fascia WiFi non
+contiene più la fascia del percorso; fascia ai minuti con fine esclusa,
+bordo successivo anche attraverso il cambio dell'ora legale; immagine del
+riquadro nelle quattro sorgenti e freschezza del percorso. Il test dichiara da
+sè le coordinate con `ROUTEFINDER_HOST_TEST`: con le virgolette l'include di
+`Env.h` troverebbe sempre quello vero accanto agli header del firmware.
+
 ## Cosa NON coprono
 
 Tutto ciò che richiede l'hardware: rendering del pannello, fetch HTTP reali,

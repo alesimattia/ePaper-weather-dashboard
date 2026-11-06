@@ -77,6 +77,8 @@ Struttura di `src/`: `GxEPD2_SOLUM.h` (ombrello), `GxEPD2_SOLUM_Pins.h` (pinout 
 
 **`A:\epd\webapp`**: submodule (`cinema-programmation-feed`), scraper Python + renderer che serve al firmware l'immagine cinema già ditherata, in formato raw packed header-less. Ha una propria memoria in `webapp\.claude\memory\`.
 
+**`A:\epd\routefinder`**: submodule (`RouteFinder`, branch `main`), servizio FastAPI su render.com che disegna il percorso più veloce col traffico (Google Routes API + Maps Static API) nello stesso formato della webapp; il firmware lo mostra al posto del cinema nella fascia percorso (`Routefinder.h`). `dithering.py`, `arduino_format.py` e `cache.py` sono copie della webapp da tenere allineate. Il venv sta **solo** in `routefinder\.venv` (gitignored), non in `A:\tmp\sandbox`. Logo e attribuzione Google non si coprono nè si tolgono: lo impongono i termini di Google Maps Platform.
+
 
 ## Architettura del firmware: separazione layout/logica
 

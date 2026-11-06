@@ -38,6 +38,7 @@
 #include "Clock.h"
 #include "Log.h"
 #include "Scheduler.h"
+#include "Routefinder.h"
 
 /** Nome con cui il dispositivo si annuncia su mDNS e al DHCP del router. */
 #ifndef MAINT_HOSTNAME
@@ -202,7 +203,7 @@ namespace Maintenance
 
     static const char PIEDE[] PROGMEM =
         "<hr><p><a href=/>Stato</a> | <a href=/config>Tempi</a>"
-        " | <a href=/update>Firmware</a>";
+        " | <a href=/route>Percorso</a> | <a href=/update>Firmware</a>";
 
     static const char PAGINA_UPDATE[] PROGMEM =
         "<form method=POST action=/update enctype=multipart/form-data>"
@@ -325,8 +326,13 @@ namespace Maintenance
       }
 
       bool salvato = false;
-      const char* motivo = nullptr;
-      if (proposti && Timings::applica(candidato, &motivo))
+      // La fascia del percorso vive in un altro namespace ma deve restare dentro
+      // la fascia WiFi: una fascia WiFi che non la contiene si rifiuta qui.
+      const char* motivo = proposti
+          ? Routefinder::windowOutsideRadioHours(Routefinder::get().windowStartMin,
+                                                 Routefinder::get().windowEndMin, candidato)
+          : nullptr;
+      if (proposti && motivo == nullptr && Timings::applica(candidato, &motivo))
       {
         salvato = Timings::save();
         server.sendContent_P(salvato
@@ -360,6 +366,156 @@ namespace Maintenance
                               : PSTR("<p><b>Ripristino fallito</b>"));
       chiudiPagina();
       LOG("MAINT", "config: ripristino predefiniti %s", ok ? "riuscito" : "fallito");
+    }
+
+    static const char ROUTE_TESTA_FMT[] PROGMEM =
+        "<form method=POST action=/route>"
+        "<label>Partenza (lat, lng) <input name=origin value=\"%s\" size=26 required></label><br>"
+        "<label>Arrivo (lat, lng) <input name=destination value=\"%s\" size=26 required></label>"
+        " (dal tasto destro su Google Maps)<br>"
+        "<label>Carburante <select name=fuel>";
+
+    static const char ROUTE_OPZIONE_FMT[] PROGMEM = "<option value=%u%s>%s</option>";
+
+    static const char ROUTE_SORGENTE_TESTA[] PROGMEM =
+        "</select></label><fieldset><legend>Riquadro in alto a sinistra</legend>";
+
+    static const char ROUTE_RADIO_FMT[] PROGMEM =
+        "<label><input type=radio name=source value=%u%s> %s</label><br>";
+
+    static const char ROUTE_CODA_FMT[] PROGMEM =
+        "</fieldset><label>Inizio fascia percorso <input type=time name=win_start value=%02u:%02u required></label><br>"
+        "<label>Fine fascia percorso <input type=time name=win_end value=%02u:%02u required></label>"
+        " (fine esclusa, dentro la fascia WiFi %02u:00-%02u:59)"
+        "<p><button>Salva</button></form>";
+
+    /**
+     * Pagina del percorso: partenza, arrivo, carburante, sorgente del riquadro
+     * e fascia. Nella pagina finiscono solo stringhe del firmware e numeri
+     * riformattati, mai testo arrivato dal client.
+     */
+    inline void handleRouteGet()
+    {
+      if (!autorizzato()) return;
+      proroga();
+      const Routefinder::Settings& s = Routefinder::get();
+      apriPagina("Percorso");
+      char origine[40], arrivo[40];
+      Routefinder::formatCoordinates(origine, sizeof origine, s.originLatE6, s.originLngE6);
+      Routefinder::formatCoordinates(arrivo, sizeof arrivo, s.destinationLatE6, s.destinationLngE6);
+      char riga[480];
+      int n = snprintf_P(riga, sizeof riga, ROUTE_TESTA_FMT, origine, arrivo);
+      server.sendContent(riga, (size_t)n);
+      for (uint8_t i = 0; i < Routefinder::FUEL_COUNT; ++i)
+      {
+        n = snprintf_P(riga, sizeof riga, ROUTE_OPZIONE_FMT, (unsigned)i,
+                       (uint8_t)s.fuel == i ? " selected" : "", Routefinder::fuelLabel((Routefinder::Fuel)i));
+        server.sendContent(riga, (size_t)n);
+      }
+      server.sendContent_P(ROUTE_SORGENTE_TESTA);
+      for (uint8_t i = 0; i < Routefinder::SOURCE_COUNT; ++i)
+      {
+        n = snprintf_P(riga, sizeof riga, ROUTE_RADIO_FMT, (unsigned)i,
+                       (uint8_t)s.source == i ? " checked" : "", Routefinder::sourceLabel((Routefinder::Source)i));
+        server.sendContent(riga, (size_t)n);
+      }
+      const Timings::Valori& t = Timings::get();
+      n = snprintf_P(riga, sizeof riga, ROUTE_CODA_FMT,
+                     (unsigned)(s.windowStartMin / 60), (unsigned)(s.windowStartMin % 60),
+                     (unsigned)(s.windowEndMin / 60), (unsigned)(s.windowEndMin % 60),
+                     (unsigned)t.wifiOraInizio, (unsigned)t.wifiOraFine);
+      server.sendContent(riga, (size_t)n);
+      chiudiPagina();
+    }
+
+    /** Orario "HH:MM" di un input type=time in minuti dalla mezzanotte; 24:00
+     *  vale come fine giornata, perchè la fine della fascia è esclusa. */
+    inline bool leggiOrario(const String& s, uint16_t& out)
+    {
+      if (s.length() != 5 || s[2] != ':') return false;
+      for (size_t i : {0u, 1u, 3u, 4u})
+        if (!isdigit((unsigned char)s[i])) return false;
+      const uint16_t ore = (uint16_t)((s[0] - '0') * 10 + (s[1] - '0'));
+      const uint16_t minuti = (uint16_t)((s[3] - '0') * 10 + (s[4] - '0'));
+      if (minuti > 59 || ore > 24 || (ore == 24 && minuti != 0)) return false;
+      out = (uint16_t)(ore * 60 + minuti);
+      return true;
+    }
+
+    /**
+     * Salva le impostazioni del percorso in blocco, come /config: un campo
+     * malformato si segnala e si ignora, e se la combinazione risultante non è
+     * valida non cambia niente.
+     */
+    inline void handleRoutePost()
+    {
+      if (!autorizzato()) return;
+      if (!origineValida()) { server.send(403, "text/plain", "origine non valida"); return; }
+      apriPagina("Esito");
+      server.sendContent_P(PSTR("<ul>"));
+
+      Routefinder::Settings candidato = Routefinder::get();
+      uint8_t malformati = 0;
+      auto segnala = [&](const char* campo) {
+        ++malformati;
+        char riga[96];
+        const int n = snprintf(riga, sizeof riga, "<li>%s: valore non valido, ignorato", campo);
+        server.sendContent(riga, (size_t)n);
+      };
+
+      if (server.hasArg("origin") &&
+          !Routefinder::parseCoordinates(server.arg("origin").c_str(), candidato.originLatE6, candidato.originLngE6))
+        segnala("Partenza");
+      if (server.hasArg("destination") &&
+          !Routefinder::parseCoordinates(server.arg("destination").c_str(),
+                                         candidato.destinationLatE6, candidato.destinationLngE6))
+        segnala("Arrivo");
+      uint16_t v = 0;
+      if (server.hasArg("fuel"))
+      {
+        if (leggiNumero(server.arg("fuel"), v) && v < Routefinder::FUEL_COUNT) candidato.fuel = (Routefinder::Fuel)v;
+        else segnala("Carburante");
+      }
+      if (server.hasArg("source"))
+      {
+        if (leggiNumero(server.arg("source"), v) && v < Routefinder::SOURCE_COUNT) candidato.source = (Routefinder::Source)v;
+        else segnala("Riquadro");
+      }
+      if (server.hasArg("win_start") && !leggiOrario(server.arg("win_start"), candidato.windowStartMin))
+        segnala("Inizio fascia");
+      if (server.hasArg("win_end") && !leggiOrario(server.arg("win_end"), candidato.windowEndMin))
+        segnala("Fine fascia");
+
+      const char* motivo = nullptr;
+      bool salvato = false;
+      char riga[224];
+      if (Routefinder::apply(candidato, &motivo))
+      {
+        salvato = Routefinder::save();
+        const Routefinder::Settings& s = Routefinder::get();
+        char origine[40], arrivo[40];
+        Routefinder::formatCoordinates(origine, sizeof origine, s.originLatE6, s.originLngE6);
+        Routefinder::formatCoordinates(arrivo, sizeof arrivo, s.destinationLatE6, s.destinationLngE6);
+        const int n = snprintf(riga, sizeof riga,
+                               "<li>Partenza %s<li>Arrivo %s<li>%s<li>Riquadro: %s<li>Fascia %02u:%02u-%02u:%02u",
+                               origine, arrivo, Routefinder::fuelLabel(s.fuel), Routefinder::sourceLabel(s.source),
+                               (unsigned)(s.windowStartMin / 60), (unsigned)(s.windowStartMin % 60),
+                               (unsigned)(s.windowEndMin / 60), (unsigned)(s.windowEndMin % 60));
+        server.sendContent(riga, (size_t)n);
+        server.sendContent_P(salvato
+            ? PSTR("</ul><p>Salvato, attivo dal prossimo giro senza riavvio")
+            : PSTR("</ul><p><b>Salvataggio fallito</b>: valori attivi solo fino al riavvio"));
+      }
+      else
+      {
+        const int n = snprintf(riga, sizeof riga, "</ul><p><b>Nessuna modifica applicata</b>: %s",
+                               motivo ? motivo : "combinazione non valida");
+        server.sendContent(riga, (size_t)n);
+      }
+      proroga();
+      chiudiPagina();
+      LOG("MAINT", "percorso: %u campi malformati, esito %s", (unsigned)malformati,
+          salvato ? "salvato" : (motivo ? "rifiutato" : "non salvato"));
     }
 
     /** Manda su HTTP, a blocchi, cio' che lo scheduler scrive su un Print. */
@@ -427,6 +583,8 @@ namespace Maintenance
     server.on("/config", HTTP_GET, handleConfigGet);
     server.on("/config", HTTP_POST, handleConfigPost);
     server.on("/config/reset", HTTP_POST, handleConfigReset);
+    server.on("/route", HTTP_GET, handleRouteGet);
+    server.on("/route", HTTP_POST, handleRoutePost);
     server.on("/update", HTTP_GET, handleUpdate);
   #ifdef MAINT_HTTP_PASSWORD
     updater.setup(&server, "/update", MAINT_HTTP_USER, MAINT_HTTP_PASSWORD);

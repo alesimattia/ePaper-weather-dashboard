@@ -13,15 +13,25 @@
  * partitions.csv, oppure della "spiffs" dello schema Minimal SPIFFS se il csv
  * manca: si scrive sempre lo slot inattivo e la sua intestazione per ultima,
  * quindi un download interrotto lascia valida l'immagine precedente.
- * Usato dal .ino (fetchCinemaImage, drawTestBackground, cinemaReady).
+ *
+ * Lo slot inattivo ospita anche il percorso di routefinder, con un magic suo:
+ * il cinema non si scarica mai mentre il percorso è la sorgente del riquadro,
+ * quindi scrivere il percorso non tocca l'immagine cinema attiva, che torna a
+ * schermo a fine fascia senza download. Un download del cinema lo sovrascrive.
+ * Usato dal .ino (fetch del cinema e del percorso, drawTestBackground, cinemaReady).
  * @Mattia Alesi
  */
 namespace CinemaStore
 {
+  /** Contenuto di uno slot: misura e formato sono gli stessi, cambia il magic. */
+  enum class Kind : uint8_t { Cinema, Route };
+
   namespace detail
   {
     /** Intestazione di uno slot: senza magic, o con misure diverse da quelle
-     *  del pannello montato, lo slot non contiene un'immagine utilizzabile. */
+     *  del pannello montato, lo slot non contiene un'immagine utilizzabile.
+     *  Per il percorso `sequence` porta l'epoch del download, che serve a
+     *  decidere se è ancora mostrabile. */
     struct SlotHeader
     {
       uint32_t magic;
@@ -34,6 +44,7 @@ namespace CinemaStore
     static_assert(sizeof(SlotHeader) == 16, "CinemaStore: intestazione di 16 byte");
 
     inline constexpr uint32_t SLOT_MAGIC   = 0x31445057;   // "WPD1" in little endian
+    inline constexpr uint32_t ROUTE_MAGIC  = 0x31455452;   // "RTE1" in little endian
     inline constexpr uint32_t IMAGE_OFFSET = sizeof(SlotHeader);
     inline constexpr uint32_t IMAGE_SIZE   = Layout::CINEMA_TOTAL_SZ;
 
@@ -41,28 +52,48 @@ namespace CinemaStore
     inline uint32_t                    slotSize       = 0;
     inline const uint8_t*              mapped         = nullptr;
     inline esp_partition_mmap_handle_t mapHandle      = 0;
-    inline int8_t                      activeSlot     = -1;   // -1: nessuna immagine valida
+    inline int8_t                      activeSlot     = -1;   // -1: nessuna immagine cinema valida
     inline uint32_t                    activeSequence = 0;
+    inline int8_t                      routeSlot      = -1;   // -1: nessun percorso valido
+    inline uint32_t                    routeEpoch     = 0;
     inline int8_t                      writingSlot    = -1;   // -1: nessuna scrittura in corso
+    inline Kind                        writingKind    = Kind::Cinema;
     inline uint32_t                    writtenBytes   = 0;
 
     inline GxEPDImage::Descriptor descriptor = {
+      GxEPDImage::FORMAT_BWR_1BPP, Layout::CINEMA_W, Layout::CINEMA_H, nullptr, nullptr, nullptr,
+    };
+    inline GxEPDImage::Descriptor routeDescriptor = {
       GxEPDImage::FORMAT_BWR_1BPP, Layout::CINEMA_W, Layout::CINEMA_H, nullptr, nullptr, nullptr,
     };
 
     inline uint32_t slotOffset(int8_t slot) { return (uint32_t)slot * slotSize; }
 
     /** Legge l'intestazione di uno slot; vero se descrive un'immagine con le
-     *  misure del pannello montato. */
-    inline bool readValidHeader(int8_t slot, SlotHeader& header)
+     *  misure del pannello montato e con il magic indicato. */
+    inline bool readValidHeader(int8_t slot, SlotHeader& header, uint32_t magic)
     {
       if (esp_partition_read(partition, slotOffset(slot), &header, sizeof(header)) != ESP_OK) return false;
-      return header.magic == SLOT_MAGIC && header.width == Layout::CINEMA_W &&
+      return header.magic == magic && header.width == Layout::CINEMA_W &&
              header.height == Layout::CINEMA_H && header.planes == Layout::CINEMA_PLANES;
     }
 
-    /** Mappa la partizione in memoria dati e punta il descrittore allo slot
-     *  attivo; senza mappatura o senza slot valido il descrittore resta vuoto. */
+    /** Punta un descrittore allo slot indicato, o lo svuota. */
+    inline void pointDescriptor(GxEPDImage::Descriptor& d, int8_t slot)
+    {
+      if (mapped == nullptr || slot < 0)
+      {
+        d.data0 = nullptr;
+        d.data1 = nullptr;
+        return;
+      }
+      const uint8_t* image = mapped + slotOffset(slot) + IMAGE_OFFSET;
+      d.data0 = image;
+      d.data1 = image + Layout::CINEMA_PLANE_SZ;
+    }
+
+    /** Mappa la partizione in memoria dati e punta i descrittori agli slot
+     *  attivi; senza mappatura o senza slot valido restano vuoti. */
     inline void mapActiveSlot()
     {
       if (partition == nullptr) return;
@@ -73,15 +104,8 @@ namespace CinemaStore
         mapped = nullptr;
         LOG("cinema", "mappatura della partizione fallita");
       }
-      if (mapped == nullptr || activeSlot < 0)
-      {
-        descriptor.data0 = nullptr;
-        descriptor.data1 = nullptr;
-        return;
-      }
-      const uint8_t* image = mapped + slotOffset(activeSlot) + IMAGE_OFFSET;
-      descriptor.data0 = image;
-      descriptor.data1 = image + Layout::CINEMA_PLANE_SZ;
+      pointDescriptor(descriptor, activeSlot);
+      pointDescriptor(routeDescriptor, routeSlot);
     }
 
     /** Toglie la mappatura prima di cancellare o scrivere la flash, così la
@@ -90,15 +114,16 @@ namespace CinemaStore
     {
       if (mapped != nullptr) esp_partition_munmap(mapHandle);
       mapped = nullptr;
-      descriptor.data0 = nullptr;
-      descriptor.data1 = nullptr;
+      pointDescriptor(descriptor, -1);
+      pointDescriptor(routeDescriptor, -1);
     }
   }
 
   /**
-   * Trova la partizione, sceglie lo slot valido più recente e lo mappa. Senza
-   * partizione, o con una partizione che non contiene due slot, l'archivio
-   * resta disattivato e il riquadro cinema mostra il fallback PROGMEM.
+   * Trova la partizione, sceglie lo slot cinema valido più recente, ricorda
+   * l'eventuale percorso e mappa. Senza partizione, o con una partizione che
+   * non contiene due slot, l'archivio resta disattivato e il riquadro mostra
+   * il fallback PROGMEM.
    */
   inline void begin()
   {
@@ -124,29 +149,39 @@ namespace CinemaStore
     for (int8_t slot = 0; slot < 2; ++slot)
     {
       SlotHeader header;
-      if (readValidHeader(slot, header) && (activeSlot < 0 || header.sequence > activeSequence))
+      if (readValidHeader(slot, header, SLOT_MAGIC) && (activeSlot < 0 || header.sequence > activeSequence))
       {
         activeSlot = slot;
         activeSequence = header.sequence;
       }
+      else if (readValidHeader(slot, header, ROUTE_MAGIC))
+      {
+        routeSlot = slot;
+        routeEpoch = header.sequence;
+      }
     }
     mapActiveSlot();
-    LOG("cinema", "partizione %s, slot da %lu byte, immagine %s",
+    LOG("cinema", "partizione %s, slot da %lu byte, immagine %s, percorso %s",
         partition->label, (unsigned long)slotSize,
-        activeSlot < 0 ? "assente" : (activeSlot == 0 ? "nello slot 0" : "nello slot 1"));
+        activeSlot < 0 ? "assente" : (activeSlot == 0 ? "nello slot 0" : "nello slot 1"),
+        routeSlot < 0 ? "assente" : "presente");
   }
 
   /** Vero se esiste la partizione dove salvare l'immagine. */
   inline bool isAvailable() { return detail::partition != nullptr; }
 
-  /** Descrittore dell'immagine salvata, nullptr se non ce n'è una valida o se
-   *  è in corso una scrittura. */
-  inline const GxEPDImage::Descriptor* image()
+  /** Descrittore dell'immagine salvata del tipo indicato, nullptr se non ce
+   *  n'è una valida o se è in corso una scrittura. */
+  inline const GxEPDImage::Descriptor* image(Kind kind = Kind::Cinema)
   {
-    return detail::descriptor.data0 != nullptr ? &detail::descriptor : nullptr;
+    const GxEPDImage::Descriptor& d = kind == Kind::Cinema ? detail::descriptor : detail::routeDescriptor;
+    return d.data0 != nullptr ? &d : nullptr;
   }
 
-  /** Rinuncia alla scrittura in corso e torna a mostrare lo slot attivo. */
+  /** Epoch del download del percorso salvato, 0 se non ce n'è uno. */
+  inline uint32_t routeDownloadedAt() { return detail::routeSlot >= 0 ? detail::routeEpoch : 0; }
+
+  /** Rinuncia alla scrittura in corso e torna a mostrare gli slot attivi. */
   inline void abortWrite()
   {
     detail::writingSlot = -1;
@@ -154,17 +189,21 @@ namespace CinemaStore
   }
 
   /**
-   * Prepara lo slot inattivo per una nuova immagine cancellandone i settori
-   * necessari: va chiamata prima di aprire la connessione, perchè l'erase
-   * ferma la cache della flash per circa mezzo secondo.
+   * Prepara lo slot inattivo del cinema per una nuova immagine cancellandone i
+   * settori necessari: va chiamata prima di aprire la connessione, perchè
+   * l'erase ferma la cache della flash per circa mezzo secondo. Cinema e
+   * percorso scrivono lo stesso slot, quindi il percorso che ci stava è perso
+   * da qui in avanti, comunque finisca la scrittura.
    */
-  inline bool beginWrite()
+  inline bool beginWrite(Kind kind = Kind::Cinema)
   {
     using namespace detail;
     if (partition == nullptr) return false;
     unmap();
     writingSlot = (activeSlot == 0) ? 1 : 0;
+    writingKind = kind;
     writtenBytes = 0;
+    if (routeSlot == writingSlot) { routeSlot = -1; routeEpoch = 0; }
     const uint32_t erase = (IMAGE_OFFSET + IMAGE_SIZE + partition->erase_size - 1)
                            / partition->erase_size * partition->erase_size;
     if (esp_partition_erase_range(partition, slotOffset(writingSlot), erase) != ESP_OK)
@@ -190,10 +229,11 @@ namespace CinemaStore
 
   /**
    * Chiude la scrittura con l'intestazione, scritta per ultima perchè è lei a
-   * rendere valido lo slot, e lo rende quello attivo. Un'immagine incompleta
-   * viene scartata e resta attivo lo slot precedente.
+   * rendere valido lo slot. Un cinema diventa l'immagine attiva; un percorso
+   * resta accanto al cinema attivo, che non cambia, con `downloadedAt` come
+   * istante del download. Un'immagine incompleta viene scartata.
    */
-  inline bool commitWrite()
+  inline bool commitWrite(uint32_t downloadedAt = 0)
   {
     using namespace detail;
     if (writingSlot < 0 || writtenBytes != IMAGE_SIZE)
@@ -201,9 +241,10 @@ namespace CinemaStore
       abortWrite();
       return false;
     }
+    const bool isRoute = writingKind == Kind::Route;
     const SlotHeader header = {
-      SLOT_MAGIC, activeSequence + 1, (uint16_t)Layout::CINEMA_W, (uint16_t)Layout::CINEMA_H,
-      (uint8_t)Layout::CINEMA_PLANES, {0, 0, 0},
+      isRoute ? ROUTE_MAGIC : SLOT_MAGIC, isRoute ? downloadedAt : activeSequence + 1,
+      (uint16_t)Layout::CINEMA_W, (uint16_t)Layout::CINEMA_H, (uint8_t)Layout::CINEMA_PLANES, {0, 0, 0},
     };
     if (esp_partition_write(partition, slotOffset(writingSlot), &header, sizeof(header)) != ESP_OK)
     {
@@ -211,8 +252,16 @@ namespace CinemaStore
       abortWrite();
       return false;
     }
-    activeSlot = writingSlot;
-    activeSequence = header.sequence;
+    if (isRoute)
+    {
+      routeSlot = writingSlot;
+      routeEpoch = downloadedAt;
+    }
+    else
+    {
+      activeSlot = writingSlot;
+      activeSequence = header.sequence;
+    }
     writingSlot = -1;
     mapActiveSlot();
     return true;

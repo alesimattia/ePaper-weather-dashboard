@@ -22,8 +22,23 @@
 
 /** API key personale registrata su https://openweathermap.org/api */
 #define OWM_API_KEY     ""
-#define LAT             40.0000f 
+#define LAT             40.0000f
 #define LON             10.0000f
+
+/**
+ * Percorso del mattino calcolato dal servizio routefinder. Partenza e arrivo
+ * sono i default: la pagina /route della finestra di manutenzione li
+ * sovrascrive in NVS. Senza ROUTEFINDER_ORIGIN_* la partenza è LAT/LON; un
+ * arrivo a 0,0 o un token al placeholder sospendono il solo percorso.
+ *
+ * ROUTEFINDER_TOKEN è lo stesso valore della variabile ROUTEFINDER_TOKEN del
+ * servizio su render.com: protegge le API Google a pagamento.
+ */
+#define ROUTEFINDER_ORIGIN_LAT      LAT
+#define ROUTEFINDER_ORIGIN_LON      LON
+#define ROUTEFINDER_DESTINATION_LAT 0.0f
+#define ROUTEFINDER_DESTINATION_LON 0.0f
+#define ROUTEFINDER_TOKEN           "paste_token_here"
 
 /**
  * Credenziali della rete AP nel caso di rete internet assente.

@@ -93,6 +93,14 @@
 #endif
 #define TUYA_PUBLISH_MIN_FLOOR (BSEC_PERIODO_ULP_S / 60)
 
+/** Percorso del mattino da routefinder, solo dentro la fascia percorso. Il
+ *  pavimento tiene le chiamate alla Routes API, a pagamento oltre la soglia
+ *  gratuita, vicine alla cadenza con cui il traffico cambia davvero. */
+#ifndef ROUTE_FETCH_MIN
+  #define ROUTE_FETCH_MIN 10
+#endif
+#define ROUTE_FETCH_MIN_FLOOR 5
+
 /**
  * Finestra di coalescing: con la radio gia' accesa vengono eseguiti anche i
  * task che scadrebbero entro questo margine, cosi' scadenze vicine
@@ -182,6 +190,17 @@
 /** Timeout HTTP del download dell'immagine cinema: margine per il cold start
  *  del free tier render.com, misurato in una ventina di secondi. */
 #define CINEMA_HTTP_TIMEOUT_MS 45000UL
+
+/** Timeout HTTP del download del percorso: stesso free tier render.com del
+ *  cinema, più la latenza della Routes API in TRAFFIC_AWARE_OPTIMAL. */
+#define ROUTE_HTTP_TIMEOUT_MS 45000UL
+
+/** Età oltre la quale un percorso non si mostra, in multipli della cadenza con
+ *  la sorgente Automatica e in secondi con la sorgente forzata a Percorso: un
+ *  tempo stimato vecchio è un'informazione sbagliata, e i termini Google non
+ *  consentono di conservare a lungo i contenuti della mappa. */
+#define ROUTE_MAX_AGE_CADENCES 3
+#define ROUTE_FORCED_MAX_AGE_S 3600L
 
 /** Attesa massima della RISPOSTA al ping di sveglia del server cinema, non
  *  della connessione: l'handshake ha il suo tetto, TLS_HANDSHAKE_TIMEOUT_S,
@@ -292,6 +311,8 @@ static_assert(MAIL_GOOGLE_FETCH_MIN >= MAIL_GOOGLE_FETCH_MIN_FLOOR &&
               "MAIL_GOOGLE_FETCH_MIN fuori dai limiti");
 static_assert(TUYA_PUBLISH_MIN >= TUYA_PUBLISH_MIN_FLOOR && TUYA_PUBLISH_MIN <= CADENZA_MAX_MIN,
               "sotto il pavimento il publish Tuya ripubblica lo stesso campione BSEC");
+static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CADENZA_MAX_MIN,
+              "ROUTE_FETCH_MIN fuori dai limiti");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,
               "OTA_WINDOW_MIN fuori dai limiti");
 static_assert(FETCH_COALESCE_MIN >= FETCH_COALESCE_MIN_FLOOR,
@@ -300,7 +321,8 @@ static_assert(FETCH_COALESCE_MIN < WEATHER_FORECAST_FETCH_MIN &&
                   FETCH_COALESCE_MIN < CAL_OUTLOOK_FETCH_MIN &&
                   FETCH_COALESCE_MIN < CAL_GOOGLE_FETCH_MIN &&
                   FETCH_COALESCE_MIN < MAIL_GOOGLE_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < TUYA_PUBLISH_MIN,
+                  FETCH_COALESCE_MIN < TUYA_PUBLISH_MIN &&
+                  FETCH_COALESCE_MIN < ROUTE_FETCH_MIN,
               "coalescing >= cadenza: il task partirebbe a ogni accensione della radio");
 static_assert(WIFI_ACTIVE_HOUR_START <= WIFI_ACTIVE_HOUR_END && WIFI_ACTIVE_HOUR_END <= 23,
               "fascia oraria WiFi non valida");
@@ -350,6 +372,7 @@ namespace Timings
     uint16_t wifiOraInizio;
     uint16_t wifiOraFine;
     uint16_t cinemaOra;
+    uint16_t routeMin;
   };
 
   inline constexpr Valori PREDEFINITI = {
@@ -364,6 +387,7 @@ namespace Timings
       WIFI_ACTIVE_HOUR_START,
       WIFI_ACTIVE_HOUR_END,
       CINEMA_DAILY_FETCH_HOUR,
+      ROUTE_FETCH_MIN,
   };
 
   /**
@@ -414,8 +438,10 @@ namespace Timings
          &Valori::wifiOraInizio, 0, 23, WIFI_ACTIVE_HOUR_START},
         {"wifi_h_fin", "Fine fascia WiFi",                          "ora",
          &Valori::wifiOraFine, 0, 23, WIFI_ACTIVE_HOUR_END},
-        {"cine_h",     "Ora del fetch cinema",                      "ora",
+        {"cine_h",     "Ora del fetch cinema (in fascia percorso slitta alla sua fine)", "ora",
          &Valori::cinemaOra, 0, 23, CINEMA_DAILY_FETCH_HOUR},
+        {"route_min",  "Percorso, dentro la fascia percorso",       "min",
+         &Valori::routeMin, ROUTE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, ROUTE_FETCH_MIN},
     };
 
     inline constexpr size_t N_CAMPI = sizeof(CAMPI) / sizeof(CAMPI[0]);
@@ -445,7 +471,7 @@ namespace Timings
         return "l'ora del fetch cinema cade fuori dalla fascia WiFi";
       if (v.coalesceMin >= v.owmMin || v.coalesceMin >= v.outlookMin ||
           v.coalesceMin >= v.googleMin || v.coalesceMin >= v.mailMin ||
-          v.coalesceMin >= v.tuyaMin)
+          v.coalesceMin >= v.tuyaMin || v.coalesceMin >= v.routeMin)
         return "il coalescing e' maggiore o uguale a una cadenza di fetch";
       if ((uint32_t)v.displayRefreshMin * 60UL < DISPLAY_REFRESH_PIENO_S)
         return "il refresh del display e' piu' breve della durata di un refresh";
