@@ -30,6 +30,10 @@ Lo sketch principale compone uno schermo completo con:
   scaricato una volta al giorno e salvato in flash, dove sopravvive al reboot.
   Finchè non c'è un'immagine scaricata si usa il fallback PROGMEM in
   [`wallpaper/`](wallpaper/). Vedi [Background cinema](#background-cinema);
+- **percorso del mattino** al posto del cinema nella fascia 07:00-09:00: mappa con il
+  tracciato più veloce col traffico e il riquadro con tempo stimato, ritardo e
+  distanza, calcolati dal servizio [`routefinder/`](routefinder/) con le API Google.
+  Vedi [Routefinder](#routefinder-routefinderh);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
   bordo): **Interno** (BME680: T/RH/IAQ/pressione), **Meteo** (meteo corrente
   OWM + colonna sole con alba/tramonto, barra temp-range e mini-grafico
@@ -363,6 +367,11 @@ dominio non-sensibili stanno nei moduli consumer: `CLOCK_POSIX_TZ`
 #define TUYA_DEVICE_ID     "paste_device_id_here"
 #define TUYA_DEVICE_SECRET "paste_device_secret_here"
 
+/* --- Percorso del mattino (servizio routefinder) --- */
+#define ROUTEFINDER_DESTINATION_LAT 43.5000f
+#define ROUTEFINDER_DESTINATION_LON 13.3000f
+#define ROUTEFINDER_TOKEN           "paste_token_here"
+
 #endif
 ```
 
@@ -453,6 +462,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
 | Posta Gmail | `runMailFetch()` | [Mail::runFetch()](Mail.h), che chiama `refreshToken()`, `fetchMessageIds()` e `parseBatchPart()` | Celle della posta (mittente, oggetto troncato a 60 caratteri, data) |
 | Banner cinema | `runCinemaFetch()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp e salvato in flash da [CinemaStore](CinemaStore.h). Se manca, c'è il fallback PROGMEM |
+| Percorso del mattino | `runRouteFetch()` | [fetchRouteImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmRouteServer()](ePaper-weather-dashboard.ino) | Stesso formato del cinema, scaricato da routefinder nello slot inattivo di [CinemaStore](CinemaStore.h); al suo posto nel riquadro secondo [Routefinder](Routefinder.h) |
 
 #### Isolamento dei produttori
 
@@ -734,10 +744,12 @@ l'ultima richiesta.
 | `/config` | GET | form dei tempi, con minimo e predefinito accanto a ogni campo |
 | `/config` | POST | valida i campi ricevuti e li salva su NVS |
 | `/config/reset` | POST | cancella gli override e torna ai valori compilati |
+| `/route` | GET | form del percorso: partenza, arrivo, carburante, sorgente del riquadro, fascia |
+| `/route` | POST | valida e salva su NVS, in blocco come `/config` |
 | `/update` | GET / POST | pagina di upload e POST gestito da `HTTPUpdateServer` |
 
-Tutte le pagine hanno la stessa testa e in basso i collegamenti a `/`, `/config` e
-`/update`. Fa eccezione l'esito dell'upload, generato da `HTTPUpdateServer`:
+Tutte le pagine hanno la stessa testa e in basso i collegamenti a `/`, `/config`,
+`/route` e `/update`. Fa eccezione l'esito dell'upload, generato da `HTTPUpdateServer`:
 in caso di successo torna a `/` da sè dopo il riavvio.
 
 **Tempi da riga di comando.** I nomi dei campi POST di `/config` sono le **chiavi NVS**
@@ -780,6 +792,40 @@ controllo dell'origine sulle POST. Non ci sono HTTPS nè token.
 mDNS pesa ~34 KB di flash: si spegne con `MAINT_MDNS 0` e il dispositivo resta
 raggiungibile per indirizzo IP.
 
+### Routefinder (`Routefinder.h`)
+
+Il riquadro in alto a sinistra mostra il **percorso del mattino** al posto del cinema.
+L'immagine la calcola il servizio [`routefinder/`](routefinder/) (submodule, FastAPI su
+render.com come la webapp): percorso più veloce col traffico dalla Google Routes API,
+alternativa a minor consumo per il carburante scelto, mappa Google con il tracciato in
+rosso e un riquadro in alto a destra con tempo stimato, ritardo dovuto al traffico,
+distanza e ora del calcolo, negli stessi font del pannello. Il firmware la riceve nel
+formato di `/cinema/arduino`, alla misura `CINEMA_W × CINEMA_H`.
+
+Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespace
+`routefinder`), con i default da `Env.h`:
+
+| Campo | Default | Note |
+|---|---|---|
+| Partenza, arrivo | `ROUTEFINDER_ORIGIN_*` (o `LAT`/`LON`), `ROUTEFINDER_DESTINATION_*` | "lat, lng" come li copia Google Maps; arrivo a 0,0 = percorso sospeso |
+| Carburante | Benzina | Benzina, Diesel, Ibrido, Elettrico |
+| Riquadro | Automatica | Automatica (percorso in fascia, cinema fuori), Cinema, Percorso, Wallpaper (`la_grande_onda`) |
+| Fascia | 07:00-09:00 | ai minuti, fine esclusa, dentro la fascia WiFi |
+
+La cadenza è `route_min` in `/config` (10 min, pavimento 5).
+
+**Cinema e percorso condividono la flash.** Il percorso si scrive nello slot inattivo
+di [CinemaStore](CinemaStore.h), con un magic suo e l'istante del download: è possibile
+perchè **in fascia il cinema non si scarica mai** (`cinemaReady()`), quindi l'immagine
+cinema attiva resta intatta e torna a schermo a fine fascia senza download. Un `cine_h`
+dentro la fascia slitta alla sua fine grazie al recupero in giornata della cadenza
+giornaliera. Nessuna modifica a `partitions.csv`.
+
+**Freschezza.** Con la sorgente Automatica il percorso si mostra solo se ha meno di
+3 × `route_min`, con la sorgente Percorso al massimo un'ora; poi torna il cinema. Un
+tempo stimato vecchio è un'informazione sbagliata, e i termini Google non consentono di
+conservare a lungo i contenuti della mappa.
+
 ---
 
 ## Sketch principale
@@ -796,6 +842,7 @@ void setup()
 {
   Serial.begin(115200);
   Timings::begin();                          // cadenze da NVS, riportate entro i limiti
+  Routefinder::begin();                      // impostazioni del percorso, validate contro la fascia WiFi
   initDisplay();
   Clock::begin();                            // POSIX TZ Europe/Rome + DST
   Weather::begin();
@@ -804,7 +851,7 @@ void setup()
   Mail::begin();                             // cache mail Gmail (vuota al boot)
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
-  CinemaStore::begin();                      // immagine cinema salvata in flash, se c'è
+  CinemaStore::begin();                      // immagine cinema e percorso salvati in flash, se ci sono
   Maintenance::begin();                      // finestra su rete di casa, AP di riserva
   Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
 }
@@ -836,7 +883,9 @@ definito:
 | `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | sì | `outl_min` | Stessa precondizione di `google`. |
 | `tuya` | sì | `tuya_min` | Telemetria BME680 sul cloud Tuya. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
-| `cinema` | sì | giornaliera, `cine_h` | Ultimo perchè è l'unico che può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. Sospeso senza la partizione `wallpaper`. |
+| `route` | sì | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso fuori dalla sorgente percorso, senza orologio, arrivo o token. All'ingresso nella sorgente percorso riparte subito. Ping di sveglia a inizio giro come il cinema. |
+| `cinema` | sì | giornaliera, `cine_h` | Ultimo perchè può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. Sospeso senza la partizione `wallpaper` e mentre il percorso è la sorgente del riquadro. |
+| `source` | no | ai bordi della fascia | Chiede il ridisegno quando il riquadro deve cambiare immagine (ingresso e uscita dalla fascia, percorso invecchiato, sorgente cambiata da `/route`); sveglia il dispositivo esattamente ai bordi. |
 | `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
 | `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
 
@@ -933,7 +982,8 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | `maint_min` | `3` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | ora | Inizio della fascia in cui la radio può accendersi. |
 | `wifi_h_fin` | `23` | `23` max | ora | Fine della fascia, inclusiva fino a `23:59`. |
-| `cine_h` | `7` | `0` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi. |
+| `cine_h` | `7` | `0` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi; dentro la fascia percorso il fetch slitta alla sua fine. |
+| `route_min` | `10` | `5` | min | Cadenza del percorso del mattino, solo dentro la fascia percorso. Il pavimento tiene basse le chiamate alla Routes API. |
 
 Vincoli incrociati, verificati sia a compile-time sui default sia a runtime
 su ogni modifica: inizio fascia ≤ fine fascia; ora cinema dentro la fascia;
@@ -1041,6 +1091,7 @@ Ogni esito è loggato con durata e prossima scadenza:
 | Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Fra 30 s |
 | Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata** e ridisegno richiesto: è una risposta valida, non un errore | Alla cadenza piena |
 | Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
+| Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Fino a 2 tentativi a 30 s di distanza, poi alla cadenza `route_min` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
 | BME680 (init failed) | `Indoor::refresh()` no-op, riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |

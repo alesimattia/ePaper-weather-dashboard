@@ -5,3 +5,7 @@
 	path = GxEPD2_SOLUM_ESL
 	url = https://github.com/alesimattia/GxEPD2_SOLUM_ESL.git
 	branch = main
+[submodule "routefinder"]
+	path = routefinder
+	url = https://github.com/alesimattia/RouteFinder
+	branch = main

@@ -59,7 +59,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $falliti = 0
 
-foreach ($nome in @('test_timings', 'test_scheduler'))
+foreach ($nome in @('test_timings', 'test_scheduler', 'test_routefinder'))
 {
 	Write-Host "── $nome ─────────────────────────────────────────────────────"
 

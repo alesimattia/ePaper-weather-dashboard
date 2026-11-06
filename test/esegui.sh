@@ -19,7 +19,7 @@ trap 'rm -rf "$OUT"' EXIT
 FLAGS="-std=gnu++20 -Istub -I.. -Wall -Wextra -Wno-format-security -Wno-unused-parameter"
 
 falliti=0
-for t in test_timings test_scheduler; do
+for t in test_timings test_scheduler test_routefinder; do
   echo "── $t ─────────────────────────────────────────────────────────"
   if ! g++ $FLAGS -o "$OUT/$t" "$t.cpp"; then
     echo "compilazione FALLITA"; falliti=$((falliti+1)); continue

@@ -17,9 +17,11 @@ type: project
 | 2 | google | sì | `goog_min` | `preconditionsMet` = `googleReady()` (orologio + credenziali); il token è quello appena rinfrescato da mail |
 | 3 | outlook | sì | `outl_min` | `preconditionsMet` = `outlookReady()` (orologio + credenziali) |
 | 4 | tuya | sì | `tuya_min` | `preconditionsMet` = credenziali + campione BSEC valido + orologio sincronizzato; `maxAttempts = 0`; `runsOutsideRadioHours = TUYA_IGNORE_ACTIVE_HOUR`; prima del cinema, così il suo handshake TLS è altra copertura del boot di render |
-| 5 | cinema | sì | DAILY `cine_h` | ultimo: è l'unico che può pagare il cold start, e il tempo degli altri è la copertura. `preconditionsMet` = `cinemaReady()` (partizione del wallpaper presente); il suo `onRoundStart()` è il ping di sveglia |
-| 6 | bsec | no | custom, `Indoor::msUntilNextPoll()` | `preconditionsMet` = `Indoor::attivo` (senza sensore il task è sospeso); `onOutcome` = `onIndoorOutcome()`, che chiede il ridisegno solo dentro la fascia WiFi; **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
-| 7 | display | no | `disp_min` come **rate limit** | `preconditionsMet` = `Weather::sporco() && isFirstFrameAllowed()` |
+| 5 | route | sì | `route_min`, solo in sorgente percorso | `preconditionsMet` = `routeReady()`, che rimette `neverRun` all'ingresso nella sorgente; `onRoundStart` = ping di sveglia di routefinder. Mai nello stesso giro del cinema. Vedi [[routefinder_morning_route]] |
+| 6 | cinema | sì | DAILY `cine_h` | ultimo: può pagare il cold start, e il tempo degli altri è la copertura. `preconditionsMet` = `cinemaReady()` (partizione del wallpaper presente e percorso non attivo); il suo `onRoundStart()` è il ping di sveglia |
+| 7 | source | no | custom, `msUntilSourceCheck()` | chiede il ridisegno quando l'immagine del riquadro deve cambiare; prima del display |
+| 8 | bsec | no | custom, `Indoor::msUntilNextPoll()` | `preconditionsMet` = `Indoor::attivo` (senza sensore il task è sospeso); `onOutcome` = `onIndoorOutcome()`, che chiede il ridisegno solo dentro la fascia WiFi; **prima del display**, così un campione appena prodotto entra nel frame dello stesso giro |
+| 9 | display | no | `disp_min` come **rate limit** | `preconditionsMet` = `Weather::sporco() && isFirstFrameAllowed()` |
 
 **Il giro ha due fasi**, e in ciascuna gli `onRoundStart()` di *tutti* i task dovuti girano prima di *qualunque* `run()`. È questo che dà al ping del cinema la sua copertura: parte all'inizio, e render fa boot mentre l'ESP32 è occupato con gli altri fetch. Con `preconditionsMet()` falso il task non è dovuto, quindi nemmeno il suo `onRoundStart()` parte.
 

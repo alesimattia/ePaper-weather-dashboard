@@ -428,8 +428,11 @@ limite fisico del bus), non misurate a oscilloscopio: per numeri veri serve una 
   la RAM nativa: `0xF7` riempie di 1, `0x77` di 0. Un byte sul bus invece di 80.640, ~15 ms invece
   di ~65. Il generatore emette un livello per step, quindi copre solo i valori a bit uniformi
   (`0x00` / `0xFF`) e solo i due piani immagine: per `0x28` e per qualsiasi altro valore
-  `_writeScreenBuffer` ripiega sul transfer SPI in bulk. Il pattern ignora la finestra di
-  `0x44`/`0x45` e riempie tutti i 960x680; le 8 gate line oltre la 672 non vengono mai scandite.
+  `_writeScreenBuffer` ripiega sul transfer SPI in bulk. Il datasheet non dice quale area il pattern
+  riempia; che i codici `111` coprano tutti i 960x680, a prescindere dalla finestra `0x44`/`0x45`, è
+  un'inferenza dalle dimensioni, confermata sul vetro di questo pannello. Le 8 gate line oltre la 672
+  non vengono mai scandite. Sul 12.2" gli stessi codici non riempiono niente: il fix non è
+  portabile là ([[gxepd2_122c_driver]]).
 - dirty flag `_color_dirty`: il cleanup accent viene saltato quando non serve (tipico sulle catene
   di frame B/N). Costa 8-9 ms, perchè `0x26` si pulisce col pattern hardware.
 - `hibernate()` idempotente, azzera i due flag di `0x26` (`_color_dirty` e
@@ -450,10 +453,10 @@ limite fisico del bus), non misurate a oscilloscopio: per numeri veri serve una 
 **Fonti archiviate in `A:\epd\GxEPD2_SOLUM_ESL\docs\`** (versionate nel submodule, così le
 conclusioni sono riverificabili senza rifare le ricerche):
 
-- `SSD1677_Rev1.0_2018-11_Solomon-Systech.pdf` — 47 pagine, command table completa. Estrarre con
+- `SSD1677_Rev1.0_2018-11_Solomon-Systech.pdf` — 46 pagine fisiche, numerate "P x/47" (fisica = stampata − 1), command table completa. Estrarre con
   `pdftotext -layout`; la command table esce con le colonne sfalsate, va letta con attenzione.
-  `pdftotext` non c'è su questa macchina: metodo alternativo e contenuto già estratto in
-  [[ssd1677_command_set]], da consultare prima di riaprire il PDF
+  `pdftotext` c'è su entrambe le macchine (percorsi in [[ssd1677_command_set]]), dove sta anche il
+  contenuto già estratto, da consultare prima di riaprire il PDF
 - `Newton-PRO_Data-sheet_C-Lab_G_240320.pdf` — 53 pagine, datasheet ufficiale generazione F6:
   label marking e decodifica del codice modello, dimensioni per taglia, batterie, radio
 - `Newton-Pro_Specifications.pdf`, `Newton-Core_Specifications.pdf` — pagine di catalogo

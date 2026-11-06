@@ -1,0 +1,91 @@
+{
+  // Debug locale del servizio routefinder (submodule in routefinder/).
+  //
+  // Le chiavi NON stanno qui, perchè .vscode è versionata: GOOGLE_MAPS_API_KEY e
+  // ROUTEFINDER_TOKEN si leggono da routefinder/.env, ignorato da git, con una
+  // riga NOME=valore ciascuna. Senza quel file il server parte lo stesso e
+  // /route risponde 503 (chiave mancante) o 401 (token mancante).
+  //
+  // Interprete: il venv di routefinder/.venv, l'unico ammesso per il servizio,
+  // per tutto il debug: "python" è il programma, "debugAdapterPython" e
+  // "debugLauncherPython" sono adattatore e launcher di debugpy, che senza
+  // userebbero l'interprete selezionato nell'estensione Python (per esempio
+  // quello di sistema o il venv della webapp). bin/python su macOS e Linux,
+  // Scripts\python.exe su Windows (proprietà "windows", che VS Code applica solo lì).
+  // Niente --reload: con il riavvio automatico il codice gira in un processo
+  // figlio e i breakpoint non si fermano in modo affidabile.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "routefinder: server (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "127.0.0.1", "--port", "8000", "--log-level", "debug"],
+      "cwd": "${workspaceFolder}/routefinder",
+      "python": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe"
+      },
+      "envFile": "${workspaceFolder}/routefinder/.env",
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "routefinder: test (pytest)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q", "-p", "no:cacheprovider"],
+      "cwd": "${workspaceFolder}/routefinder",
+      "python": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe"
+      },
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    // Ferma ogni uvicorn in ascolto sulla porta 8000, quella del server qui sopra,
+    // anche se avviato fuori da VS Code: la sessione di debug collegata si chiude da
+    // sè. La porta, e non la riga di comando, perchè su macOS il processo appare col
+    // Python di Homebrew e non col percorso del venv. Solo libreria standard.
+    {
+      "name": "routefinder: ferma tutto",
+      "type": "debugpy",
+      "request": "launch",
+      "code": [
+        "import os, signal, subprocess",
+        "PORT = 8000",
+        "if os.name == 'nt':",
+        "    ps = ('$ids = (Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue).OwningProcess; '",
+        "          'Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ProcessId -and $_.CommandLine -like \"*uvicorn*\" } | '",
+        "          'ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }') % PORT",
+        "    stopped = subprocess.run(['powershell', '-NoProfile', '-Command', ps], capture_output=True, text=True).stdout.split()",
+        "else:",
+        "    stopped = []",
+        "    for pid in subprocess.run(['lsof', '-nP', '-t', '-iTCP:%d' % PORT, '-sTCP:LISTEN'], capture_output=True, text=True).stdout.split():",
+        "        if 'uvicorn' in subprocess.run(['ps', '-o', 'command=', '-p', pid], capture_output=True, text=True).stdout:",
+        "            os.kill(int(pid), signal.SIGTERM)",
+        "            stopped.append(pid)",
+        "print('Fermati i processi ' + ', '.join(stopped) if stopped else 'Nessun server uvicorn in ascolto sulla porta %d' % PORT)"
+      ],
+      "python": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugAdapterPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe",
+        "debugLauncherPython": "${workspaceFolder}/routefinder/.venv/Scripts/python.exe"
+      },
+      "console": "internalConsole"
+    }
+  ]
+}

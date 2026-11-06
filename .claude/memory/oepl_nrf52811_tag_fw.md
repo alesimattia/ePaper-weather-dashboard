@@ -4,9 +4,10 @@ description: Cosa si ricava dal repo OpenEPaperLink/Tag_FW_nRF52811, che è il f
 type: reference
 ---
 
-Repo <https://github.com/OpenEPaperLink/Tag_FW_nRF52811>. Conta perchè è il firmware della
-**famiglia di tag dei pannelli di questo progetto**: la scheda del 12.2" PRO monta un nRF52811
-([[gxepd2_122c_driver]]). Sorgenti archiviati in
+Repo <https://github.com/OpenEPaperLink/Tag_FW_nRF52811>. È il firmware dei tag Newton M3 col
+nRF52811, come il 12.2" PRO delle pratiche FCC. **Non è la famiglia del 12.2" del progetto**
+(`EL122R2CRN`, R2 su RTL8762ESL: firmware di riferimento quelli di atc1441/Strizzi74, vedi
+[[gxepd2_122c_driver]]); resta il riferimento per la semantica `dualssd` e per l'init `unissd`. Sorgenti archiviati in
 `A:\epd\GxEPD2_SOLUM_ESL\docs\openepaperlink\nrf52811_tag_fw\` (`dualssd.cpp/.h`, `unissd.cpp`,
 `epd_spi.cpp/.h`, `HAL_Newton_M3.h`, `tagtype_db.cpp`); analisi discorsiva in
 `docs\fonti_esterne.md`. Da non confondere con `docs\openepaperlink\oepl_display_driver_unissd.c`,

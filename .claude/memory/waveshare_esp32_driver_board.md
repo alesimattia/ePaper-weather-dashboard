@@ -1,6 +1,6 @@
 ---
 name: Waveshare E-Paper ESP32 Driver Board V3 (hardware di bring-up)
-description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper, HSPI con SCK e MOSI scambiati, MISO dummy perchè il FPC non ha SDO, GPIO33 NON portato fuori, quali GPIO restano liberi per un secondo controller, switch n.1 = resistenza di sense del booster (A=3R / B=0.47R), caveat di estrazione del PDF
+description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper, HSPI con SCK e MOSI scambiati, MISO dummy perchè il FPC non ha SDO, header J3/J4 con piedinatura DevKitC e GPIO33 su J3 pin 8 (da confermare sulla serigrafia), quali GPIO restano liberi per un secondo controller, switch n.1 = resistenza di sense del booster (A=3R / B=0.47R), caveat di estrazione del PDF
 type: reference
 ---
 
@@ -53,22 +53,24 @@ controller del 12.2" ([[gxepd2_122c_driver]]).
 basso al boot non fa danni, ed è la condizione in cui lo lascia l'uso come dummy. Se invece ci si
 collega un SDO vero, verificare che al reset non sia forzato alto: in quel caso l'ESP32 non parte.
 
-## GPIO33 NON è portato fuori su questa board
+## Header di espansione: GPIO33 c'è, su J3 pin 8 (da confermare sulla serigrafia)
 
-Net `IOxx` presenti nello schematico:
+Netlist con de-raddoppio **per token** (`pdftotext -raw`, un token è raddoppiato se ogni carattere
+pari è uguale al successivo) e coppie pin header / pin modulo: è la piedinatura delle DevKitC.
 
 ```
-0, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 34, 35
+J3: 1 3V3, 2 EN, 3 VP(36), 4 VN(39), 5 IO34, 6 IO35, 7 IO32, 8 IO33, 9 IO25, 10 IO26,
+    11 IO27, 12 IO14, 13 IO12, 14 GND, 15 IO13, 16 SD2, 17 SD3, 18 CMD, 19 5V
+J4: 1 GND, 2 IO23, 3 IO22, 4 U0TX, 5 U0RX, 6 IO21, 7 GND, 8 IO19, 9 IO18, 10 IO5,
+    11 IO17, 12 IO16, 13 IO4, 14 IO0, 15 IO2, 16 IO15, 17 SD1, 18 SD0, 19 CLK
 ```
 
-**Manca il 33.** L'header di espansione porta fuori, su pin consecutivi, `IO34`, `IO35`, `IO32`: se
-il 33 fosse instradato starebbe con ogni probabilità in quella sequenza. Confidenza alta ma non
-totale, perchè l'estrazione dello schematico è mutilata; la conferma fisica costa dieci secondi
-(serigrafia dell'header, o continuità fra pin header e pin del modulo).
-
-Per questo il CS del secondo controller del 12.2" sta su **GPIO32**: `PIN_CS_S` in `Layout_122c.h`,
-gli snippet del submodule e lo schema Waveshare di `docs/122c/`. Il Setup B del submodule (dev
-board generica, es. DevKitC) usa ancora 33, che lì esiste.
+IO33 = J3 pin 8 = pin 9 del modulo WROOM-32E, che è proprio IO33. La conclusione "33 non portato
+fuori" veniva dal de-raddoppio **per carattere**, che trasforma `IIOO3333` in `IO3` (la lista di
+allora conteneva un "3" e nessun 33). Conferma fisica: serigrafia dell'header o continuità fra J3
+pin 8 e il pin 9 del modulo. `PIN_CS_S` resta su **GPIO32** in `Layout_122c.h` e nei documenti del
+submodule; funziona comunque, il 33 è un'alternativa. Il `CLAUDE.md` del progetto dice ancora che il
+33 non è portato fuori.
 
 ## GPIO liberi per un secondo controller
 

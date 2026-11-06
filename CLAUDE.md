@@ -48,7 +48,7 @@ Sono **etichette elettroniche SOLUM (ESL) recuperate** e ripilotate, senza datas
 
 **SOLUM 9.7"** (`EL097R2CRN`): 672×960 nativi, usato come **960w × 672h**. Controller **SSD1677**, un solo COF. **Tre colori, il quarto non esiste** (misurato: con `(0x26, 0x24)` = `(0,0)` nero, `(0,1)` bianco, `(1,x)` rosso; VSH1 = nero, VSH2 = rosso, punto di lavoro del nero 15 V). Sotto un pixel di accent il piano BW è indifferente.
 
-**SOLUM Newton PRO 12.2"** (`EL122H6W4A`): 768×960 nativi, usato come **960w × 768h**. Due controller SSD16xx da 960×384, uno per coda FFC, divisi per righe (l'SSD1677 ha 680 gate, il pannello 768): BUSY attivo alto, banda slave specchiata nel data path. Il driver pilota una sola banda: **la seconda coda FFC non risponde**. Tre colori come il 9.7": nessuno dei due pannelli ha il giallo, quindi il firmware chiede al server cinema due piani per entrambi.
+**SOLUM 12.2"** (`EL122R2CRN`, generazione R2, scheda tag su Realtek RTL8762ESL; lo stesso pannello delle linee Newton PRO `EL122H6W4A` e Core): 768×960 nativi, usato come **960w × 768h**. Due controller SSD16xx da 960×384, uno per coda FFC, divisi per righe (l'SSD1677 ha 680 gate, il pannello 768): BUSY attivo alto, banda slave specchiata nel data path. Il driver pilota una sola banda: **la seconda coda FFC non risponde**. Tre colori come il 9.7": nessuno dei due pannelli ha il giallo, quindi il firmware chiede al server cinema due piani per entrambi.
 
 Vincoli comuni, misurati:
 - **Read-back inesistente** (vedi board) e **nessuna waveform di Mode 2 in OTP**: il refresh differenziale del silicio non è una scorciatoia.
@@ -76,6 +76,8 @@ Struttura di `src/`: `GxEPD2_SOLUM.h` (ombrello), `GxEPD2_SOLUM_Pins.h` (pinout 
 - **Bus SPI sempre da `_pSPIx` / `_spi_settings`** della base `GxEPD2_EPD`, mai dall'oggetto `SPI` globale: un default proprio si imposta con `selectSPI()` nel costruttore, altrimenti un `selectSPI()` dello sketch resta silenziosamente inerte.
 
 **`A:\epd\webapp`**: submodule (`cinema-programmation-feed`), scraper Python + renderer che serve al firmware l'immagine cinema già ditherata, in formato raw packed header-less. Ha una propria memoria in `webapp\.claude\memory\`.
+
+**`A:\epd\routefinder`**: submodule (`RouteFinder`, branch `main`), servizio FastAPI su render.com che disegna il percorso più veloce col traffico (Google Routes API + Maps Static API) nello stesso formato della webapp; il firmware lo mostra al posto del cinema nella fascia percorso (`Routefinder.h`). `dithering.py`, `arduino_format.py` e `cache.py` sono copie della webapp da tenere allineate. Il venv sta **solo** in `routefinder\.venv` (gitignored), non in `A:\tmp\sandbox`. Logo e attribuzione Google non si coprono nè si tolgono: lo impongono i termini di Google Maps Platform.
 
 
 ## Architettura del firmware: separazione layout/logica

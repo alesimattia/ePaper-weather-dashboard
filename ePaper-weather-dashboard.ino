@@ -106,6 +106,11 @@
 #define CINEMA_ORIGIN      "https://cinema-epd.onrender.com"
 #define CINEMA_PREWARM_URL CINEMA_ORIGIN "/health"
 
+/** Origine del servizio routefinder (submodule omonimo), con lo stesso ruolo
+ *  di CINEMA_ORIGIN: il percorso dell'immagine lo compone fetchRouteImage(). */
+#define ROUTEFINDER_ORIGIN      "https://routefinder-7w0a.onrender.com"
+#define ROUTEFINDER_PREWARM_URL ROUTEFINDER_ORIGIN "/health"
+
 #include <GxEPD2_3C.h>
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
@@ -131,6 +136,7 @@
 #include "Net.h"
 #include "Scheduler.h"
 #include "CinemaStore.h"
+#include "Routefinder.h"
 
 SPIClass hspi(HSPI);
 
@@ -294,8 +300,8 @@ static constexpr const char *cinemaColorsParam(uint8_t planes)
 }
 
 /**
- * Sveglia l'istanza render.com del server cinema con una GET a /health
- * mandata e abbandonata.
+ * Sveglia un'istanza render.com con una GET a /health mandata e abbandonata.
+ * La usano i server del cinema e del percorso, entrambi sul free tier.
  *
  * Il free tier sospende il servizio dopo 15 min di inattivita' e il boot
  * successivo costa una ventina di secondi, che senza questo ping il fetch
@@ -318,42 +324,131 @@ static constexpr const char *cinemaColorsParam(uint8_t planes)
  * HTTPC_ERROR_READ_TIMEOUT (-11) e' l'esito nominale, 200 significa che il
  * server era gia' caldo, un errore di connessione che il ping non e' partito.
  *
- * Stessi due gate di fetchCinemaImage(), e per lo stesso motivo: il ping ha
- * senso solo nel giro in cui l'immagine verra' davvero scaricata. Svegliare
- * render a ogni wake da DISPLAY_REFRESH_MIN terrebbe l'istanza sempre accesa,
- * bruciando le ore-istanza del free tier senza servire a niente.
+ * Gira solo come onRoundStart() del task che scarichera' davvero l'immagine:
+ * svegliare render a ogni wake da DISPLAY_REFRESH_MIN terrebbe l'istanza
+ * sempre accesa, bruciando le ore-istanza del free tier senza servire a niente.
  */
-static void prewarmCinemaServer()
+static void prewarmServer(const char *flow, const char *healthUrl)
 {
 	WiFiClientSecure client;
 	HTTPClient http;
 	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
-	if (!Net::beginHttps(http, client, CINEMA_PREWARM_URL))
+	if (!Net::beginHttps(http, client, healthUrl))
 	{
-		LOG("cinema", "pre-warm: http.begin fallita");
+		LOG("img", "%s pre-warm: http.begin fallita", flow);
 		return;
 	}
 	uint32_t t0 = millis();
 	int code = http.GET();
 	http.end();
-	LOG("cinema", "pre-warm %s -> %d in %lu ms",
-		CINEMA_PREWARM_URL, code, (unsigned long)(millis() - t0));
+	LOG("img", "%s pre-warm %s -> %d in %lu ms", flow, healthUrl, code, (unsigned long)(millis() - t0));
+}
+
+static void prewarmCinemaServer() { prewarmServer("cinema", CINEMA_PREWARM_URL); }
+static void prewarmRouteServer() { prewarmServer("route", ROUTEFINDER_PREWARM_URL); }
+
+/**
+ * Scarica un'immagine nel formato di /cinema/arduino e la salva nello slot
+ * inattivo di CinemaStore; la usano cinema e percorso, che hanno la stessa
+ * misura Layout::CINEMA_*. Cadenza e ritenti sono dello scheduler; qui si
+ * scarica e basta, con la radio già connessa.
+ *
+ * Lo slot libero si cancella prima della GET, poi il corpo passa in flash a
+ * blocchi da 1 KB letti da Net::BodyStream, senza buffer grandi in heap. Su
+ * qualunque errore (HTTP diverso da 200, Content-Length diverso da
+ * Layout::CINEMA_TOTAL_SZ, corpo interrotto, scrittura fallita) la scrittura
+ * si annulla e l'immagine cinema attiva resta quella di prima.
+ * @param token valore dell'header X-Routefinder-Token, nullptr se non serve.
+ * @return true se l'immagine è stata scaricata e salvata.
+ */
+static bool downloadImageToStore(const char *flow, const char *url, const char *token,
+								 uint32_t timeoutMs, CinemaStore::Kind kind)
+{
+	LOG("img", "%s fetching %s", flow, url);
+	// L'erase dello slot libero ferma la cache della flash: avviene prima che
+	// la connessione TLS esista.
+	if (!CinemaStore::beginWrite(kind))
+	{
+		LOG("img", "%s: slot in flash non disponibile", flow);
+		return false;
+	}
+
+	// Client esplicito, dichiarato prima di HTTPClient perchè il distruttore di
+	// http lo usa: con begin(url) il core ne creerebbe uno interno, senza modo
+	// di limitarne l'handshake. I server rispondono con Content-Length anche in
+	// HTTP/1.0, quindi il controllo sulla dimensione resta valido.
+	WiFiClientSecure client;
+	HTTPClient http;
+	// Margine per il cold start del free tier render.com quando il pre-warm non
+	// e' bastato a completare il boot dell'istanza prima di arrivare qui. Vale
+	// anche come attesa massima senza dati durante la lettura del corpo.
+	http.setTimeout(timeoutMs);
+	if (!Net::beginHttps(http, client, url))
+	{
+		LOG("img", "%s: HTTP begin fallita", flow);
+		CinemaStore::abortWrite();
+		return false;
+	}
+	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
+	int code = http.GET();
+	if (code != 200)
+	{
+		LOG("img", "%s: HTTP status %d", flow, code);
+		http.end();
+		CinemaStore::abortWrite();
+		return false;
+	}
+	int size = http.getSize();
+	if (size != (int)Layout::CINEMA_TOTAL_SZ)
+	{
+		LOG("img", "%s: Content-Length %d atteso %u", flow, size, (unsigned)Layout::CINEMA_TOTAL_SZ);
+		http.end();
+		CinemaStore::abortWrite();
+		return false;
+	}
+
+	// BodyStream attende le pause fra i blocchi del corpo: un blocco resta corto
+	// solo a connessione chiusa, su errore TLS o dopo timeoutMs senza dati, il
+	// timeout che http.setTimeout() ha dato allo stream.
+	Net::BodyStream body(http.getStream());
+	uint8_t chunk[1024];
+	uint32_t received = 0;
+	while (received < Layout::CINEMA_TOTAL_SZ)
+	{
+		const uint32_t remaining = Layout::CINEMA_TOTAL_SZ - received;
+		const size_t wanted = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+		const size_t got = body.readBytes(chunk, wanted);
+		if (got != wanted || !CinemaStore::writeChunk(chunk, got))
+		{
+			LOG("img", "%s: corpo interrotto a %lu/%lu byte", flow,
+				(unsigned long)(received + got), (unsigned long)Layout::CINEMA_TOTAL_SZ);
+			http.end();
+			CinemaStore::abortWrite();
+			return false;
+		}
+		received += got;
+	}
+	http.end();
+
+	// Il percorso porta l'istante del download, che decide se è ancora
+	// mostrabile; il task che lo scarica gira solo con l'orologio valido.
+	const uint32_t downloadedAt = kind == CinemaStore::Kind::Route ? (uint32_t)time(nullptr) : 0;
+	if (!CinemaStore::commitWrite(downloadedAt))
+	{
+		LOG("img", "%s: salvataggio in flash fallito", flow);
+		return false;
+	}
+	LOG("img", "%s: download completato e salvato in flash", flow);
+	return true;
 }
 
 /**
- * Scarica l'immagine cinema dal server render.com e la salva in flash.
+ * Scarica l'immagine cinema dal server render.com.
  *
  * Ultima chiamata di rete del giro, dopo meteo, mail e calendari: è l'unica
  * che può pagare il cold start di render.com, e il tempo speso dagli altri
  * fetch è il tempo che il server ha per completare il boot avviato da
- * prewarmCinemaServer(). Cadenza (giornaliera) e ritenti sono dello
- * scheduler; qui si scarica e basta, con la radio già connessa.
- *
- * Lo slot libero di CinemaStore si cancella prima della GET, poi il corpo
- * passa in flash a blocchi da 1 KB letti da Net::BodyStream, senza buffer
- * grandi in heap. Su qualunque errore (HTTP diverso da 200, Content-Length
- * diverso da Layout::CINEMA_TOTAL_SZ, corpo interrotto, scrittura fallita) la
- * scrittura si annulla e resta l'immagine precedente.
+ * prewarmCinemaServer().
  * @return true se l'immagine è stata scaricata e resa attiva.
  */
 static bool fetchCinemaImage()
@@ -372,81 +467,25 @@ static bool fetchCinemaImage()
 		LOG("cinema", "URL troncato (%d caratteri), resta l'immagine precedente", urlLength);
 		return false;
 	}
+	return downloadImageToStore("cinema", url, nullptr, CINEMA_HTTP_TIMEOUT_MS, CinemaStore::Kind::Cinema);
+}
 
-	LOG("cinema", "fetching %s", url);
-	// L'erase dello slot libero ferma la cache della flash: avviene prima che
-	// la connessione TLS esista.
-	if (!CinemaStore::beginWrite())
+/**
+ * Scarica il percorso del mattino da routefinder, con partenza, arrivo e
+ * carburante di Routefinder e la misura del riquadro cinema, che sostituisce.
+ * @return true se il percorso è stato scaricato e salvato.
+ */
+static bool fetchRouteImage()
+{
+	char url[256];
+	const int urlLength = Routefinder::buildUrl(url, sizeof(url), ROUTEFINDER_ORIGIN,
+		(uint16_t)Layout::CINEMA_W, (uint16_t)Layout::CINEMA_H, cinemaColorsParam(Layout::CINEMA_PLANES));
+	if (urlLength < 0 || urlLength >= (int)sizeof(url))
 	{
-		LOG("cinema", "slot in flash non disponibile, resta l'immagine precedente");
+		LOG("route", "URL troncato (%d caratteri)", urlLength);
 		return false;
 	}
-
-	// Client esplicito, dichiarato prima di HTTPClient perchè il distruttore di
-	// http lo usa: con begin(url) il core ne creerebbe uno interno, senza modo
-	// di limitarne l'handshake. Il server risponde con Content-Length anche in
-	// HTTP/1.0, quindi il controllo sulla dimensione resta valido.
-	WiFiClientSecure client;
-	HTTPClient http;
-	// 45s: margine per il cold start del free tier render.com (una ventina di
-	// secondi) quando il ping di prewarmCinemaServer() non e' bastato a
-	// completare il boot dell'istanza prima di arrivare qui. Vale anche come
-	// attesa massima senza dati durante la lettura del corpo.
-	http.setTimeout(CINEMA_HTTP_TIMEOUT_MS);
-	if (!Net::beginHttps(http, client, url))
-	{
-		LOG("cinema", "HTTP begin fallita");
-		CinemaStore::abortWrite();
-		return false;
-	}
-	int code = http.GET();
-	if (code != 200)
-	{
-		LOG("cinema", "HTTP status %d, resta l'immagine precedente", code);
-		http.end();
-		CinemaStore::abortWrite();
-		return false;
-	}
-	int size = http.getSize();
-	if (size != (int)Layout::CINEMA_TOTAL_SZ)
-	{
-		LOG("cinema", "Content-Length %d atteso %u, resta l'immagine precedente",
-			size, (unsigned)Layout::CINEMA_TOTAL_SZ);
-		http.end();
-		CinemaStore::abortWrite();
-		return false;
-	}
-
-	// BodyStream attende le pause fra i blocchi del corpo: un blocco resta corto
-	// solo a connessione chiusa, su errore TLS o dopo CINEMA_HTTP_TIMEOUT_MS
-	// senza dati, il timeout che http.setTimeout() ha dato allo stream.
-	Net::BodyStream body(http.getStream());
-	uint8_t chunk[1024];
-	uint32_t received = 0;
-	while (received < Layout::CINEMA_TOTAL_SZ)
-	{
-		const uint32_t remaining = Layout::CINEMA_TOTAL_SZ - received;
-		const size_t wanted = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
-		const size_t got = body.readBytes(chunk, wanted);
-		if (got != wanted || !CinemaStore::writeChunk(chunk, got))
-		{
-			LOG("cinema", "corpo interrotto a %lu/%lu byte, resta l'immagine precedente",
-				(unsigned long)(received + got), (unsigned long)Layout::CINEMA_TOTAL_SZ);
-			http.end();
-			CinemaStore::abortWrite();
-			return false;
-		}
-		received += got;
-	}
-	http.end();
-
-	if (!CinemaStore::commitWrite())
-	{
-		LOG("cinema", "salvataggio in flash fallito, resta l'immagine precedente");
-		return false;
-	}
-	LOG("cinema", "download completato e salvato in flash");
-	return true;
+	return downloadImageToStore("route", url, ROUTEFINDER_TOKEN, ROUTE_HTTP_TIMEOUT_MS, CinemaStore::Kind::Route);
 }
 
 /**
@@ -503,9 +542,80 @@ static Scheduler::Outcome runCinemaFetch()
 	return fetchCinemaImage() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
 }
 
-/** Senza la partizione del wallpaper non c'è dove salvare l'immagine: il task
- *  resta sospeso e non manda nemmeno il ping di sveglia. */
-static bool cinemaReady() { return CinemaStore::isAvailable(); }
+/**
+ * Senza la partizione del wallpaper non c'è dove salvare l'immagine, e mentre
+ * il percorso è la sorgente del riquadro il cinema non si scarica, perchè
+ * scriverebbe lo slot del percorso: il task resta sospeso e non manda nemmeno
+ * il ping di sveglia. La cadenza giornaliera recupera in giornata, quindi un
+ * cine_h dentro la fascia percorso slitta alla fine della fascia.
+ */
+static bool cinemaReady() { return CinemaStore::isAvailable() && !Routefinder::isRouteSourceActive(); }
+
+static Scheduler::Outcome runRouteFetch()
+{
+	return fetchRouteImage() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
+}
+
+/** Riga del percorso nella tabella dei task, cercata da setup(). */
+static Scheduler::Task *g_route_task = nullptr;
+static bool g_route_source_was_active = false;
+
+/**
+ * Precondizione del percorso: sorgente attiva, orologio valido perchè
+ * l'istante del download decide se l'immagine è ancora mostrabile, arrivo e
+ * token configurati, archivio disponibile.
+ *
+ * All'ingresso nella sorgente percorso rimette il task a mai eseguito, così il
+ * primo fetch della fascia parte subito invece di dipendere dall'aritmetica
+ * signed di millis() sull'ultimo slot, che dopo 24,8 giorni senza giri non è
+ * più affidabile. È l'unico effetto collaterale ed è idempotente: lo scheduler
+ * valuta la precondizione più volte per giro.
+ */
+static bool routeReady()
+{
+	const bool active = Routefinder::isRouteSourceActive();
+	if (active && !g_route_source_was_active && g_route_task != nullptr) g_route_task->state.neverRun = true;
+	g_route_source_was_active = active;
+	return active && Clock::valido() && Routefinder::hasDestination() &&
+		   Net::isCredentialSet(ROUTEFINDER_TOKEN) && CinemaStore::isAvailable();
+}
+
+/** Immagine del riquadro nell'ultimo frame disegnato. */
+static Routefinder::ShownImage g_drawn_image = Routefinder::ShownImage::Cinema;
+static bool g_frame_drawn = false;
+
+/** Immagine che il riquadro deve mostrare adesso, dalla sorgente scelta e dal
+ *  percorso salvato. */
+static Routefinder::ShownImage currentShownImage()
+{
+	return Routefinder::shownImage(CinemaStore::image(CinemaStore::Kind::Route) != nullptr,
+								   CinemaStore::routeDownloadedAt());
+}
+
+/**
+ * Scadenza del controllo della sorgente: subito se il riquadro a schermo non è
+ * più quello giusto e nessuno ha ancora chiesto il ridisegno, altrimenti al
+ * prossimo bordo della fascia o all'istante in cui il percorso invecchia. È ciò
+ * che sveglia il dispositivo esattamente alle 07:00 e alle 09:00 invece che
+ * fino a SLEEP_MAX_S più tardi.
+ */
+static uint32_t msUntilSourceCheck()
+{
+	if (g_frame_drawn && currentShownImage() != g_drawn_image && !Weather::sporco()) return 0;
+	const uint32_t boundary = Routefinder::msUntilNextBoundary();
+	const uint32_t stale = Routefinder::msUntilRouteStale(CinemaStore::routeDownloadedAt());
+	return stale < boundary ? stale : boundary;
+}
+
+/** Chiede il ridisegno quando il riquadro deve cambiare immagine: ingresso e
+ *  uscita dalla fascia, percorso invecchiato, sorgente cambiata da /route. */
+static Scheduler::Outcome runSourceCheck()
+{
+	if (!g_frame_drawn || currentShownImage() == g_drawn_image || Weather::sporco())
+		return Scheduler::Outcome::SKIPPED;
+	Weather::markDirty();
+	return Scheduler::Outcome::OK;
+}
 
 static Scheduler::Outcome runTuyaPublish()
 {
@@ -588,11 +698,14 @@ static void onDisplayOutcome(Scheduler::Outcome) {}
  *   - Google prima di Outlook perche' il token appena rinfrescato e' il suo;
  *   - la telemetria Tuya prima del cinema: i secondi del suo handshake TLS
  *     sono altro tempo di copertura del boot di render.com;
- *   - cinema per ultimo perche' e' l'unico che puo' pagare il cold start di
- *     render.com, e il tempo di rete degli altri e' la copertura di quel
- *     boot; il suo onRoundStart() manda il ping di sveglia all'inizio del giro;
- *   - il sensore precede il display cosi' un campione appena prodotto entra
- *     nel frame dello stesso giro.
+ *   - percorso e cinema per ultimi perche' sono gli unici che possono pagare
+ *     il cold start di render.com, e il tempo di rete degli altri e' la
+ *     copertura di quel boot; i loro onRoundStart() mandano il ping di sveglia
+ *     all'inizio del giro. Non girano mai nello stesso giro: il cinema e'
+ *     sospeso finche' il percorso e' la sorgente del riquadro;
+ *   - il controllo della sorgente e il sensore precedono il display, cosi' un
+ *     cambio di riquadro o un campione appena prodotto entrano nel frame dello
+ *     stesso giro.
  *
  * Tuya è l'unico task di rete con maxAttempts a 0, cioè un tentativo per slot
  * comunque vada: i suoi modi di fallimento sono permanenti sulla scala dei
@@ -626,10 +739,20 @@ static Scheduler::Task TASK_TABLE[] = {
 	 FETCH_RITENTO_MS, 0,
 	 runTuyaPublish, tuyaReady, nullptr, nullptr, onTuyaOutcome, nullptr},
 
+	{"route", Scheduler::Cadence::PERIODIC, true, false,
+	 &Timings::Valori::routeMin, nullptr,
+	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
+	 runRouteFetch, routeReady, nullptr, prewarmRouteServer, markDirtyOnOk, nullptr},
+
 	{"cinema", Scheduler::Cadence::DAILY, true, false,
 	 nullptr, &Timings::Valori::cinemaOra,
 	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
 	 runCinemaFetch, cinemaReady, nullptr, prewarmCinemaServer, markDirtyOnOk, nullptr},
+
+	{"source", Scheduler::Cadence::PERIODIC, false, false,
+	 &Timings::Valori::displayRefreshMin, nullptr,
+	 FETCH_RITENTO_MS, 0,
+	 runSourceCheck, nullptr, nullptr, nullptr, nullptr, msUntilSourceCheck},
 
 	{"bsec", Scheduler::Cadence::PERIODIC, false, false,
 	 &Timings::Valori::displayRefreshMin, nullptr,
@@ -646,13 +769,20 @@ static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0])
 
 /**
  * Disegna, dentro il loop paged di Weather::renderFrame(), le sole righe del
- * wallpaper che cadono nella pagina corrente: l'immagine in flash se c'è,
- * altrimenti il fallback PROGMEM. Le righe si tagliano anche all'altezza
- * CINEMA_H, e il descrittore ridotto punta agli stessi dati, senza copie.
+ * riquadro che cadono nella pagina corrente: il percorso o il cinema in flash
+ * secondo la sorgente, altrimenti il fallback PROGMEM, che è anche la sorgente
+ * Wallpaper. Le righe si tagliano anche all'altezza CINEMA_H, e il descrittore
+ * ridotto punta agli stessi dati, senza copie.
  */
 void drawTestBackground()
 {
-	const GxEPDImage::Descriptor *stored = CinemaStore::image();
+	const Routefinder::ShownImage shown = currentShownImage();
+	g_drawn_image = shown;
+	g_frame_drawn = true;
+	const GxEPDImage::Descriptor *stored =
+		shown == Routefinder::ShownImage::Route    ? CinemaStore::image(CinemaStore::Kind::Route) :
+		shown == Routefinder::ShownImage::Cinema   ? CinemaStore::image(CinemaStore::Kind::Cinema) :
+													 nullptr;
 	const GxEPDImage::Descriptor &image = stored ? *stored : img_la_grande_onda_desc;
 	int16_t top = Layout::CINEMA_Y;
 	int16_t height = (int16_t)(image.height < Layout::CINEMA_H ? image.height : Layout::CINEMA_H);
@@ -773,6 +903,8 @@ void setup()
 	// Prima di ogni modulo: le cadenze salvate in NVS vanno lette e portate
 	// dentro i limiti prima che qualcuno le usi.
 	Timings::begin();
+	// Dopo Timings: la fascia del percorso si valida contro la fascia WiFi.
+	Routefinder::begin();
 	initDisplay();
 	/**
 	 * TZ Europe/Rome con DST automatico: va fatto PRIMA di qualsiasi
@@ -795,17 +927,20 @@ void setup()
 	 */
 	Tuya::begin();
 	/**
-	 * Archivio in flash dell'immagine cinema: l'ultima scaricata torna a schermo
-	 * già dal primo frame. Nessuna rete qui dentro.
+	 * Archivio in flash dell'immagine cinema e del percorso: l'ultima immagine
+	 * torna a schermo già dal primo frame, il percorso solo se ancora recente.
+	 * Nessuna rete qui dentro.
 	 */
 	CinemaStore::begin();
 	/**
-	 * Apre subito la finestra OTA (OTA_WINDOW_MIN): AP per l'aggiornamento firmware +
-	 * STA in parallelo per il fetch meteo. Scaduta la finestra, loop() chiamera'
-	 * Maintenance::chiudi() che spegne AP e WiFi, ripristinando
-	 * il ciclo originario STA on-demand + light sleep DISPLAY_REFRESH_MIN.
+	 * Apre la finestra di manutenzione sulla rete di casa in sola STA, e accende
+	 * l'access point di emergenza solo se la STA non sale entro
+	 * MAINT_STA_TIMEOUT_S. Alla scadenza loop() chiama Maintenance::chiudi(), che
+	 * consegna la radio spenta allo scheduler e il ciclo passa al light sleep.
 	 */
 	Maintenance::begin();
+	for (uint8_t i = 0; i < TASK_COUNT; ++i)
+		if (strcmp(TASK_TABLE[i].tag, "route") == 0) g_route_task = &TASK_TABLE[i];
 	Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
 	// Riferimento temporale per il timeout di boot WiFi (vedi PRIMO_FRAME_ATTESA_MS).
 }
