@@ -141,7 +141,7 @@ namespace Clock
    * Sincronizza l'orologio via SNTP se non lo è già. Presuppone la rete su:
    * va chiamata da chi ha appena constatato di averla, cioè wifiOn() nel ciclo
    * normale e la macchina a stati della finestra di manutenzione quando la STA
-   * sale. Quando l'ora è già valida costa un solo confronto.
+   * sale. Quando l'ora è già valida e SNTP è partito costa un solo confronto.
    *
    * Usa configTzTime() e non configTime(): la prima applica la stringa POSIX
    * che le viene passata, quindi ripassando CLOCK_POSIX_TZ riapplica lo stesso
@@ -155,6 +155,12 @@ namespace Clock
    * SNTP di lwIP: riprova ogni 3 h e va a buon fine appena cade in una
    * finestra con radio accesa, per questo sntp non viene mai fermato.
    *
+   * Corregge un caso che prima restava scoperto: il timer RTC conserva l'ora
+   * attraverso un riavvio software (OTA, crash, watchdog), quindi al boot l'ora
+   * può essere già valida mentre SNTP non è mai partito. In quel caso SNTP si
+   * avvia lo stesso, senza attendere: senza la prima risposta everSynced resta
+   * falso e resyncIfStale() non correggerebbe più la deriva fino a un power cycle.
+   *
    * @param timeout_ms attesa massima della prima sincronizzazione. A 0 avvia
    *        SNTP e ritorna subito, lasciando che il polling di lwIP allinei
    *        l'ora entro pochi secondi: serve alla finestra di manutenzione,
@@ -167,7 +173,16 @@ namespace Clock
     static bool tentato = false;
 
     if (valido())
+    {
+      if (!tentato)
+      {
+        tentato = true;
+        ultimoTentativoMs = millis();
+        configTzTime(CLOCK_POSIX_TZ, NTP_SERVER_1, NTP_SERVER_2);
+        LOG("Time", "ora già valida dal riavvio: SNTP avviato per la risincronizzazione");
+      }
       return true;
+    }
     // Backoff fra tentativi falliti: senza, la finestra di manutenzione
     // riavvierebbe SNTP a ogni giro da 10 ms.
     if (tentato && (int32_t)(millis() - ultimoTentativoMs) < (int32_t)TIME_SYNC_RETRY_MS)

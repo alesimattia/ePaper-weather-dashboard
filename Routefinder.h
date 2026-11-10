@@ -375,38 +375,6 @@ namespace Routefinder
   }
 
   /**
-   * Millisecondi al prossimo bordo della fascia, inizio o fine, in ora locale:
-   * mktime() con tm_isdst = -1 assorbe il cambio dell'ora legale. UINT32_MAX
-   * senza orologio valido.
-   */
-  inline uint32_t msUntilNextBoundary()
-  {
-    if (!Clock::valido()) return UINT32_MAX;
-    const time_t now = time(nullptr);
-    struct tm current;
-    localtime_r(&now, &current);
-    const Settings& s = detail::settings;
-    time_t best = 0;
-    for (int dayOffset = 0; dayOffset <= 1; ++dayOffset)
-    {
-      for (uint16_t minute : {s.windowStartMin, s.windowEndMin})
-      {
-        struct tm target = current;
-        target.tm_mday += dayOffset;
-        target.tm_hour = minute / 60;
-        target.tm_min = minute % 60;
-        target.tm_sec = 0;
-        target.tm_isdst = -1;
-        const time_t at = mktime(&target);
-        if (at != (time_t)-1 && at > now && (best == 0 || at < best)) best = at;
-      }
-    }
-    if (best == 0) return UINT32_MAX;
-    const int64_t ms = (int64_t)(best - now) * 1000;
-    return ms >= (int64_t)UINT32_MAX ? UINT32_MAX - 1 : (uint32_t)ms;
-  }
-
-  /**
    * Età massima, in secondi, con cui un percorso si mostra con la sorgente
    * corrente: un multiplo della cadenza con Auto, un'ora con Route.
    */
@@ -422,17 +390,6 @@ namespace Routefinder
     if (!Clock::valido() || downloadedAt == 0) return false;
     const int64_t age = (int64_t)time(nullptr) - (int64_t)downloadedAt;
     return age >= 0 && age <= (int64_t)maxRouteAgeS();
-  }
-
-  /**
-   * Millisecondi a quando il percorso scaricato a `downloadedAt` smette di
-   * essere mostrabile; UINT32_MAX se non lo è già o non c'è orologio.
-   */
-  inline uint32_t msUntilRouteStale(uint32_t downloadedAt)
-  {
-    if (!isRouteFresh(downloadedAt)) return UINT32_MAX;
-    const int64_t remaining = (int64_t)downloadedAt + (int64_t)maxRouteAgeS() - (int64_t)time(nullptr);
-    return (uint32_t)((remaining + 1) * 1000);
   }
 
   /**

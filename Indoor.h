@@ -104,6 +104,21 @@ namespace Indoor
     inline bool     bsecOk           = false;
     inline uint32_t lastStateSaveMs  = 0;
 
+    /** Vero dopo il primo salvataggio dello stato ad accuratezza IAQ 3 in
+     *  questo boot: evita di riscrivere la flash a ogni campione calibrato. */
+    inline bool     savedAtFullAccuracy = false;
+
+    /**
+     * Configurazione BSEC per BME680 alimentato a 3,3 V, campionamento ULP da
+     * 300 s e storia di calibrazione di 4 giorni (bme680_iaq_33v_300s_4d della
+     * libreria): la guida Bosch AN011 chiede il file giusto per uscite ULP
+     * accurate. Sta in flash a livello di namespace, non sullo stack di begin(),
+     * perchè il blob occupa BSEC_MAX_PROPERTY_BLOB_SIZE byte.
+     */
+    inline const uint8_t BSEC_CONFIG_IAQ[] = {
+#include "config/bme680/bme680_iaq_33v_300s_4d/bsec_iaq.txt"
+    };
+
     /** Timestamp BSEC (ns) delle ultime uscite applicate: le uscite restano
      *  nella libreria fra un run() e l'altro, e solo un timestamp diverso
      *  indica un campione nuovo. */
@@ -389,6 +404,7 @@ namespace Indoor
     current         = {};
     bsecOk          = false;
     lastStateSaveMs = 0;
+    savedAtFullAccuracy = false;
     lastPollMs      = 0;
     everPolled      = false;
     lastOutputTimestampNs = 0;
@@ -411,8 +427,15 @@ namespace Indoor
       return;
     }
 
+    // La configurazione va prima dello stato, come nell'esempio Bosch
+    // basic_config_state: lo stato si interpreta rispetto alla configurazione
+    // caricata. Se fallisce BSEC resta sulla configurazione di default.
+    if (!bsec.setConfig(BSEC_CONFIG_IAQ))
+      LOG("BME680", "setConfig failed: %d (%s)", bsec.status, detail::descriviStatoBsec(bsec.status));
+
     // Prima di sottoscrivere gli output: se esiste uno stato BSEC salvato
-    // in NVS lo ricarichiamo, saltando cosi' il warm-up IAQ.
+    // in NVS lo ricarichiamo, saltando così il warm-up IAQ. Uno stato salvato
+    // con un'altra configurazione viene rifiutato e la taratura riparte.
     restoreBsecState();
 
     static bsecSensor sensorList[] = {
@@ -496,14 +519,17 @@ namespace Indoor
          (unsigned)current.pressure, (unsigned)current.iaq,
          (unsigned)current.iaqAccuracy);
 
-    // Salvataggio stato gated: solo a distanza >= 6 h dall'ultimo e solo
-    // quando il calibratore ha raggiunto almeno accuracy=1. Evita di
-    // sovrascrivere uno stato buono con uno transitorio post-reboot.
-    if (current.iaqAccuracy >= 1 &&
-        elapsed(millis(), lastStateSaveMs, STATE_SAVE_INTERVAL_MS))
+    // Il primo campione ad accuratezza 3 del boot salva subito lo stato, così
+    // un riavvio dopo la taratura non la perde; poi ogni 6 h, solo con
+    // accuratezza almeno 1, per non sovrascrivere uno stato buono con uno
+    // transitorio post-reboot.
+    const bool firstFullAccuracy = current.iaqAccuracy >= 3 && !savedAtFullAccuracy;
+    if (firstFullAccuracy ||
+        (current.iaqAccuracy >= 1 && elapsed(millis(), lastStateSaveMs, STATE_SAVE_INTERVAL_MS)))
     {
       saveBsecState();
       lastStateSaveMs = millis();
+      if (current.iaqAccuracy >= 3) savedAtFullAccuracy = true;
     }
 
     return true;

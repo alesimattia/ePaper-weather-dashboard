@@ -56,9 +56,9 @@
  * per cui il modulo non espone nessuna funzione di stop da chiamare prima di
  * dormire: sarebbe codice morto che suggerisce il contrario.
  *
- * Il modulo non disegna niente e non chiama Weather::markDirty(): il ridisegno
- * lo chiede l'`onOutcome()` del task, e solo quando il badge di guasto compare o
- * sparisce, perchè un refresh pieno del pannello costa ~24 s.
+ * Il modulo non disegna niente e non comanda il refresh del pannello: il badge
+ * di guasto lo legge Weather al momento del disegno, quindi compare nel frame
+ * del ciclo, che lo scheduler disegna comunque dopo il sensore e i fetch.
  */
 
 /**

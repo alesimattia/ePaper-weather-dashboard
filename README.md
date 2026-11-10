@@ -456,7 +456,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 
 | Sorgente | Adattatore nel .ino | Metodo che produce il dato | Cosa arriva sul display |
 |---|---|---|---|
-| Sensore BME680 (BSEC) | `runIndoorSample()` | [Indoor::refresh()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
+| Sensore BME680 (BSEC) | `pollIndoorSensor()`, hook `pollSensor` dello scheduler | [Indoor::refresh()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
 | Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
@@ -477,14 +477,13 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 #### Produttori indiretti
 
 - [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`isClockValidForCalendars()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
-- Il task `bsec` è sospeso senza sensore (`preconditionsMet` = `Indoor::attivo`) e interroga BSEC ogni 300 s dall'ultima chiamata ([Indoor::msUntilNextPoll()](Indoor.h)). Dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia. Il suo `onIndoorOutcome()` chiede il ridisegno solo dentro la fascia WiFi: di notte il campione si acquisisce ma il pannello non si aggiorna.
+- Il sensore è il primo passo di ogni ciclo dello scheduler, e la sua scadenza ([Indoor::msUntilNextPoll()](Indoor.h), 300 s più 1 s dall'ultima chiamata) è l'orologio del ciclo. Senza sensore (`Indoor::attivo()` falso) il ciclo è interno. Dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
-- [Tuya::runPublish()](Tuya.h) pubblica il campione del BME680 e non porta dati al pannello. Con `onTuyaOutcome()` ([.ino](ePaper-weather-dashboard.ino)) fa comparire o sparire il badge `TUYA ERR`, tramite `Tuya::hasFailed()`.
+- [Tuya::runPublish()](Tuya.h) pubblica il campione appena letto nello stesso ciclo e non porta dati al pannello, nè comanda il refresh: il badge `TUYA ERR` lo legge `drawBanner()` da `Tuya::hasFailed()` al momento del disegno.
 
 #### Consumatori
 
-- Ogni task che termina con `Outcome::OK` chiama `markDirtyOnOk()`, che esegue `Weather::markDirty()`.
-- Il task `display` parte quando `displayReady()` vede `Weather::sporco()` e chiama `Weather::render()`.
+- Il pannello si ridisegna a ogni ciclo della fascia WiFi, dopo il sensore e i fetch dello stesso ciclo: l'hook `drawFrame` dello scheduler è `Weather::render()`. Nessun task chiede ridisegni, quindi non esiste un flag di dati nuovi.
 - `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()`, `Mail::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia, eventi e posta e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
@@ -529,10 +528,10 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   percepita corrente, e il mini-grafico della temperatura percepita da 3 ore fa
   a ~9 ore avanti, passato in nero e previsione in rosso), **Previsioni** 440w
   (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
-- **Gate del primo refresh**: è dello scheduler, il task `display` è dovuto solo
-  quando la rete ha prodotto un esito qualsiasi, anche un fallimento, oppure sono
-  passati `PRIMO_FRAME_ATTESA_MS` dal boot. Il primo frame arriva sempre, con i
-  dati veri se ci sono e con i placeholder `--` altrimenti.
+- **Gate del frame nella finestra di manutenzione**: è dello scheduler. Il frame
+  del ciclo aspetta i fetch dovuti, che attendono la STA e l'ora valida, per al
+  più `PRIMO_FRAME_ATTESA_MS` dall'inizio del ciclo. Il primo frame arriva
+  sempre, con i dati veri se ci sono e con i placeholder `--` altrimenti.
 
 ### Calendar (`Calendar.h`)
 
@@ -570,7 +569,7 @@ rosso.
 | Funzione | Effetto |
 |---|---|
 | `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
-| `Mail::runFetch()` | Fetch best-effort. Ritorna `true` se la cache è aggiornata; lo scheduler ne fa seguire il ridisegno. Cadenza e ritenti non sono suoi. |
+| `Mail::runFetch()` | Fetch best-effort. Ritorna `true` se la cache è aggiornata; il dato compare nel frame dello stesso ciclo. Cadenza e ritenti non sono suoi. |
 | `Mail::draw()` | Disegna il riquadro e le `Layout::MAIL_MAX` celle nell'area `Layout::MAIL_*`, dentro il paged loop. Con una cache più grande (`MAIL_MAX_MESSAGES`) disegna solo le prime. |
 | `Mail::isConfigured()` | Vero se le credenziali Google di `Env.h` sono configurate: è la precondizione del task `mail`. |
 
@@ -627,15 +626,58 @@ Lettura del sensore **Bosch BME680** via I2C con fusione IAQ della libreria
 (`Indoor::sample()`) con temperatura e umidità heat-compensated, pressione (hPa),
 indice IAQ (0-500) e livello di calibrazione (0-3), mostrata nel riquadro Interno.
 
-`Indoor::refresh()` è chiamato dal task `bsec`: BSEC temporizza internamente i 300 s.
-Quando arriva un nuovo campione ritorna `true` e lo scheduler chiede il ridisegno
-anche in assenza di fetch di rete.
+`Indoor::refresh()` è il primo passo di ogni ciclo dello scheduler, e la sua scadenza
+(`Indoor::msUntilNextPoll()`, 300 s più 1 s di margine dall'ultima chiamata) è
+l'orologio del ciclo: BSEC non si lascia anticipare nè ritardare, quindi tutto il
+resto si conta in cicli. Il sensore si interroga anche di notte, l'unica attività
+fuori dalla fascia WiFi, e anche mentre un client usa le pagine di manutenzione.
+
+**Configurazione**: `begin()` carica con `setConfig()` il blob
+`bme680_iaq_33v_300s_4d` della libreria (BME680 a 3,3 V, ULP da 300 s, storia di
+calibrazione di 4 giorni) prima dello stato salvato, come l'esempio Bosch
+`basic_config_state`: la guida Bosch chiede il file di configurazione giusto per
+uscite ULP accurate.
 
 **Persistenza stato BSEC**: lo stato del calibratore è salvato su NVS (namespace
-`bme680`, chiave `state`) ogni 6 ore, solo quando l'accuratezza ha raggiunto almeno 1
-(per non sovrascrivere uno stato buono con uno transitorio), e ricaricato al boot
-con `bsec.setState()`: dal secondo avvio l'IAQ è disponibile quasi subito, senza il
-warm-up di 5-30 min dopo un power cycle.
+`bme680`, chiave `state`) la prima volta che l'accuratezza IAQ arriva a 3 dopo il
+boot, poi ogni 6 ore solo con accuratezza almeno 1 (per non sovrascrivere uno
+stato buono con uno transitorio), e ricaricato al boot con `bsec.setState()`: dal
+secondo avvio l'IAQ è disponibile quasi subito. Uno stato salvato con un'altra
+configurazione viene rifiutato e la taratura riparte una volta. Un erase della
+flash cancella anche questo namespace.
+
+**Tempi di BSEC che il firmware rispetta** (guida Bosch AN011, vedi i riferimenti
+sotto):
+- uno scarto oltre il **6,25%** dalla scadenza di `next_call` (±18,75 s in ULP)
+  produce il warning 100 e lascia l'accuratezza IAQ a 0 (§3.2 e §3.3.4.1). Per
+  questo lo sleep dura fino alla scadenza esatta del sensore, senza pavimento, e lo
+  scheduler interroga il sensore anche fra un fetch e l'altro;
+- non esiste un modo più lento dell'ULP a 300 s, e un salto di misure non si
+  recupera con `setState()`: per questo il sensore si sveglia anche di notte.
+
+**Taratura di fondo**, automatica, senza comandi. Il pedice accanto all'IAQ sul
+pannello è l'accuratezza: 0 stabilizzazione o run-in (circa 20 minuti in ULP), 1
+storia insufficiente, 2 auto-trimming in corso, 3 tarato. Dopo un erase della flash,
+con il dispositivo sempre alimentato e senza riavvii:
+1. attendere il passaggio da 0 a 1;
+2. esporre il sensore ad aria cattiva, per esempio una scatola chiusa con aria
+   espirata, per almeno 30 minuti (in ULP sono solo 6 campioni: meglio 45-60);
+3. poi ad aria buona, aria esterna o finestra aperta, per lo stesso tempo;
+4. attendere il 3, che salva subito lo stato in NVS.
+
+**Riferimenti BSEC**:
+- [BST-BME-Integration-Guide-AN011-321000](https://github.com/sonu27/polverine/blob/main/docs/bsec/integration-guide.md)
+  (2025-04-29, trascrizione su GitHub): guida per BSEC 3.x che copre anche il
+  BME680; i limiti di temporizzazione valgono per BSEC 2.x per analogia.
+- [Pacchetto software Bosch BSEC2](https://www.bosch-sensortec.com/software-tools/software/bme688-software/),
+  con la guida ufficiale per BSEC 2.x (download dopo l'accettazione della licenza).
+- [BST-BME680-Integration-Guide-AN008-47](https://git.digital-infinity.de/DigitalInfinity/ESP32-PaxCounter/raw/commit/17cd82da686440d9e41a3f8a2fab59e9441f43a0/lib/Bosch-BSEC/docs/BST-BME680-Integration-Guide-AN008-47.pdf)
+  (2018, BSEC 1.x): metteva al 50% la soglia oltre cui l'accuratezza resta a 0, che
+  la AN011 porta al 6,25%.
+- Si resta su BSEC 2.6.1.0, la versione che Bosch offre per il BME680
+  ([BME680 Software](https://www.bosch-sensortec.com/software-tools/software/bme680-software-bsec/)):
+  BSEC 3.3.0.1 è pubblicato per BME688 e BME690, non ha un wrapper Arduino
+  ufficiale, cambia API e non cambia i vincoli dell'ULP.
 
 **Config hardware** (`BME680_I2C_ADDR`, `BME680_SDA_PIN`, `BME680_SCL_PIN`) in
 [`Indoor.h`](Indoor.h): default 0x77 / SDA 21 / SCL 22. Se il sensore non è collegato o
@@ -690,14 +732,16 @@ nell'app. Si verifica in **Device Debugging** sulla console, oppure con
 accettato). Costa una sottoscrizione e fino a `TUYA_ACK_TIMEOUT_MS` per publish.
 
 **Sul pannello** compare solo un badge `TUYA ERR` rosso sul bordo inferiore del
-riquadro Interno quando l'ultimo tentativo speso è fallito. Il ridisegno è chiesto solo quando il
-badge compare o sparisce, perchè un refresh pieno costa ~24 s. Una radio caduta non
-alza il badge: lo scheduler non chiama nemmeno il modulo.
+riquadro Interno quando l'ultimo tentativo speso è fallito. Il modulo non comanda il
+refresh: il badge si legge al momento del disegno e compare nel frame del ciclo. Una
+radio caduta non alza il badge: lo scheduler non chiama nemmeno il modulo.
 
-Cadenza (`tuya_min`), fascia oraria e ritenti sono dello scheduler. È l'unico task con
-`maxAttempts` a 0 (un tentativo per slot comunque vada, perchè i suoi modi di
-fallimento sono permanenti sulla scala dei minuti) e l'unico che può ignorare la fascia
-WiFi, con `TUYA_IGNORE_ACTIVE_HOUR` a 1 nel `.ino`.
+Cadenza (`tuya_min`), fascia oraria e ritenti sono dello scheduler. Il publish segue
+il sensore: nello stesso ciclo il sensore è appena stato letto, quindi il campione
+pubblicato è quello nuovo. È l'unico task con `maxAttempts` a 0 (un tentativo per slot
+comunque vada, perchè i suoi modi di fallimento sono permanenti sulla scala dei minuti).
+Di notte, fuori dalla fascia WiFi, non si pubblica: nell'app resta l'ultimo dato della
+sera.
 
 ### Clock (`Clock.h`)
 
@@ -712,6 +756,12 @@ normale la accende lo scheduler con `wifiOn()`, che chiama `Clock::sincronizza()
 forma bloccante; nella finestra di manutenzione la radio è di
 [`Maintenance.h`](Maintenance.h), che usa la forma **non bloccante** per non congelare
 web server e access point durante un possibile upload.
+
+Il timer RTC conserva l'ora attraverso un riavvio software (OTA, crash, watchdog), non
+attraverso un'interruzione di alimentazione: dopo un riavvio `sincronizza()` trova
+l'ora già valida e avvia comunque SNTP senza attendere, così la risincronizzazione
+oraria riprende. Con l'ora valida fuori dalla fascia WiFi il boot non apre nemmeno la
+finestra di manutenzione, e la radio resta spenta fino all'apertura della fascia.
 
 `valido()` è l'unica definizione di "ora valida": ci poggiano la fascia oraria, la
 cadenza giornaliera del cinema, la precondizione dei due task calendario e le guardie
@@ -764,8 +814,10 @@ curl -u admin:PASSWORD -d "owm_min=30&mail_min=15" http://epd-dashboard.local/co
 - La validazione è in blocco: si costruisce un candidato completo e lo si applica tutto
   insieme, perchè i vincoli incrociati legano più campi. Un solo valore fuori limiti fa
   fallire l'intera POST.
-- L'effetto è dal giro successivo, senza riavvio: lo scheduler indirizza le cadenze con
+- L'effetto è dal ciclo successivo, senza riavvio: lo scheduler indirizza le cadenze con
   un puntatore a membro e le rilegge a ogni valutazione.
+- Le cadenze dei task vanno a multipli di 5 minuti, un ciclo del sensore: l'input ha
+  `step` e un valore fuori passo si rifiuta con il motivo.
 - `-u` serve solo se `Env.h` definisce `MAINT_HTTP_PASSWORD` (utente `MAINT_HTTP_USER`,
   default `admin`). Il controllo CSRF confronta `Origin` con `Host` quando `Origin` c'è.
 
@@ -812,7 +864,14 @@ Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespa
 | Riquadro | Automatica | Automatica (percorso in fascia, cinema fuori), Cinema, Percorso, Wallpaper (`la_grande_onda`) |
 | Fascia | 07:00-09:00 | ai minuti, fine esclusa, dentro la fascia WiFi |
 
-La cadenza è `route_min` in `/config` (10 min, pavimento 5).
+La cadenza è `route_min` in `/config` (5 min, cioè a ogni ciclo, pavimento 5): ogni
+frame della fascia ha il traffico ricalcolato, e il servizio, con una cache di 60 s,
+va sempre in miss. **routefinder si contatta solo dentro la fascia percorso**,
+qualunque sia la sorgente: con la sorgente forzata a Percorso, fuori fascia il
+riquadro mostra l'ultimo percorso finchè ha meno di un'ora, poi il cinema. Il ping
+di sveglia a `/health` parte solo se il servizio non ha risposto negli ultimi
+`RENDER_SPINDOWN_MS` (15 min, dopo i quali render.com spegne l'istanza), cioè in
+pratica al primo ciclo della fascia.
 
 **Cinema e percorso condividono la flash.** Il percorso si scrive nello slot inattivo
 di [CinemaStore](CinemaStore.h), con un magic suo e l'istante del download: è possibile
@@ -852,8 +911,9 @@ void setup()
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
   CinemaStore::begin();                      // immagine cinema e percorso salvati in flash, se ci sono
-  Maintenance::begin();                      // finestra su rete di casa, AP di riserva
-  Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
+  if (!(Clock::valido() && !Scheduler::isInsideRadioHours()))
+    Maintenance::begin();                    // finestra su rete di casa, AP di riserva; mai di notte con l'ora nota
+  Scheduler::begin(TASK_TABLE, TASK_COUNT, hooks);   // radio, sensore e frame come hook
 }
 
 void loop()
@@ -861,33 +921,67 @@ void loop()
   if (Maintenance::finestraAperta())
   {
     Maintenance::servi();                        // macchina a stati + handleClient()
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);  // al più uno al secondo; la radio si usa, non si tocca
+    if (!Maintenance::clientAttivo())
+      Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);  // al più uno al secondo; la radio si usa, non si tocca
+    else
+      Scheduler::serviceSensor();                // con un client sulle pagine, solo il sensore
     delay(MAINTENANCE_LOOP_DELAY_MS);            // niente light sleep: il server deve rispondere
     return;
   }
 
   Maintenance::chiudi();                         // idempotente, consegna la radio spenta
-  Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);    // gate radio -> wifiOn -> fetch -> wifiOff -> task locali
+  Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);    // sensore -> wifiOn -> fetch -> wifiOff -> frame
   display.hibernate();
-  Scheduler::sleepUntilNextEvent();              // light sleep fino al prossimo evento
+  Scheduler::sleepUntilNextEvent();              // light sleep fino alla scadenza esatta del sensore
 }
 ```
 
-La sequenza dei task sta nella tabella `TASK_TABLE`, l'unico posto dove l'ordine è
-definito:
+**Il ciclo.** Lo scheduler ([Scheduler.h](Scheduler.h)) ha un solo orologio, il ciclo
+del sensore: un'interrogazione del BME680 ogni `CYCLE_S` (300 s, il periodo ULP di
+BSEC). Senza sensore il ciclo è interno e dura lo stesso. Ogni ciclo fa tre passi,
+sempre in quest'ordine:
 
-| Task | Radio | Cadenza | Note |
-|---|---|---|---|
-| `meteo` | sì | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta invece di attendere la cadenza piena. |
-| `mail` | sì | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
-| `google` | sì | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
-| `outlook` | sì | `outl_min` | Stessa precondizione di `google`. |
-| `tuya` | sì | `tuya_min` | Telemetria BME680 sul cloud Tuya. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
-| `route` | sì | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso fuori dalla sorgente percorso, senza orologio, arrivo o token. All'ingresso nella sorgente percorso riparte subito. Ping di sveglia a inizio giro come il cinema. |
-| `cinema` | sì | giornaliera, `cine_h` | Ultimo perchè può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del giro. Sospeso senza la partizione `wallpaper` e mentre il percorso è la sorgente del riquadro. |
-| `source` | no | ai bordi della fascia | Chiede il ridisegno quando il riquadro deve cambiare immagine (ingresso e uscita dalla fascia, percorso invecchiato, sorgente cambiata da `/route`); sveglia il dispositivo esattamente ai bordi. |
-| `bsec` | no | 300 s, dal sensore | Precede il display così un campione appena prodotto entra nel frame dello stesso giro. |
-| `display` | no | `disp_min` come **rate limit** | Ridisegna solo se c'è qualcosa di nuovo, e mai prima che la rete abbia dato un esito o sia scaduta l'attesa del primo frame. |
+1. **sensore**: `Indoor::refresh()`;
+2. **rete**: una sola accensione della radio per i task dovuti in questo ciclo,
+   nell'ordine della tabella, con i ping di sveglia prima dei fetch;
+3. **frame**: il ridisegno del pannello, sempre, a ogni ciclo della fascia WiFi, con
+   i dati appena prodotti.
+
+Le cadenze sono multipli del ciclo e si contano in cicli dallo slot precedente, mai in
+millisecondi, quindi non scivolano: meteo, mail e calendari a 10 minuti cadono un frame
+sì e uno no, percorso e Tuya a ogni frame. Un fetch fallito ritenta al ciclo
+successivo; lo slot resta ancorato al ciclo in cui si è aperto. Il primo ciclo di ogni
+giornata dentro la fascia rende dovuti tutti i periodici, così il primo frame del
+mattino ha dati nuovi.
+
+**La scadenza del sensore ha la precedenza su tutto**, perchè BSEC tollera solo il
+6,25% di scarto (vedi [Indoor](#indoor-indoorh)): lo sleep dura fino alla scadenza
+esatta, senza pavimento, e lo scheduler interroga il sensore anche fra un fetch e
+l'altro, prima del frame e mentre un client usa le pagine di manutenzione.
+
+**Di notte**, fuori dalla fascia WiFi, il ciclo esegue solo il passo del sensore: niente
+radio, niente Tuya, niente frame. Sono circa 12 risvegli all'ora di pochi millisecondi,
+il minimo che conserva l'accuratezza di BSEC. Senza sensore il dispositivo dorme fino
+all'apertura della fascia. Il Bluetooth è permanentemente disattivo: il `.ino`
+definisce `btClassicInUse()` e `bleInUse()` a `false`, e il core rilascia la memoria
+del controller al boot.
+
+La sequenza dei task di rete sta nella tabella `TASK_TABLE`, l'unico posto dove l'ordine
+è definito:
+
+| Task | Cadenza | Note |
+|---|---|---|
+| `meteo` | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta al ciclo successivo invece di attendere la cadenza piena. |
+| `mail` | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
+| `google` | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
+| `outlook` | `outl_min` | Stessa precondizione di `google`. |
+| `tuya` | `tuya_min` | Telemetria BME680 sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
+| `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso fuori dalla fascia percorso o dalla sorgente percorso, senza orologio, arrivo o token. All'ingresso nella fascia parte al primo ciclo. Ping di sveglia solo se l'istanza dorme. |
+| `cinema` | giornaliera, `cine_h` | Ultimo perchè può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del passo di rete. Sospeso senza la partizione `wallpaper` e mentre il percorso è la sorgente del riquadro. |
+
+Ingresso e uscita dalla fascia percorso, scadenza del percorso e cambio di sorgente da
+`/route` non hanno risvegli propri: `drawTestBackground()` sceglie l'immagine del
+riquadro a ogni frame, quindi il cambio compare al ciclo successivo.
 
 Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_common.h`
 con le manopole di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
@@ -939,9 +1033,7 @@ I `#define` in testa allo sketch sono:
   Esattamente uno deve essere definito; il dispatcher `Layout.h` emette
   `#error` altrimenti;
 - `DISPLAY_PARTIAL_REFRESH 0` → ogni frame è un refresh pieno; il valore 1 non è
-  implementato e produce `#error`;
-- `TUYA_IGNORE_ACTIVE_HOUR` → `1` per pubblicare la telemetria Tuya anche fuori
-  dalla fascia WiFi.
+  implementato e produce `#error`.
 
 Le cadenze vivono in [`Timings.h`](Timings.h), insieme al **pavimento** di ciascuna, e
 sono modificabili a runtime dalla pagina `/config` della finestra di manutenzione
@@ -962,33 +1054,37 @@ dei dati: meglio una UI parziale subito che una UI completa dopo minuti.
 
 ### Cadenze configurabili (`Timings.h`, modificabili da `/config`)
 
-Ogni cadenza ha un **pavimento**: il valore sotto il quale interrogare più
-spesso non produce informazione nuova. Un valore fuori dai limiti viene
-rifiutato dalla pagina web e, se arriva comunque da NVS, viene riportato entro i limiti al
-boot e la correzione è scritta nel log.
+Ogni cadenza ha un **pavimento**, il valore sotto il quale interrogare più spesso non
+produce informazione nuova, e un **passo**: le cadenze dei task sono multipli di
+`CYCLE_MIN` (5 minuti, un ciclo del sensore), perchè lo scheduler le conta in cicli.
+Il pannello non ha una cadenza propria: si ridisegna a ogni ciclo della fascia WiFi.
+Un valore fuori dai limiti o dal passo viene rifiutato dalla pagina web con il motivo
+e, se arriva comunque da NVS, viene riportato entro i limiti o al multiplo successivo
+al boot, con la correzione scritta nel log. Pavimento, tetto e passo stanno nel
+descrittore del campo (`Timings::Campo`), su cui poggia tutta la validazione.
 
 La **chiave** è insieme il nome della voce in NVS e il nome del campo POST
 di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 
-| Chiave | Default | Pavimento | Unità | Effetto |
-|---|---|---|---|---|
-| `disp_min` | `5` | `1` | min | Distanza **minima** fra due ridisegni del pannello. Il refresh avviene solo se c'è qualcosa di nuovo da mostrare, mai più spesso di così. Il pavimento reale è la durata di un refresh, ~24 s. |
-| `owm_min` | `10` | `10` | min | Cadenza One Call 3.0. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
-| `outl_min` | `10` | `1` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati: il costo è la radio accesa. |
-| `goog_min` | `10` | `1` | min | Cadenza Google Calendar API v3. |
-| `mail_min` | `10` | `1` | min | Cadenza Gmail API. Indipendente dalle altre. |
-| `tuya_min` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il periodo di campionamento del BME680: sotto, si ripubblica lo stesso campione. |
-| `coal_min` | `2` | `0` | min | Finestra di coalescing: a radio accesa si eseguono anche i task che scadrebbero entro questo margine, così scadenze vicine condividono un'accensione. `0` disattiva. |
-| `maint_min` | `3` | `1` | min | Durata della finestra di manutenzione. |
-| `wifi_h_ini` | `7` | `0` | ora | Inizio della fascia in cui la radio può accendersi. |
-| `wifi_h_fin` | `23` | `23` max | ora | Fine della fascia, inclusiva fino a `23:59`. |
-| `cine_h` | `7` | `0` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi; dentro la fascia percorso il fetch slitta alla sua fine. |
-| `route_min` | `10` | `5` | min | Cadenza del percorso del mattino, solo dentro la fascia percorso. Il pavimento tiene basse le chiamate alla Routes API. |
+| Chiave | Default | Pavimento | Passo | Unità | Effetto |
+|---|---|---|---|---|---|
+| `owm_min` | `10` | `10` | `5` | min | Cadenza One Call 3.0, un frame sì e uno no. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
+| `outl_min` | `10` | `5` | `5` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati, ma sotto un ciclo il fetch non verrebbe mostrato prima del successivo. |
+| `goog_min` | `10` | `5` | `5` | min | Cadenza Google Calendar API v3. |
+| `mail_min` | `10` | `5` | `5` | min | Cadenza Gmail API. |
+| `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il periodo di campionamento del BME680: sotto, si ripubblica lo stesso campione. |
+| `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
+| `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
+| `wifi_h_fin` | `23` | `23` max | `1` | ora | Fine della fascia, inclusiva fino a `23:59`. |
+| `cine_h` | `7` | `0` | `1` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi; dentro la fascia percorso il fetch slitta alla sua fine. |
+| `route_min` | `5` | `5` | `5` | min | Cadenza del percorso del mattino, a ogni ciclo, solo dentro la fascia percorso. |
 
 Vincoli incrociati, verificati sia a compile-time sui default sia a runtime
-su ogni modifica: inizio fascia ≤ fine fascia; ora cinema dentro la fascia;
-coalescing minore di ogni cadenza di fetch; refresh display non più breve di
-un refresh fisico.
+su ogni modifica: inizio fascia ≤ fine fascia; ora cinema dentro la fascia; fascia
+percorso dentro la fascia WiFi (`Routefinder::windowOutsideRadioHours()`).
+
+`SCHEMA` vale 2 da quando le cadenze sono multipli del ciclo: un NVS con lo schema
+precedente si azzera al boot e tutto riparte dai default.
 
 ### Costanti interne (timeout hard-coded)
 
@@ -997,11 +1093,11 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 
 | Costante | Valore | Effetto |
 |---|---|---|
-| `FETCH_RITENTO_MS` | `30000` ms | Distanza minima fra due tentativi dello stesso slot. È ciò che impedisce alla finestra di manutenzione, dove il loop gira ogni ~10 ms, di ripetere cento volte al secondo un tentativo fallito. |
-| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena. `0` in tabella significa politica pessimista: lo slot è speso prima ancora di eseguire. |
-| `WIFI_CONNECT_TIMEOUT_MS` | `15000` ms | Attesa massima di `WL_CONNECTED` in `wifiOn()`. |
-| `WIFI_RITENTO_MS` | `300000` ms | Dopo un tentativo di connessione fallito nessun task di rete riprova prima di questo tempo. |
-| `PRIMO_FRAME_ATTESA_MS` | `15000` ms | Tempo massimo dal boot entro cui il primo frame viene disegnato comunque, con i placeholder `--`. |
+| `CYCLE_S` / `CYCLE_MIN` | `300` s / `5` min | Ciclo dello scheduler, pari al periodo ULP di BSEC: sensore, fetch dovuti, frame. Passo delle cadenze dei task. |
+| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena; un tentativo per ciclo, quindi il ritento cade al ciclo successivo. `0` in tabella significa politica pessimista: lo slot è speso prima ancora di eseguire. |
+| `WIFI_CONNECT_TIMEOUT_MS` | `15000` ms | Attesa massima di `WL_CONNECTED` in `wifiOn()`. Una connessione fallita riprova al ciclo successivo. |
+| `PRIMO_FRAME_ATTESA_MS` | `15000` ms | Nella finestra di manutenzione: attesa massima dei fetch (STA e ora valida) prima che il frame del ciclo parta comunque, con i placeholder `--`, e prima che i fetch partano senza l'ora. |
+| `RENDER_SPINDOWN_MS` | 15 min | Inattività dopo la quale render.com spegne un servizio free: il ping di sveglia parte solo se l'ultima risposta del server è più vecchia. |
 | `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
 | `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. |
 | `TLS_HANDSHAKE_TIMEOUT_S` | `15` s | Tetto dell'handshake di ogni connessione HTTPS, applicato da `Net.h`. Il default del core è 120 s, e un server bloccato fermerebbe tutti i produttori successivi. |
@@ -1015,7 +1111,8 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
 | `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. |
 | `TUYA_ACK_TIMEOUT_MS` | `2000` ms | Attesa della conferma applicativa del cloud, pagata solo con `TUYA_REQUEST_ACK` a 1. |
-| `SLEEP_MIN_S` / `SLEEP_MAX_S` | `30` / `300` s | Pavimento e tetto del light sleep dinamico. Il tetto è il periodo ULP del sensore. |
+| `SLEEP_MAX_S` | 24 h | Tetto di sicurezza di un light sleep. Con il sensore lo sleep dura fino alla sua scadenza esatta, senza pavimento; il tetto serve alla notte senza sensore, che dorme fino all'apertura della fascia. |
+| `BSEC_MARGINE_POLL_MS` | `1000` ms | Il poll del sensore cade questo margine dopo i 300 s, mai prima: lo 0,3% del periodo, dentro il 6,25% che BSEC tollera. |
 | `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). |
 | `BSEC_STATE_SAVE_INTERVAL_MS` | `6` h | Persistenza dello stato di calibrazione BSEC in NVS. |
 | `MAINT_STA_TIMEOUT_S` | `15` s | Attesa della rete di casa prima di ripiegare sull'AP di emergenza. |
@@ -1026,73 +1123,76 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 `setup()` carica le cadenze da NVS (`Timings::begin()`), inizializza i
 moduli, avvia la STA e il server (`Maintenance::begin()`) e registra la
 tabella dei task. Da qui il `loop()` gira ogni ~10 ms, senza light sleep,
-altrimenti il `WebServer` non risponderebbe.
+altrimenti il `WebServer` non risponderebbe. Fuori dalla fascia WiFi con l'ora già
+valida, cioè dopo un riavvio software di notte, la finestra non si apre.
 
 ```
 t=0       setup(): Timings da NVS, moduli, STA in risalita (non bloccante)
 t<=15s    STA connessa      -> server sulla rete di casa + mDNS
           oppure timeout    -> access point di emergenza (la STA continua a tentare)
 ogni giro Maintenance::servi()                 // macchina a stati + handleClient()
-          Scheduler::giro(ESTERNA)             // task dovuti, se la STA e' su
-            fase rete:  ping cinema -> meteo -> mail -> google -> outlook -> cinema
-            fase locale: bsec -> display
+          Scheduler::runRound(MANAGED_BY_MAINTENANCE), al più uno al secondo
+            sensore (al primo giro: ciclo 1)
+            rete, se la STA è su e l'ora è valida (o dopo 15 s): meteo -> mail -> google -> outlook -> tuya -> cinema
+            frame, appena i fetch sono fatti (o dopo 15 s)
 ```
 
-Il **primo frame** non aspetta che i dati siano validi: il task `display` è dovuto
-appena c'è qualcosa da mostrare **e** la rete ha dato un esito qualsiasi (anche un
-fallimento), oppure sono passati `PRIMO_FRAME_ATTESA_MS` dal boot. Con la rete a posto
-il frame arriva in pochi secondi con i dati veri; senza rete arriva comunque entro 15 s
-con i placeholder `--` e il wallpaper PROGMEM.
+Il **primo frame** non aspetta che i dati siano validi: parte appena i fetch del primo
+ciclo sono fatti, anche falliti, oppure dopo `PRIMO_FRAME_ATTESA_MS`. Con la rete a
+posto arriva in pochi secondi con i dati veri; senza rete arriva comunque entro 15 s
+con i placeholder `--` e il wallpaper PROGMEM. Un boot di notte con l'ora da
+sincronizzare apre la finestra, aspetta l'ora e, scoperta la notte, non fa nè fetch nè
+frame.
 
 ### Flusso a regime — finestra chiusa
 
 `Maintenance::chiudi()` consegna la radio spenta. Il `loop()` diventa:
 
 ```
-wake      Scheduler::runRound(MANAGED_BY_SCHEDULER)
-            serve la radio?   (scadenza STRETTA di un task di rete, e fascia oraria)
-            si -> wifiOn() -> rilegge l'ora (SNTP appena fatto) -> esegue i task scaduti
-                  O in scadenza entro coal_min -> wifiOff()
-            poi sempre: fase locale (bsec, display)
+wake      Scheduler::runRound(MANAGED_BY_SCHEDULER)   // alla scadenza esatta del sensore
+            1. sensore: Indoor::refresh()
+            2. rete, solo in fascia e se un task è dovuto in questo ciclo:
+               wifiOn() -> rilegge l'ora (SNTP appena fatto) -> task dovuti, sensore fra l'uno e l'altro -> wifiOff()
+            3. frame, solo in fascia: Weather::render()
           display.hibernate()
-          Scheduler::sleepUntilNextEvent()   // fino al prossimo evento, fra SLEEP_MIN_S e SLEEP_MAX_S
+          Scheduler::sleepUntilNextEvent()   // fino alla scadenza esatta del sensore, ~301 s
 ```
 
 Proprietà del ciclo:
 
-- **le cadenze sono indipendenti**. Con `mail_min` a 3 e `owm_min` a 10 il
-  dispositivo si sveglia a 3, 6, 9, 12… e il meteo entra al minuto 9,
-  anticipato di uno dal coalescing per condividere l'accensione con la mail.
-  Il refresh del pannello ha il suo ritmo (`disp_min`) e non è legato al
-  periodo di sleep;
-- **di notte** (fuori dalla fascia) i task di rete non contribuiscono al
-  calcolo del risveglio: il dispositivo si sveglia solo per il campione
-  BME680 ogni 300 s, e ridisegna solo se quel campione ha cambiato qualcosa.
+- **le cadenze sono in cicli**. Con i default il dispositivo si sveglia ogni ~301 s:
+  un ciclo con sensore, Tuya, percorso (in fascia percorso) e frame, il successivo
+  anche con meteo, mail e calendari, e così via. Nessun task scivola rispetto ai frame,
+  perchè lo slot si conta dal ciclo in cui si è aperto e non dall'istante di fine;
+- **un risveglio per ciclo**: nessun anticipo, nessun ritento a 30 s, nessun risveglio
+  ai bordi della fascia percorso;
+- **di notte** (fuori dalla fascia) solo il passo del sensore, ogni ~301 s, il minimo
+  che conserva l'accuratezza di BSEC; senza sensore, un solo sonno fino all'apertura.
 
-Ogni esito è loggato con durata e prossima scadenza:
+Ogni esito è loggato con durata e prossimo slot:
 
 ```
-[sched] meteo: ok in 1240 ms, prossimo fra 600 s
-[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento fra 30 s
+[sched] meteo: ok in 1240 ms, prossimo fra 2 cicli
+[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento al prossimo ciclo
 [sched] outlook: saltato, radio non connessa (slot intatto)
-[sched] cinema: ok in 4230 ms, prossimo fra 23 h
-[sched] sleep 287 s (prossimo: bsec)
+[sched] cinema: ok in 4230 ms, prossimo domani dalle 07
+[sched] sleep 276030 ms (prossimo: sensore)
 ```
 
 ### Cosa succede se un fetch fallisce a regime
 
 | Tipo di fallimento | Comportamento | Quando si riprova |
 |---|---|---|
-| Qualunque fetch, 1° fallimento | Cache del modulo invariata, log con durata e tentativo | Fra `FETCH_RITENTO_MS` (30 s) |
-| Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task |
-| Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame viene comunque ridisegnato | Fra 30 s |
+| Qualunque fetch, 1° fallimento | Cache del modulo invariata, log con durata e tentativo | Al ciclo successivo |
+| Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task, contata dal ciclo in cui lo slot si era aperto |
+| Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame del ciclo lo mostra | Al ciclo successivo |
 | Radio caduta a giro iniziato | Esito `saltato`: **lo slot resta intatto e il tentativo non viene speso**, perchè è un guasto a monte | Al primo giro con la radio su |
-| `wifiOn()` fallito | Nessun task di rete riprova per `WIFI_RITENTO_MS` (5 min): evita di pagare 15 s di attesa a ogni risveglio | Fra 5 min |
-| Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Fra 30 s |
-| Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata** e ridisegno richiesto: è una risposta valida, non un errore | Alla cadenza piena |
-| Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi a 30 s di distanza, poi domani a `cine_h` |
-| Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Fino a 2 tentativi a 30 s di distanza, poi alla cadenza `route_min` |
-| Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, con ridisegno solo alla transizione. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento ravvicinato |
+| `wifiOn()` fallito | Nessun tentativo speso, il frame del ciclo si disegna comunque con i dati in cache | Al ciclo successivo |
+| Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Al ciclo successivo |
+| Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata**: è una risposta valida, non un errore, e il frame del ciclo la mostra | Alla cadenza piena |
+| Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi in due cicli consecutivi, poi domani a `cine_h` |
+| Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Al ciclo successivo, poi alla cadenza `route_min` |
+| Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
 | BME680 (init failed) | `Indoor::refresh()` no-op, riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
@@ -1112,8 +1212,9 @@ Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 - **Boot → primo refresh con WiFi e tutti i fetch OK**: i fetch HTTP in sequenza più un refresh pieno.
 - **Boot → primo refresh senza WiFi**: `PRIMO_FRAME_ATTESA_MS` (15 s) + un refresh pieno, ~39 s.
 - **Boot → primo refresh con cinema in cold start di render.com**: fino a `CINEMA_HTTP_TIMEOUT_MS` (45 s) + un refresh pieno se il pre-warm non è bastato. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
-- **Refresh successivo a regime**: ~24 s (refresh pieno).
-- **Latenza di un nuovo dato sul display**: al massimo `disp_min` minuti (5 di default) tra il wake up e il render successivo.
+- **Refresh successivo a regime**: ~24 s (refresh pieno), uno per ciclo.
+- **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo della fascia percorso, sorgente cambiata da `/route`, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo.
+- **Usura del pannello**: con la fascia 7-23 sono 192 refresh pieni al giorno. L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
 
 ---
 
@@ -1229,8 +1330,10 @@ Il fetch cinema (endpoint render.com) avviene **una volta al giorno alle
 `CINEMA_DAILY_FETCH_HOUR` local** (default 07:00) e non ha rate limit (è il tuo
 servizio). I fetch di rete sono vincolati alla finestra oraria
 `WIFI_ACTIVE_HOUR_START..END` (default 07:00–23:59): fuori da questa fascia la radio
-resta spenta e non si contattano API esterne, con l'unica eccezione della telemetria
-Tuya se `TUYA_IGNORE_ACTIVE_HOUR` è a 1.
+resta spenta e non si contattano API esterne, Tuya compreso. Il percorso
+(`ROUTE_FETCH_MIN`, 5 min) si chiede alla Routes API solo nella fascia percorso:
+24 richieste al giorno con la fascia 07:00-09:00, contro 5 000 gratuite al mese dello
+SKU Compute Routes Pro.
 
 ---
 

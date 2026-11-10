@@ -1,6 +1,6 @@
 ---
 name: BSEC2 - modi di campionamento, warning positivi, e perchè la misura on-demand non si usa
-description: 300 s è un modo non un intervallo; run() ritorna true quando non c'è niente da leggere, quindi le uscite si leggono con getOutputs() e il campione nuovo dal time_stamp; callback del wrapper non usata perchè copia uscite e Bsec2 per valore; perchè ULP plus è stata valutata e scartata
+description: 300 s è un modo non un intervallo; tolleranza del 6,25% sul poll (guida AN011) e conseguenze su sleep e notte; configurazione ULP esplicita e salvataggio dello stato ad accuratezza 3; taratura di fondo; run() ritorna true quando non c'è niente da leggere, quindi le uscite si leggono con getOutputs() e il campione nuovo dal time_stamp; callback del wrapper non usata; perchè ULP plus e BSEC3 sono scartati
 type: reference
 ---
 
@@ -34,6 +34,24 @@ type: reference
 4. **Non compone bene con uno scheduler periodico.** Il task `bsec` ha una scadenza calcolata sull'ultima interrogazione + 300 s, mentre una misura extra produce un campione **fuori scadenza**: senza un flag che leghi le due cose il task non risulterebbe dovuto nel giro in cui la misura è stata chiesta, e il campione verrebbe raccolto fino a 5 minuti dopo. E un flag del genere ha bisogno del proprio tetto, perchè "nessuna risposta" non è osservabile (punto 1 della sezione precedente): senza scadenza il sensore resterebbe dovuto a ogni giro e il dispositivo si sveglierebbe a `SLEEP_MIN_S` invece che ogni 300 s, dieci volte più spesso.
 
 Il beneficio, anche funzionando tutto, sarebbe stato "a volte più fresco" e non "sempre fresco": se BSEC ha bisogno di più di un `run()` per il ciclo dello heater, il campione arriva comunque al giro dopo. Sproporzionato rispetto al rischio.
+
+## Tolleranza del poll e conseguenze sul firmware
+
+**La guida Bosch `BST-BME-Integration-Guide-AN011-321000` (2025, BSEC 3.x, copre il BME680)** fissa al **6,25%** sia il warning `BSEC_W_SC_CALL_TIMING_VIOLATION` (§3.3.4.1, "a maximum jitter of 6.25% is allowed") sia la soglia oltre cui l'accuratezza IAQ resta a 0 (§3.2): ±18,75 s in ULP. La vecchia AN008-47 (2018, BSEC 1.x) metteva la seconda soglia al 50%. La guida di BSEC 2.x (AN011-61) sta solo nel pacchetto Bosch dietro licenza; una trascrizione della AN011-321000 è in `github.com/sonu27/polverine`, `docs/bsec/integration-guide.md`. Conseguenze, tutte nello scheduler ([[scheduler_task_table]]):
+- il sensore è il primo passo del ciclo e la sua scadenza è l'orologio del firmware; lo sleep dura fino a lei esattamente, senza pavimento;
+- lo scheduler lo interroga anche fra un fetch e l'altro, prima del frame e con un client sulle pagine di manutenzione;
+- di notte restano i soli risvegli del sensore: un buco di ore torna ad accuratezza 0 (stabilizzazione ~20 min in ULP), `setState()` serve a un riavvio e non a saltare misure, e non esiste un modo più lento dei 300 s.
+
+Non verificabile: se `next_call` si calcola dall'istante della chiamata o su una griglia fissa (libreria binaria, `bmeConf` privato senza getter). Con una griglia fissa il secondo di `BSEC_MARGINE_POLL_MS` si accumulerebbe e dopo ~19 cicli comparirebbe il warning 100; la correzione sarebbe contare la scadenza dal `time_stamp` dell'ultima uscita.
+
+## Configurazione e stato
+
+- `Indoor::begin()` carica con `setConfig()` il blob `bme680_iaq_33v_300s_4d` della libreria (breakout alimentata a 3,3 V, ULP, storia di 4 giorni) **prima** di `restoreBsecState()`, come l'esempio Bosch `basic_config_state`. Il blob (1943 byte, `BSEC_MAX_PROPERTY_BLOB_SIZE`) sta a livello di namespace, `inline const`, non sullo stack di `begin()`. Senza `setConfig()` BSEC gira con una configurazione di default non dichiarata.
+- Uno stato salvato con un'altra configurazione viene rifiutato da `setState()` e la taratura riparte una volta.
+- Lo stato si salva la prima volta che l'accuratezza IAQ arriva a 3 nel boot (flag `savedAtFullAccuracy`), poi ogni `BSEC_STATE_SAVE_INTERVAL_MS` con accuratezza almeno 1. L'esempio Bosch invece salva al primo campione qualunque sia l'accuratezza, poi ogni 360 minuti.
+- **Taratura di fondo** automatica: accuratezza 0 = stabilizzazione o run-in, 1 = esporre una volta ad aria buona (esterna) e cattiva (scatola con aria espirata), 2 = auto-trimming, 3 = tarato; circa 30 minuti per tipo d'aria (AN011 §5.3.2.1), di più in ULP dove 30 minuti sono 6 campioni. Un erase della flash cancella il namespace `bme680` e la taratura riparte.
+
+**BSEC3 scartato per il BME680**: Bosch offre per questo sensore BSEC 2.6.1.0 (quella in uso, libreria bsec2 1.10.2610); BSEC 3.3.0.1 è pubblicato per BME688 e BME690, non ha un wrapper Arduino ufficiale (l'unico port, `mauringo/Bsec3-ArduinoLibrary-Unofficial`, supporta solo il BME690), cambia API (AN011 §2.3) e non cambia i vincoli dell'ULP. La licenza BSEC copre BME680, BME688 e BME690.
 
 Correlate: [[bme680_precisione_e_tipi]] per il dato che questi campioni
 producono, la precisione di ogni grandezza e i tipi in cui viene rappresentato.

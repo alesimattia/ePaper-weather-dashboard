@@ -7,6 +7,7 @@
  */
 #include "Timings.h"
 #include <cstdio>
+#include <cstring>
 
 uint32_t g_msFinto = 0;
 SerialeFinta Serial;
@@ -22,9 +23,9 @@ int main()
 {
   using namespace Timings;
   Timings::begin();
-  ok(get().owmMin == 10 && get().displayRefreshMin == 5 && get().cinemaOra == 7 &&
-         get().tuyaMin == 5,
+  ok(get().owmMin == 10 && get().cinemaOra == 7 && get().tuyaMin == 5,
      "default caricati");
+  ok(CYCLE_MIN == 5 && CYCLE_S == BSEC_PERIODO_ULP_S, "ciclo di 5 minuti, pari al periodo ULP");
 
   // Combinazione valida che l'applicazione campo-per-campo respingeva:
   // allargare la fascia e spostare l'ora del cinema vanno insieme.
@@ -42,36 +43,49 @@ int main()
   Valori c = get(); c.wifiOraInizio = 20; c.wifiOraFine = 5;
   ok(!applica(c, nullptr), "inizio fascia oltre la fine respinto");
 
-  Valori d = get(); d.coalesceMin = 99;            // >= di ogni cadenza di fetch
-  ok(!applica(d, nullptr), "coalescing >= cadenza respinto");
-
   Valori e = get(); e.owmMin = 3;                  // sotto il pavimento 10
   ok(!applica(e, nullptr), "meteo sotto il pavimento respinto");
-
-  Valori f = get(); f.displayRefreshMin = 0;
-  ok(!applica(f, nullptr), "refresh display a 0 respinto");
 
   // Il pavimento della telemetria Tuya e' il periodo di campionamento BSEC:
   // sotto, si ripubblica lo stesso campione.
   Valori i = get(); i.tuyaMin = 2;
   ok(!applica(i, nullptr), "telemetria Tuya sotto il pavimento respinta");
 
-  // Unico vincolo incrociato violato: le altre cadenze restano sopra il 5.
-  Valori j = get(); j.coalesceMin = j.tuyaMin;
-  ok(!applica(j, nullptr), "coalescing pari alla cadenza Tuya respinto");
-
-  // Il percorso sta sotto la Routes API a pagamento: pavimento a 5 minuti, e il
-  // coalescing non può raggiungerne la cadenza.
-  ok(get().routeMin == 10, "cadenza del percorso al default");
+  // Il percorso gira a ogni ciclo della fascia percorso: default e pavimento
+  // coincidono con il ciclo.
+  ok(get().routeMin == 5, "cadenza del percorso al default, un ciclo");
   Valori k = get(); k.routeMin = 4;
   ok(!applica(k, nullptr), "percorso sotto il pavimento respinto");
-  Valori l = get(); l.routeMin = 5; l.coalesceMin = 5;
-  ok(!applica(l, nullptr), "coalescing pari alla cadenza del percorso respinto");
 
-  Valori g = get(); g.mailMin = 3;
-  ok(applica(g, nullptr) && save(), "mail a 3 min: applicato e salvato");
+  // Le cadenze sono multipli del ciclo: lo scheduler le conta in cicli.
+  Valori n = get(); n.mailMin = 12;
+  m = nullptr;
+  ok(!applica(n, &m) && get().mailMin == 10, "mail a 12 min, non multiplo del ciclo: respinto, stato invariato");
+  std::printf("   motivo: %s\n", m ? m : "(nessuno)");
+  ok(m != nullptr && std::strstr(m, "mail_min") && std::strstr(m, "multiplo di 5"),
+     "  il motivo nomina la chiave e il passo");
+  Valori o = get(); o.owmMin = 15; o.wifiOraFine = 22;   // ore a passo 1
+  ok(applica(o, nullptr), "meteo a 15 min e fine fascia alle 22: accettati");
+  ok(campi()[0].step == CYCLE_MIN, "passo delle cadenze nel descrittore = CYCLE_MIN");
+
+  Valori g = get(); g.mailMin = 20;
+  ok(applica(g, nullptr) && save(), "mail a 20 min: applicato e salvato");
   Timings::begin();
-  ok(get().mailMin == 3, "  riletto da NVS dopo un riavvio");
+  ok(get().mailMin == 20, "  riletto da NVS dopo un riavvio");
+
+  // Valore fuori passo in NVS, per esempio scritto da un firmware con un
+  // ciclo diverso: al boot sale al multiplo successivo e si riscrive.
+  { Preferences p; p.begin("timings"); p.putUShort("mail_min", 7); p.end(); }
+  Timings::begin();
+  ok(get().mailMin == 10, "mail a 7 in NVS: al boot sale al multiplo successivo, 10");
+  { Preferences p; p.begin("timings");
+    ok(p.getUShort("mail_min", 0) == 10, "  e riscritto"); }
+
+  // Schema di un firmware precedente (1): le chiavi cambiano significato, il
+  // namespace si azzera e si riparte dai default.
+  { Preferences p; p.begin("timings"); p.putUShort("schema", 1); p.putUShort("mail_min", 20); p.end(); }
+  Timings::begin();
+  ok(get().mailMin == 10 && get().routeMin == 5, "schema 1 in NVS: azzerato, default del ciclo");
 
   // Pavimento alzato da un firmware successivo al valore gia' salvato.
   { Preferences p; p.begin("timings"); p.putUShort("owm_min", 4); p.end(); }

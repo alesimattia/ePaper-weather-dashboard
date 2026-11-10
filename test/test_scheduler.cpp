@@ -192,154 +192,393 @@ static void verificaFuso()
 #endif
 }
 
-/** Stessa precondizione che nel firmware hanno i due task calendario. */
-static bool clockReady() { return Clock::valido(); }
+// ---------------------------------------------------------------------------
+// Piattaforma finta: sensore, radio e pannello registrano la sequenza dei passi
+// in g_eventi, così i test verificano l'ordine oltre ai conteggi.
+// ---------------------------------------------------------------------------
 
-static Scheduler::Outcome runOk() { return Scheduler::Outcome::OK; }
-static Scheduler::Outcome runFailed() { return Scheduler::Outcome::FAILED; }
+static char     g_eventi[512];
+static size_t   g_nEventi = 0;
+static void evento(char c) { if (g_nEventi + 1 < sizeof g_eventi) { g_eventi[g_nEventi++] = c; g_eventi[g_nEventi] = 0; } }
+static void azzeraEventi() { g_nEventi = 0; g_eventi[0] = 0; }
+
+/** Sensore finto con la stessa regola di Indoor: scadenza a ultimo poll +
+ *  periodo + margine, 0 prima del primo poll, differenza signed per il rollover. */
+static bool     g_sensoreAttivo = true;
+static bool     g_maiInterrogato = true;
+static uint32_t g_ultimoPollMs = 0;
+static uint32_t g_pollPrecedenteMs = 0;
+static int      g_poll = 0;
+static uint32_t msAlPoll()
+{
+  if (g_maiInterrogato) return 0;
+  const int32_t d = (int32_t)(g_ultimoPollMs + (uint32_t)BSEC_PERIODO_ULP_S * 1000u + BSEC_MARGINE_POLL_MS - g_msFinto);
+  return d <= 0 ? 0 : (uint32_t)d;
+}
+static void poll()
+{
+  g_pollPrecedenteMs = g_ultimoPollMs;
+  g_ultimoPollMs = g_msFinto;
+  g_maiInterrogato = false;
+  ++g_poll;
+  evento('S');
+}
+
+static bool g_radioOk = true;
+static int  g_frame = 0;
+
+/** Durata finta di un run(), che fa avanzare l'orologio come un fetch vero. */
+static uint32_t g_durataRunMs = 0;
+static bool     g_fallisciA = false;
+static int      g_runA = 0, g_runB = 0, g_runD = 0;
+
+static Scheduler::Outcome runA()
+{
+  evento('a'); ++g_runA; g_msFinto += g_durataRunMs;
+  return g_fallisciA ? Scheduler::Outcome::FAILED : Scheduler::Outcome::OK;
+}
+static Scheduler::Outcome runB() { evento('b'); ++g_runB; g_msFinto += g_durataRunMs; return Scheduler::Outcome::OK; }
+static Scheduler::Outcome runD() { evento('d'); ++g_runD; return Scheduler::Outcome::OK; }
+
+static Scheduler::Hooks hooksFinti()
+{
+  Scheduler::Hooks h;
+  h.radioOn = []() { evento('R'); return g_radioOk; };
+  h.radioOff = []() { evento('r'); };
+  h.sensorActive = []() { return g_sensoreAttivo; };
+  h.msUntilSensorPoll = msAlPoll;
+  h.pollSensor = poll;
+  h.drawFrame = []() { evento('F'); ++g_frame; g_msFinto += (uint32_t)DISPLAY_REFRESH_PIENO_S * 1000u; };
+  return h;
+}
+
+/** Riporta la piattaforma finta allo stato del boot. */
+static void boot(Scheduler::Task* tab, uint8_t n)
+{
+  g_sensoreAttivo = true; g_maiInterrogato = true; g_poll = 0;
+  g_radioOk = true; g_frame = 0; g_durataRunMs = 0; g_fallisciA = false;
+  g_runA = g_runB = g_runD = 0;
+  WiFi.stato = WL_CONNECTED;
+  for (uint8_t i = 0; i < n; ++i) tab[i].state = {};
+  azzeraEventi();
+  Scheduler::begin(tab, n, hooksFinti());
+}
+
+/** Porta l'orologio monotono alla scadenza esatta del sensore. */
+static void alProssimoPoll() { g_msFinto = g_ultimoPollMs + (uint32_t)BSEC_PERIODO_ULP_S * 1000u + BSEC_MARGINE_POLL_MS; }
+
+/** Fa avanzare insieme orologio monotono e ora locale, come fa il light sleep. */
+static void avanzaMs(uint32_t ms) { g_msFinto += ms; g_epochFinta += (time_t)(ms / 1000u); }
+
+static Scheduler::Task taskPeriodico(const char* tag, uint16_t Timings::Valori::*cadenza,
+                                     Scheduler::Outcome (*run)(), uint8_t tentativi = FETCH_MAX_TENTATIVI)
+{
+  Scheduler::Task t {};
+  t.tag = tag; t.cadence = Scheduler::Cadence::PERIODIC;
+  t.intervalMinutes = cadenza; t.maxAttempts = tentativi; t.run = run;
+  return t;
+}
+
+struct PrintFinto : Print { size_t write(uint8_t) override { return 1; } };
 
 int main()
 {
   ok(fusoImposta(TZ_TEST), "stringa POSIX del fuso interpretata");
   verificaFuso();
   Timings::begin();
-  const uint32_t MIN = 60u * 1000u;
+  const uint32_t CICLO_MS = (uint32_t)CYCLE_S * 1000u;
 
-  // ---- cadenza periodica e coalescing ------------------------------------
-  Scheduler::Task p {};
-  p.tag = "p"; p.cadence = Scheduler::Cadence::PERIODIC; p.needsRadio = false;
-  p.intervalMinutes = &Timings::Valori::owmMin;            // 10 min
-  p.retryIntervalMs = FETCH_RITENTO_MS; p.maxAttempts = FETCH_MAX_TENTATIVI;
-  p.run = runOk;
-
-  impostaOra(2026, 9, 10, 12, 0);
-  g_msFinto = 1000;
-  ok(Scheduler::msUntilDue(p, g_msFinto, oggiLocale()) == 0,
-     "periodica mai eseguita: dovuta subito");
-  Scheduler::recordOutcome(p, Scheduler::Outcome::OK, g_msFinto, 5, oggiLocale());
-  ok(!p.state.neverRun && p.state.lastSlotMs == 1000, "  slot consumato dopo l'esito");
-
-  g_msFinto = 1000 + 9 * MIN;
-  ok(!Scheduler::isDue(p, g_msFinto, oggiLocale(), 0), "a 9 min: non dovuta (scadenza stretta)");
-  ok(Scheduler::isDue(p, g_msFinto, oggiLocale(), 2 * MIN), "a 9 min: dovuta con coalescing 2 min");
-  g_msFinto = 1000 + 10 * MIN;
-  ok(Scheduler::isDue(p, g_msFinto, oggiLocale(), 0), "a 10 min: dovuta");
-
-  // ---- ritento e soglia --------------------------------------------------
-  Scheduler::Task r = p; r.tag = "r"; r.run = runFailed; r.state = {};
-  g_msFinto = 100000;
-  Scheduler::recordOutcome(r, Scheduler::Outcome::FAILED, g_msFinto, 5, oggiLocale());
-  ok(r.state.retrying && r.state.failedAttempts == 1, "1o fallimento: in ritento");
-  ok(Scheduler::msUntilDue(r, g_msFinto, oggiLocale()) == FETCH_RITENTO_MS,
-     "  scadenza = intervallo di ritento");
-  ok(!Scheduler::isDue(r, g_msFinto + FETCH_RITENTO_MS - 1, oggiLocale(), 0),
-     "  non dovuta prima del ritento");
-  ok(Scheduler::isDue(r, g_msFinto + FETCH_RITENTO_MS, oggiLocale(), 0),
-     "  dovuta allo scadere del ritento");
-  g_msFinto += FETCH_RITENTO_MS;
-  Scheduler::recordOutcome(r, Scheduler::Outcome::FAILED, g_msFinto, 5, oggiLocale());
-  ok(!r.state.retrying && r.state.failedAttempts == 0,
-     "2o fallimento: soglia raggiunta, slot consumato");
-  ok(Scheduler::msUntilDue(r, g_msFinto, oggiLocale()) == 10 * MIN,
-     "  si attende la cadenza piena");
-
-  // ---- esito saltato: guasto a monte, non del task -----------------------
-  Scheduler::Task s = p; s.tag = "s"; s.state = {};
-  g_msFinto = 200000;
-  Scheduler::recordOutcome(s, Scheduler::Outcome::SKIPPED, g_msFinto, 0, oggiLocale());
-  ok(s.state.neverRun && s.state.failedAttempts == 0 && s.state.outcomeCount == 0,
-     "saltato: slot intatto, nessun tentativo speso");
-
-  // ---- cadenza giornaliera -----------------------------------------------
-  Scheduler::Task g {};
-  g.tag = "g"; g.cadence = Scheduler::Cadence::DAILY; g.needsRadio = false;
-  g.dailyLocalHour = &Timings::Valori::cinemaOra;             // ora 7
-  g.retryIntervalMs = FETCH_RITENTO_MS; g.maxAttempts = FETCH_MAX_TENTATIVI;
-  g.run = runOk;
-  g.state.neverRun = false; g.state.lastSlotDayOfYear = -1; g.state.lastSlotMs = 0;
-
-  impostaOra(2026, 9, 10, 6, 0);
-  g_msFinto = 50u * 3600u * 1000u;                        // ultimoMs lontano
+  // ---- orologio del ciclo, ordine dei passi e cadenze in cicli -------------
   {
-    uint32_t d = Scheduler::msUntilDue(g, g_msFinto, oggiLocale());
-    ok(d > 55 * MIN && d < 65 * MIN, "giornaliera alle 06:00 con ora 7: manca circa un'ora");
-  }
-  impostaOra(2026, 9, 10, 7, 30);
-  ok(Scheduler::msUntilDue(g, g_msFinto, oggiLocale()) == 0,
-     "alle 07:30, mai fatta oggi: dovuta (recupero con >=)");
-  impostaOra(2026, 9, 10, 11, 0);
-  ok(Scheduler::msUntilDue(g, g_msFinto, oggiLocale()) == 0,
-     "alle 11:00, mai fatta oggi: ancora recuperabile");
-  Scheduler::recordOutcome(g, Scheduler::Outcome::OK, g_msFinto, 5, oggiLocale());
-  ok(g.state.lastSlotDayOfYear == oggiLocale()->tm_yday, "  giorno registrato");
-  {
-    uint32_t d = Scheduler::msUntilDue(g, g_msFinto, oggiLocale());
-    ok(d > 19u * 3600u * 1000u && d < 21u * 3600u * 1000u, "  poi mancano ~20 h a domani alle 07");
-  }
-  impostaOra(2026, 9, 11, 9, 0);
-  g_msFinto += 22u * 3600u * 1000u;
-  ok(Scheduler::msUntilDue(g, g_msFinto, oggiLocale()) == 0,
-     "giorno dopo alle 09:00: dovuta (recupero)");
+    static Scheduler::Task tab[2];
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);     // 10 min = 2 cicli
+    tab[1] = taskPeriodico("b", &Timings::Valori::routeMin, runB);   // 5 min = 1 ciclo
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 1000;
+    boot(tab, 2);
 
-  // ---- fascia oraria -----------------------------------------------------
-  Scheduler::Task n = p; n.tag = "n"; n.needsRadio = true; n.state = {};
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(std::strcmp(g_eventi, "SRabrF") == 0, "primo ciclo: sensore, radio, task in ordine, radio giù, frame");
+    std::printf("   eventi: %s\n", g_eventi);
+    ok(Scheduler::currentCycle() == 1, "  è il ciclo 1");
+
+    const char* chi = nullptr;
+    const uint32_t attesa = Scheduler::msUntilNextEvent(&chi);
+    ok(attesa == g_ultimoPollMs + 301000u - g_msFinto && std::strcmp(chi, "sensore") == 0,
+       "  lo sleep dura fino alla scadenza esatta del sensore");
+
+    azzeraEventi();
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(std::strcmp(g_eventi, "SRbrF") == 0, "secondo ciclo: il task da 10 min salta, frame comunque");
+
+    // Venti cicli con fetch lenti e di durata variabile: il task da 10 minuti
+    // resta un ciclo sì e uno no, senza scivolare.
+    bool alternanza = true;
+    for (int i = 3; i <= 22; ++i)
+    {
+      g_durataRunMs = (uint32_t)(i % 5) * 7000u;
+      const int primaA = g_runA;
+      alProssimoPoll();
+      Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+      const bool atteso = (i % 2) == 1;
+      if ((g_runA > primaA) != atteso) alternanza = false;
+    }
+    ok(alternanza, "  meteo un ciclo sì e uno no per 20 cicli con fetch di durata variabile");
+    ok(g_runB == 22 && g_frame == 22, "  percorso e frame a ogni ciclo");
+    ok(g_poll == 22, "  un poll del sensore per ciclo");
+
+    // Sleep senza pavimento: a 5 s dalla scadenza si dorme 5 s, non 30.
+    g_msFinto = g_ultimoPollMs + 296000u;
+    ok(Scheduler::msUntilNextEvent(&chi) == 5000u, "a 5 s dalla scadenza del sensore: sleep di 5 s, nessun pavimento");
+    g_msFinto = g_ultimoPollMs + 302000u;
+    ok(Scheduler::msUntilNextEvent(&chi) == 0u, "  scadenza passata: nessuno sleep, il giro riparte subito");
+
+    PrintFinto stampa;
+    Scheduler::printStatus(stampa);
+    ok(true, "printStatus() senza errori");
+  }
+
+  // ---- fase di rete lunga quanto il ciclo: il sensore non aspetta ---------
+  {
+    static Scheduler::Task tab[2];
+    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
+    tab[1] = taskPeriodico("b", &Timings::Valori::routeMin, runB);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 5000000;
+    boot(tab, 2);
+    g_durataRunMs = 302000u;                   // due fetch, ciascuno più lungo del ciclo
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    std::printf("   eventi: %s\n", g_eventi);
+    ok(std::strcmp(g_eventi, "SRaSbrSF") == 0,
+       "fetch da 302 s: sensore interrogato fra un task e l'altro e prima del frame");
+    ok(g_poll == 3 && g_ultimoPollMs - g_pollPrecedenteMs <= 301000u + 18750u,
+       "  ogni poll entro il 6,25% del periodo ULP");
+  }
+
+  // ---- ritento al ciclo successivo, slot ancorato --------------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);     // 2 cicli
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 9000000;
+    boot(tab, 1);
+    g_fallisciA = true;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: fallisce
+    ok(tab[0].state.retrying && g_runA == 1, "fallimento: ritento prenotato");
+    g_fallisciA = false;
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 2: ritento ok
+    ok(g_runA == 2 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
+       "  ritento al ciclo successivo, slot ancorato al ciclo in cui si era aperto");
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 3
+    ok(g_runA == 3, "  la cadenza da 2 cicli riprende in fase: ciclo 3");
+
+    // Due fallimenti: soglia raggiunta, si attende la cadenza piena.
+    g_fallisciA = true;
+    alProssimoPoll(); Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // 4: non dovuto
+    alProssimoPoll(); Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // 5: fallisce
+    alProssimoPoll(); Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // 6: ritento fallito
+    ok(g_runA == 5 && !tab[0].state.retrying && tab[0].state.slotCycle == 5,
+       "  secondo fallimento: soglia raggiunta, slot chiuso al ciclo 5");
+    g_fallisciA = false;
+  }
+
+  // ---- connessione fallita: stati intatti, frame comunque ------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 12000000;
+    boot(tab, 1);
+    g_radioOk = false;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runA == 0 && tab[0].state.neverRun && g_frame == 1,
+       "radio giù: nessun tentativo speso, frame del ciclo disegnato");
+    g_radioOk = true;
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runA == 1, "  il task parte al ciclo successivo");
+  }
+
+  // ---- notte: solo il sensore ----------------------------------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
+    impostaOra(2026, 9, 10, 3, 0);
+    g_msFinto = 15000000;
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(std::strcmp(g_eventi, "S") == 0, "alle 03:00: solo il sensore, niente radio nè frame");
+    const char* chi = nullptr;
+    ok(Scheduler::msUntilNextEvent(&chi) == 301000u, "  prossimo risveglio fra un ciclo, per il sensore");
+
+    // Senza sensore la notte non ha risvegli: si dorme fino all'apertura.
+    g_sensoreAttivo = false;
+    ok(Scheduler::msUntilNextEvent(&chi) == Scheduler::msUntilLocalHour(7, false) &&
+           std::strcmp(chi, "apertura fascia") == 0,
+       "senza sensore: sleep fino alle 07:00");
+    impostaOra(2026, 9, 10, 6, 59);
+    g_epochFinta += 40;                        // 06:59:40, risveglio anticipato dalla deriva
+    ok(Scheduler::msUntilNextEvent(&chi) == 20000u, "  risveglio anticipato alle 06:59:40: si riaddormenta 20 s");
+
+    // Notte del cambio dell'ora legale di marzo: le 02 non esistono.
+    impostaOra(2026, 3, 29, 0, 30);
+    struct tm b;
+    localtime_r(&g_epochFinta, &b);
+    b.tm_hour = 7; b.tm_min = 0; b.tm_sec = 0; b.tm_isdst = -1;
+    const time_t alle7 = mktime(&b);
+    ok(Scheduler::msUntilNextEvent(&chi) == (uint32_t)((alle7 - g_epochFinta) * 1000),
+       "  attraverso l'ora legale: dalle 00:30 alle 07:00 sono 5 h 30 di orologio");
+  }
+
+  // ---- primo ciclo della giornata ------------------------------------------
+  {
+    Timings::Valori v = Timings::get(); v.googleMin = 1440; v.cinemaOra = 12;
+    ok(Timings::applica(v, nullptr), "cadenza di 24 h e cinema alle 12 applicati");
+    static Scheduler::Task tab[2];
+    tab[0] = taskPeriodico("a", &Timings::Valori::googleMin, runA);  // 288 cicli
+    tab[1] = Scheduler::Task{};
+    tab[1].tag = "d"; tab[1].cadence = Scheduler::Cadence::DAILY;
+    tab[1].dailyLocalHour = &Timings::Valori::cinemaOra; tab[1].maxAttempts = FETCH_MAX_TENTATIVI;
+    tab[1].run = runD;
+    impostaOra(2026, 9, 10, 22, 0);
+    g_msFinto = 20000000;
+    boot(tab, 2);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);  // 22:00
+    ok(g_runA == 1 && g_runD == 1, "alle 22:00: periodico e giornaliero (cine_h passata) eseguiti");
+    // Notte: cicli del sensore fino alle 07 del giorno dopo.
+    while (true)
+    {
+      const uint32_t prima = g_msFinto;
+      alProssimoPoll();
+      g_epochFinta += (time_t)((g_msFinto - prima) / 1000u);
+      azzeraEventi();
+      Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+      struct tm ora;
+      localtime_r(&g_epochFinta, &ora);
+      if (ora.tm_hour == 7) break;
+    }
+    ok(g_runA == 2, "primo ciclo delle 07: il periodico da 24 h è dovuto, solo 9 h dopo");
+    ok(g_runD == 1, "  il giornaliero no: aspetta le 12");
+    ok(g_frame >= 2 && std::strchr(g_eventi, 'F') != nullptr, "  e il primo frame del mattino è disegnato");
+    Timings::ripristinaDefault();
+  }
+
+  // ---- giornaliero: orologio non valido al boot, nessun doppione ----------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = Scheduler::Task{};
+    tab[0].tag = "d"; tab[0].cadence = Scheduler::Cadence::DAILY;
+    tab[0].dailyLocalHour = &Timings::Valori::cinemaOra; tab[0].maxAttempts = FETCH_MAX_TENTATIVI;
+    tab[0].run = runD;
+    g_epochFinta = 1000;                       // orologio da sincronizzare
+    g_msFinto = 30000000;
+    boot(tab, 1);
+    // La radio dello scheduler sincronizza l'ora, come wifiOn().
+    Scheduler::Hooks h = hooksFinti();
+    h.radioOn = []() { evento('R'); impostaOra(2026, 9, 10, 12, 0); return true; };
+    Scheduler::begin(tab, 1, h);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runD == 0, "orologio non valido: il giornaliero non è dovuto, la radio non si accende per lui");
+    impostaOra(2026, 9, 10, 12, 0);
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runD == 1 && tab[0].state.lastSlotDayOfYear == oggiLocale()->tm_yday,
+       "  con l'ora valida gira e registra il giorno");
+    alProssimoPoll();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runD == 1, "  al ciclo dopo non riparte");
+  }
+
+  // ---- finestra di manutenzione al boot ------------------------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 40000000;
+    boot(tab, 1);
+    WiFi.stato = 0;                            // STA non ancora connessa
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_poll == 1 && g_runA == 0 && g_frame == 0, "manutenzione, STA giù: sensore sì, fetch e frame in attesa");
+    g_msFinto += MAINTENANCE_SCHEDULER_PERIOD_MS / 2;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_runA == 0, "  a mezzo periodo il giro non si rivaluta");
+    g_msFinto += 3000;
+    WiFi.stato = WL_CONNECTED;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_runA == 1 && g_frame == 1, "  STA su: fetch e poi frame, nello stesso giro");
+    ok(std::strchr(g_eventi, 'R') == nullptr, "  la radio della manutenzione non si tocca");
+
+    // STA che non sale: il frame parte con i placeholder dopo PRIMO_FRAME_ATTESA_MS.
+    tab[0].state = {};
+    boot(tab, 1);
+    WiFi.stato = 0;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    g_msFinto += PRIMO_FRAME_ATTESA_MS;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_frame == 1 && g_runA == 0, "STA mai salita: frame dopo PRIMO_FRAME_ATTESA_MS, fetch ancora in attesa");
+
+    // Orologio da sincronizzare: i fetch aspettano l'ora, poi partono comunque.
+    tab[0].state = {};
+    g_epochFinta = 1000;
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_runA == 0, "orologio non valido in manutenzione: i fetch aspettano l'ora");
+    g_msFinto += PRIMO_FRAME_ATTESA_MS;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+    ok(g_runA == 1 && g_frame == 1, "  dopo PRIMO_FRAME_ATTESA_MS partono fail-open, poi il frame");
+
+    // Client sulle pagine: lo scheduler è fermo, il sensore no.
+    impostaOra(2026, 9, 10, 12, 0);
+    const int pollPrima = g_poll;
+    alProssimoPoll();
+    Scheduler::serviceSensor();
+    ok(g_poll == pollPrima + 1, "client attivo: serviceSensor() interroga il sensore alla scadenza");
+    Scheduler::serviceSensor();
+    ok(g_poll == pollPrima + 1, "  e non prima della scadenza successiva");
+  }
+
+  // ---- senza sensore: ciclo interno ----------------------------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 50000000;
+    boot(tab, 1);
+    g_sensoreAttivo = false;
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_poll == 0 && g_runA == 1 && g_frame == 1, "senza sensore: ciclo interno, task e frame");
+    const char* chi = nullptr;
+    const uint32_t attesa = Scheduler::msUntilNextEvent(&chi);
+    ok(attesa == CICLO_MS - (uint32_t)DISPLAY_REFRESH_PIENO_S * 1000u, "  prossimo ciclo a CYCLE_S dall'inizio del precedente");
+    avanzaMs(attesa);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_runA == 2 && g_frame == 2, "  secondo ciclo interno");
+  }
+
+  // ---- rollover di millis() ------------------------------------------------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 0xFFFFFF00u;                   // a un passo dal giro dei 49,7 giorni
+    boot(tab, 1);
+    for (int i = 0; i < 4; ++i)
+    {
+      Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+      alProssimoPoll();
+    }
+    ok(g_poll == 4 && g_runA == 2 && g_frame == 4, "rollover di millis(): cicli e cadenze regolari");
+  }
+
+  // ---- fascia oraria e orologio non sincronizzato --------------------------
   impostaOra(2026, 9, 10, 3, 0);
   ok(!Scheduler::isInsideRadioHours(), "alle 03:00 fuori dalla fascia 7..23");
-  {
-    uint32_t e = Scheduler::msUntilDueWithRadioLimits(n, g_msFinto, oggiLocale());
-    ok(e > 3u * 3600u * 1000u && e < 5u * 3600u * 1000u,
-       "  task di rete rimandato all'apertura della fascia");
-  }
-  impostaOra(2026, 9, 10, 12, 0);
-  ok(Scheduler::isInsideRadioHours() && Scheduler::msUntilDueWithRadioLimits(n, g_msFinto, oggiLocale()) == 0,
-     "a mezzogiorno: dentro la fascia, dovuta");
-
-  // ---- orologio non sincronizzato ----------------------------------------
   g_epochFinta = 1000;
-  ok(!Clock::valido(), "epoch bassa: orologio non sincronizzato");
-  ok(Scheduler::isInsideRadioHours(), "  fascia fail-open, altrimenti il primo SNTP non avverrebbe mai");
-  ok(Scheduler::msUntilDue(g, g_msFinto, nullptr) == Scheduler::NEVER,
-     "  cadenza giornaliera sospesa");
-
-  // Precondizione non temporale: e' cosi' che i due calendari evitano di
-  // interrogare da 1970 e di consumare lo slot con una risposta sbagliata.
-  {
-    Scheduler::Task c {};
-    c.tag = "c"; c.cadence = Scheduler::Cadence::PERIODIC; c.needsRadio = true;
-    c.intervalMinutes = &Timings::Valori::googleMin;
-    c.retryIntervalMs = FETCH_RITENTO_MS; c.maxAttempts = FETCH_MAX_TENTATIVI;
-    c.run = runOk; c.preconditionsMet = clockReady;
-
-    ok(Scheduler::msUntilDueWithRadioLimits(c, g_msFinto, nullptr) == Scheduler::NEVER,
-       "preconditionsMet() falso: task sospeso anche se mai eseguito");
-    ok(!Scheduler::isDue(c, g_msFinto, nullptr, 10u * 60u * 1000u),
-       "  e non dovuto nemmeno con un anticipo generoso");
-
-    impostaOra(2026, 9, 10, 12, 0);
-    ok(Clock::valido(), "orologio sincronizzato: la precondizione si avvera");
-    ok(Scheduler::msUntilDue(c, g_msFinto, oggiLocale()) == 0,
-       "  e il task e' dovuto subito, senza aver perso lo slot");
-  }
-
-  // Scadenza custom: precede ogni altra regola, neverRun compreso. È la
-  // regola per cui il sensore restava fermo quando la sua scadenza custom non
-  // valeva 0 al boot: un task locale gira solo con scadenza 0.
-  {
-    static uint32_t scadenzaFinta = 0;
-    Scheduler::Task b {};
-    b.tag = "b"; b.cadence = Scheduler::Cadence::PERIODIC; b.needsRadio = false;
-    b.intervalMinutes = &Timings::Valori::displayRefreshMin;
-    b.retryIntervalMs = FETCH_RITENTO_MS; b.maxAttempts = 0;
-    b.run = runOk;
-    b.customMsUntilDue = []() { return scadenzaFinta; };
-
-    scadenzaFinta = 300000u;
-    ok(b.state.neverRun && !Scheduler::isDue(b, g_msFinto, oggiLocale(), 0),
-       "scadenza custom a 300 s: non dovuto anche se mai eseguito");
-    scadenzaFinta = 0;
-    ok(Scheduler::isDue(b, g_msFinto, oggiLocale(), 0),
-       "  a 0 dovuto subito, che e' cio' che il sensore deve dare al boot");
-  }
+  ok(!Clock::valido() && Scheduler::isInsideRadioHours(),
+     "orologio non sincronizzato: fascia fail-open, altrimenti il primo SNTP non avverrebbe mai");
 
   // ---- cambio dell'ora legale --------------------------------------------
   {
@@ -352,86 +591,6 @@ int main()
     ok((uint32_t)((atteso - g_epochFinta) * 1000) == d,
        "ora legale: msUntilLocalHour coincide con mktime sullo stesso fuso");
     ok(d > 8u * 3600u * 1000u, "  attraversando il cambio la distanza cresce di un'ora");
-  }
-
-  // ---- rollover di millis() ----------------------------------------------
-  {
-    Scheduler::Task w = p; w.tag = "w"; w.state = {};
-    g_msFinto = 0xFFFFFF00u;                   // a un passo dal giro dei 49,7 giorni
-    impostaOra(2026, 9, 10, 12, 0);
-    Scheduler::recordOutcome(w, Scheduler::Outcome::OK, g_msFinto, 5, oggiLocale());
-    g_msFinto = 0xFFFFFF00u + 9 * MIN;         // qui millis() ha gia' wrappato
-    ok(!Scheduler::isDue(w, g_msFinto, oggiLocale(), 0), "rollover millis: a 9 min non dovuta");
-    g_msFinto = 0xFFFFFF00u + 10 * MIN;
-    ok(Scheduler::isDue(w, g_msFinto, oggiLocale(), 0), "rollover millis: a 10 min dovuta");
-  }
-
-  // ---- clamp del light sleep ---------------------------------------------
-  {
-    static Scheduler::Task tab[1];
-    tab[0] = p; tab[0].tag = "solo"; tab[0].state = {};
-    Scheduler::begin(tab, 1, nullptr, nullptr);
-    g_msFinto = 500000;
-    impostaOra(2026, 9, 10, 12, 0);
-    const char* chi = nullptr;
-    Scheduler::recordOutcome(tab[0], Scheduler::Outcome::OK, g_msFinto, 5, oggiLocale());
-    ok(Scheduler::msUntilNextEvent(&chi) == (uint32_t)SLEEP_MAX_S * 1000u,
-       "scadenza a 10 min: sleep limitato al tetto di 300 s");
-    g_msFinto += 10 * MIN - 5000u;             // mancano 5 s
-    ok(Scheduler::msUntilNextEvent(&chi) == (uint32_t)SLEEP_MIN_S * 1000u,
-       "scadenza fra 5 s: sleep alzato al pavimento di 30 s");
-    ok(std::strcmp(chi, "solo") == 0, "  e si sa quale task ha deciso il risveglio");
-    tab[0].preconditionsMet = []() { return false; };
-    ok(Scheduler::msUntilNextEvent(&chi) == (uint32_t)SLEEP_MAX_S * 1000u &&
-           std::strcmp(chi, "nessuno") == 0,
-       "nessun task pronto: sleep al tetto, log esplicito");
-  }
-
-  // ---- giro nella finestra di manutenzione: al più uno al secondo --------
-  // Il loop della finestra chiama runRound() ogni pochi ms per il web server:
-  // un task sempre dovuto deve girare una volta per periodo, non a ogni chiamata.
-  {
-    static int runCount = 0;
-    static Scheduler::Task tab[1];
-    tab[0] = Scheduler::Task{};
-    tab[0].tag = "maint"; tab[0].cadence = Scheduler::Cadence::PERIODIC; tab[0].needsRadio = false;
-    tab[0].intervalMinutes = &Timings::Valori::displayRefreshMin;
-    tab[0].retryIntervalMs = FETCH_RITENTO_MS; tab[0].maxAttempts = 0;
-    tab[0].run = []() { ++runCount; return Scheduler::Outcome::OK; };
-    tab[0].customMsUntilDue = []() { return (uint32_t)0; };
-    Scheduler::begin(tab, 1, nullptr, nullptr);
-    impostaOra(2026, 9, 10, 12, 0);
-    g_msFinto = 2000000;
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
-    ok(runCount == 1, "manutenzione: il primo giro parte subito");
-    g_msFinto += MAINTENANCE_SCHEDULER_PERIOD_MS / 2;
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
-    ok(runCount == 1, "  a mezzo periodo il giro non si rivaluta");
-    g_msFinto += MAINTENANCE_SCHEDULER_PERIOD_MS;
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
-    ok(runCount == 2, "  dopo un periodo il task riparte");
-  }
-
-  // ---- orologio sincronizzato dentro l'accensione della radio ------------
-  // La prima sincronizzazione SNTP avviene in wifiOn(): il task giornaliero che
-  // gira in quel giro deve registrare il giorno, quindi l'ora va riletta dopo.
-  {
-    static Scheduler::Task tab[1];
-    tab[0] = Scheduler::Task{};
-    tab[0].tag = "daily"; tab[0].cadence = Scheduler::Cadence::DAILY; tab[0].needsRadio = true;
-    tab[0].dailyLocalHour = &Timings::Valori::cinemaOra;
-    tab[0].retryIntervalMs = FETCH_RITENTO_MS; tab[0].maxAttempts = FETCH_MAX_TENTATIVI;
-    tab[0].run = runOk;
-    Scheduler::begin(tab, 1,
-                     []() { impostaOra(2026, 9, 10, 12, 0); return true; },
-                     []() {});
-    g_epochFinta = 1000;
-    g_msFinto = 3000000;
-    ok(!Clock::valido(), "giro con orologio da sincronizzare");
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
-    ok(!tab[0].state.neverRun, "  il task giornaliero gira dopo l'accensione della radio");
-    ok(tab[0].state.lastSlotDayOfYear == oggiLocale()->tm_yday,
-       "  e registra il giorno con l'ora appena sincronizzata");
   }
 
   std::printf("\n%s\n", falliti ? "CI SONO FALLIMENTI" : "tutti i controlli superati");

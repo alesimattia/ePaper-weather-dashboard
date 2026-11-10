@@ -38,26 +38,33 @@
  */
 #define BSEC_PERIODO_ULP_S 300
 
-/** Durata misurata di un refresh pieno del pannello. Nessuna cadenza di
- *  ridisegno puo' scendere sotto questo valore. */
+/**
+ * Ciclo del dispositivo: un'interrogazione del sensore, i fetch dovuti e un
+ * frame. Coincide con il periodo ULP perchè BSEC è l'unico orologio che non si
+ * può anticipare nè ritardare oltre il 6,25% (guida Bosch AN011), quindi tutto
+ * il resto si conta in cicli. Le cadenze configurabili sono multipli di
+ * CYCLE_MIN, che deve essere un numero intero di minuti.
+ */
+#define CYCLE_S BSEC_PERIODO_ULP_S
+#define CYCLE_MIN (CYCLE_S / 60)
+
+/** Durata misurata di un refresh pieno del pannello. Il ciclo non può
+ *  essere più breve, perchè a ogni ciclo si disegna un frame. */
 #define DISPLAY_REFRESH_PIENO_S 24
 
-/** Pavimento e tetto del light sleep dinamico. Il tetto e' il periodo ULP:
- *  piu' alto perderebbe campioni, piu' basso sveglierebbe a vuoto. Il
- *  pavimento evita che un errore di calcolo produca un ciclo di risvegli. */
-#define SLEEP_MIN_S 30
-#define SLEEP_MAX_S BSEC_PERIODO_ULP_S
+/** Tetto di sicurezza di un light sleep. Con il sensore attivo il sonno dura
+ *  fino alla sua scadenza esatta, poco oltre un ciclo; il tetto serve solo
+ *  alla notte senza sensore, che dorme fino all'apertura della fascia WiFi. */
+#define SLEEP_MAX_S (24UL * 60UL * 60UL)
 
 // ---------------------------------------------------------------------------
 // 2. Cadenze configurabili (minuti, salvo dove indicato)
+//
+// Ogni cadenza di un task di rete è un multiplo di CYCLE_MIN: il task gira
+// in un ciclo sì e in (cadenza / CYCLE_MIN - 1) no, sempre prima del frame
+// dello stesso ciclo, quindi il dato compare appena prodotto. Il pannello si
+// ridisegna a ogni ciclo della fascia WiFi e non ha una cadenza propria.
 // ---------------------------------------------------------------------------
-
-/** Distanza MINIMA fra due refresh del pannello. Il ridisegno avviene solo
- *  quando un fetch ha portato dati nuovi, mai piu' spesso di cosi'. */
-#ifndef DISPLAY_REFRESH_MIN
-  #define DISPLAY_REFRESH_MIN 5
-#endif
-#define DISPLAY_REFRESH_MIN_FLOOR 1
 
 /** Meteo. Pavimento pari alla cadenza con cui One Call aggiorna i dati:
  *  sotto i 10 min si riscarica lo stesso contenuto. Il limite duro e' invece
@@ -68,22 +75,23 @@
 #define WEATHER_FORECAST_FETCH_MIN_FLOOR 10
 
 /** Calendari e posta: nessun pavimento sui dati (un evento o una mail possono
- *  arrivare in qualsiasi momento). Il costo e' energetico, ~5-10 s di radio
+ *  arrivare in qualsiasi momento), ma sotto un ciclo un fetch non verrebbe mai
+ *  mostrato prima del successivo. Il costo è energetico, ~5-10 s di radio
  *  accesa per fetch. */
 #ifndef CAL_OUTLOOK_FETCH_MIN
   #define CAL_OUTLOOK_FETCH_MIN 10
 #endif
-#define CAL_OUTLOOK_FETCH_MIN_FLOOR 1
+#define CAL_OUTLOOK_FETCH_MIN_FLOOR CYCLE_MIN
 
 #ifndef CAL_GOOGLE_FETCH_MIN
   #define CAL_GOOGLE_FETCH_MIN 10
 #endif
-#define CAL_GOOGLE_FETCH_MIN_FLOOR 1
+#define CAL_GOOGLE_FETCH_MIN_FLOOR CYCLE_MIN
 
 #ifndef MAIL_GOOGLE_FETCH_MIN
   #define MAIL_GOOGLE_FETCH_MIN 10
 #endif
-#define MAIL_GOOGLE_FETCH_MIN_FLOOR 1
+#define MAIL_GOOGLE_FETCH_MIN_FLOOR CYCLE_MIN
 
 /** Telemetria Tuya. Il pavimento e' il periodo di campionamento del BME680:
  *  sotto quello si ripubblica lo stesso campione, perche' la cache di Indoor
@@ -91,26 +99,15 @@
 #ifndef TUYA_PUBLISH_MIN
   #define TUYA_PUBLISH_MIN 5
 #endif
-#define TUYA_PUBLISH_MIN_FLOOR (BSEC_PERIODO_ULP_S / 60)
+#define TUYA_PUBLISH_MIN_FLOOR CYCLE_MIN
 
-/** Percorso del mattino da routefinder, solo dentro la fascia percorso. Il
- *  pavimento tiene le chiamate alla Routes API, a pagamento oltre la soglia
- *  gratuita, vicine alla cadenza con cui il traffico cambia davvero. */
+/** Percorso del mattino da routefinder, solo dentro la fascia percorso: a
+ *  ogni ciclo, così ogni frame della fascia ha il traffico ricalcolato. Il
+ *  pavimento è il ciclo, che tiene le chiamate alla Routes API a 12 l'ora. */
 #ifndef ROUTE_FETCH_MIN
-  #define ROUTE_FETCH_MIN 10
+  #define ROUTE_FETCH_MIN 5
 #endif
-#define ROUTE_FETCH_MIN_FLOOR 5
-
-/**
- * Finestra di coalescing: con la radio gia' accesa vengono eseguiti anche i
- * task che scadrebbero entro questo margine, cosi' scadenze vicine
- * condividono una sola accensione. Un task puo' quindi partire in anticipo,
- * mai in ritardo. 0 disattiva il meccanismo.
- */
-#ifndef FETCH_COALESCE_MIN
-  #define FETCH_COALESCE_MIN 2
-#endif
-#define FETCH_COALESCE_MIN_FLOOR 0
+#define ROUTE_FETCH_MIN_FLOOR CYCLE_MIN
 
 /** Durata della finestra di manutenzione (pagina di aggiornamento firmware e
  *  configurazione) aperta a ogni boot. */
@@ -125,7 +122,8 @@
   #define MAINT_STA_TIMEOUT_S 15
 #endif
 
-/** Fascia oraria locale in cui la radio puo' accendersi per i fetch. */
+/** Fascia oraria locale in cui si accende la radio e si disegna il pannello.
+ *  Fuori, cioè di notte, restano solo i risvegli del sensore. */
 #ifndef WIFI_ACTIVE_HOUR_START
   #define WIFI_ACTIVE_HOUR_START 7
 #endif
@@ -152,14 +150,10 @@
 // 3. Timeout, ritenti e budget (non configurabili)
 // ---------------------------------------------------------------------------
 
-/** Distanza minima fra due tentativi dello stesso slot. E' cio' che impedisce
- *  alla finestra di manutenzione, dove il loop gira ogni ~10 ms, di ripetere
- *  cento volte al secondo un tentativo appena fallito. */
-#define FETCH_RITENTO_MS 30000UL
-
 /** Tentativi consecutivi falliti oltre i quali un task consuma lo slot e
- *  attende la cadenza piena. 0 significa politica pessimista: lo slot e'
- *  speso prima ancora di eseguire. */
+ *  attende la cadenza piena; un tentativo per ciclo, quindi il ritento cade
+ *  al ciclo successivo. 0 significa politica pessimista: lo slot è speso
+ *  prima ancora di eseguire. */
 #define FETCH_MAX_TENTATIVI 2
 
 /** Timeout di un singolo tentativo di connessione della STA e passo del
@@ -178,13 +172,10 @@
  *  gli altri. A 80 MHz un handshake reale costa da 1 a 4 s. */
 #define TLS_HANDSHAKE_TIMEOUT_S 15
 
-/** Dopo un tentativo di connessione fallito nessun task di rete riprova
- *  prima di questo tempo: evita di pagare 15 s di attesa a ogni risveglio
- *  quando la rete non c'e'. */
-#define WIFI_RITENTO_MS 300000UL
-
 /** Tempo massimo dal boot entro cui il primo frame viene comunque disegnato,
- *  con i placeholder "--" al posto dei dati non ancora arrivati. */
+ *  con i placeholder "--" al posto dei dati non ancora arrivati. Nella
+ *  finestra di manutenzione è anche l'attesa massima dell'ora valida prima
+ *  che i fetch partano comunque. */
 #define PRIMO_FRAME_ATTESA_MS 15000UL
 
 /** Timeout HTTP del download dell'immagine cinema: margine per il cold start
@@ -207,6 +198,11 @@
  *  perchè senza handshake completo la richiesta non parte affatto. Va tenuto
  *  sotto 65535: setTimeout() prende un uint16_t. */
 #define CINEMA_PREWARM_TIMEOUT_MS 1500
+
+/** Inattività dopo la quale render.com spegne un servizio del free tier: il
+ *  ping di sveglia si manda solo se l'ultima risposta di quel server è più
+ *  vecchia di così, cioè quando l'istanza dorme davvero. */
+#define RENDER_SPINDOWN_MS (15UL * 60UL * 1000UL)
 
 /** Telemetria Tuya: attesa del CONNACK, che comprende l'handshake TLS, e del
  *  PUBACK in QoS 1. Il terzo e' l'attesa della conferma applicativa del cloud
@@ -292,11 +288,10 @@
 // Validazione dei default a compile-time
 // ---------------------------------------------------------------------------
 
-static_assert(DISPLAY_REFRESH_MIN >= DISPLAY_REFRESH_MIN_FLOOR &&
-                  DISPLAY_REFRESH_MIN <= CADENZA_MAX_MIN,
-              "DISPLAY_REFRESH_MIN fuori dai limiti");
-static_assert(DISPLAY_REFRESH_MIN * 60 >= DISPLAY_REFRESH_PIENO_S,
-              "due refresh piu' vicini della durata di un refresh si accavallerebbero");
+static_assert(CYCLE_S % 60 == 0 && CYCLE_MIN > 0,
+              "il ciclo deve essere un numero intero di minuti: le cadenze ne sono multipli");
+static_assert(CYCLE_S >= DISPLAY_REFRESH_PIENO_S,
+              "a ogni ciclo si disegna un frame: il ciclo non può durare meno di un refresh");
 static_assert(WEATHER_FORECAST_FETCH_MIN >= WEATHER_FORECAST_FETCH_MIN_FLOOR &&
                   WEATHER_FORECAST_FETCH_MIN <= CADENZA_MAX_MIN,
               "sotto il pavimento One Call restituisce gli stessi dati");
@@ -315,25 +310,16 @@ static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CAD
               "ROUTE_FETCH_MIN fuori dai limiti");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,
               "OTA_WINDOW_MIN fuori dai limiti");
-static_assert(FETCH_COALESCE_MIN >= FETCH_COALESCE_MIN_FLOOR,
-              "FETCH_COALESCE_MIN negativo");
-static_assert(FETCH_COALESCE_MIN < WEATHER_FORECAST_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < CAL_OUTLOOK_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < CAL_GOOGLE_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < MAIL_GOOGLE_FETCH_MIN &&
-                  FETCH_COALESCE_MIN < TUYA_PUBLISH_MIN &&
-                  FETCH_COALESCE_MIN < ROUTE_FETCH_MIN,
-              "coalescing >= cadenza: il task partirebbe a ogni accensione della radio");
 static_assert(WIFI_ACTIVE_HOUR_START <= WIFI_ACTIVE_HOUR_END && WIFI_ACTIVE_HOUR_END <= 23,
               "fascia oraria WiFi non valida");
 static_assert(CINEMA_DAILY_FETCH_HOUR >= WIFI_ACTIVE_HOUR_START &&
                   CINEMA_DAILY_FETCH_HOUR <= WIFI_ACTIVE_HOUR_END,
               "il fetch giornaliero cinema deve cadere dentro la fascia radio");
-static_assert(SLEEP_MIN_S <= SLEEP_MAX_S, "pavimento di sleep sopra il tetto");
-static_assert(SLEEP_MAX_S == BSEC_PERIODO_ULP_S,
-              "il tetto dello sleep e' il periodo ULP: piu' alto perde campioni");
-static_assert(FETCH_RITENTO_MS >= SLEEP_MIN_S * 1000UL,
-              "un ritento piu' vicino del pavimento di sleep non e' onorabile");
+static_assert(SLEEP_MAX_S * 1000ULL >= CYCLE_S * 1000ULL + BSEC_MARGINE_POLL_MS,
+              "il tetto dello sleep non deve tagliare l'attesa del sensore: un poll in ritardo "
+              "oltre il 6,25% del periodo ULP blocca l'accuratezza di BSEC");
+static_assert(BSEC_MARGINE_POLL_MS * 16UL < CYCLE_S * 1000UL,
+              "il margine del poll BSEC deve restare ben dentro il 6,25% del periodo");
 static_assert(WIFI_FAST_CONNECT_TIMEOUT_MS < WIFI_CONNECT_TIMEOUT_MS,
               "il tentativo veloce deve lasciare tempo al ripiego sulla scansione completa");
 static_assert(CINEMA_PREWARM_TIMEOUT_MS < 65535,
@@ -351,9 +337,9 @@ static_assert(PRIMO_FRAME_ATTESA_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 10
  * gli override vivono in NVS e vengono riletti al boot, sempre clampati al
  * proprio pavimento.
  *
- * Lo scheduler legge get() a ogni valutazione e ricalcola le scadenze da
- * `ultimo + intervallo`, senza mai memorizzare una scadenza assoluta: cosi'
- * una modifica ha effetto dal giro successivo, senza riavvio.
+ * Lo scheduler legge get() a ogni valutazione e ricalcola le scadenze dal
+ * ciclo dello slot precedente, senza mai memorizzare una scadenza assoluta:
+ * così una modifica ha effetto dal ciclo successivo, senza riavvio.
  */
 namespace Timings
 {
@@ -361,13 +347,11 @@ namespace Timings
    *  permette di indirizzarli con un puntatore a membro. */
   struct Valori
   {
-    uint16_t displayRefreshMin;
     uint16_t owmMin;
     uint16_t outlookMin;
     uint16_t googleMin;
     uint16_t mailMin;
     uint16_t tuyaMin;
-    uint16_t coalesceMin;
     uint16_t finestraManutenzioneMin;
     uint16_t wifiOraInizio;
     uint16_t wifiOraFine;
@@ -376,13 +360,11 @@ namespace Timings
   };
 
   inline constexpr Valori PREDEFINITI = {
-      DISPLAY_REFRESH_MIN,
       WEATHER_FORECAST_FETCH_MIN,
       CAL_OUTLOOK_FETCH_MIN,
       CAL_GOOGLE_FETCH_MIN,
       MAIL_GOOGLE_FETCH_MIN,
       TUYA_PUBLISH_MIN,
-      FETCH_COALESCE_MIN,
       OTA_WINDOW_MIN,
       WIFI_ACTIVE_HOUR_START,
       WIFI_ACTIVE_HOUR_END,
@@ -393,7 +375,10 @@ namespace Timings
   /**
    * Descrittore di un campo configurabile: quanto basta alla pagina web per
    * costruire il proprio form senza sapere niente dei singoli tempi.
-   * `chiave` e' anche il nome NVS, quindi al massimo 15 caratteri.
+   * `chiave` è anche il nome NVS, quindi al massimo 15 caratteri. `step` è
+   * il passo dei valori ammessi: CYCLE_MIN per le cadenze dei task, che lo
+   * scheduler conta in cicli, 1 per ore e durate. Tutta la validazione del
+   * campo poggia su minimo, massimo e step, senza controlli scritti a mano.
    */
   struct Campo
   {
@@ -404,6 +389,7 @@ namespace Timings
     uint16_t minimo;
     uint16_t massimo;
     uint16_t predefinito;
+    uint16_t step;
   };
 
   namespace detail
@@ -412,39 +398,53 @@ namespace Timings
     inline constexpr const char* NVS_CHIAVE_SCHEMA = "schema";
 
     /** Si alza SOLO quando una chiave cambia significato o unita': in quel
-     *  caso il namespace viene azzerato e si riparte dai default. */
-    inline constexpr uint16_t SCHEMA = 1;
+     *  caso il namespace viene azzerato e si riparte dai default. A 2 le
+     *  cadenze sono multipli del ciclo e non hanno più coalescing e
+     *  intervallo del display. */
+    inline constexpr uint16_t SCHEMA = 2;
 
     inline Valori valori = PREDEFINITI;
 
     inline constexpr Campo CAMPI[] = {
-        {"disp_min",   "Refresh display (minimo fra due ridisegni)", "min",
-         &Valori::displayRefreshMin, DISPLAY_REFRESH_MIN_FLOOR, CADENZA_MAX_MIN, DISPLAY_REFRESH_MIN},
         {"owm_min",    "Meteo",                                     "min",
-         &Valori::owmMin, WEATHER_FORECAST_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, WEATHER_FORECAST_FETCH_MIN},
+         &Valori::owmMin, WEATHER_FORECAST_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, WEATHER_FORECAST_FETCH_MIN, CYCLE_MIN},
         {"outl_min",   "Calendario Outlook",                        "min",
-         &Valori::outlookMin, CAL_OUTLOOK_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_OUTLOOK_FETCH_MIN},
+         &Valori::outlookMin, CAL_OUTLOOK_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_OUTLOOK_FETCH_MIN, CYCLE_MIN},
         {"goog_min",   "Calendario Google",                         "min",
-         &Valori::googleMin, CAL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_GOOGLE_FETCH_MIN},
+         &Valori::googleMin, CAL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_GOOGLE_FETCH_MIN, CYCLE_MIN},
         {"mail_min",   "Posta Gmail",                               "min",
-         &Valori::mailMin, MAIL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, MAIL_GOOGLE_FETCH_MIN},
+         &Valori::mailMin, MAIL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, MAIL_GOOGLE_FETCH_MIN, CYCLE_MIN},
         {"tuya_min",   "Telemetria Tuya",                           "min",
-         &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, CADENZA_MAX_MIN, TUYA_PUBLISH_MIN},
-        {"coal_min",   "Coalescing (anticipo a radio accesa)",      "min",
-         &Valori::coalesceMin, FETCH_COALESCE_MIN_FLOOR, CADENZA_MAX_MIN, FETCH_COALESCE_MIN},
+         &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, CADENZA_MAX_MIN, TUYA_PUBLISH_MIN, CYCLE_MIN},
         {"maint_min",  "Finestra di manutenzione",                  "min",
-         &Valori::finestraManutenzioneMin, OTA_WINDOW_MIN_FLOOR, CADENZA_MAX_MIN, OTA_WINDOW_MIN},
+         &Valori::finestraManutenzioneMin, OTA_WINDOW_MIN_FLOOR, CADENZA_MAX_MIN, OTA_WINDOW_MIN, 1},
         {"wifi_h_ini", "Inizio fascia WiFi",                        "ora",
-         &Valori::wifiOraInizio, 0, 23, WIFI_ACTIVE_HOUR_START},
+         &Valori::wifiOraInizio, 0, 23, WIFI_ACTIVE_HOUR_START, 1},
         {"wifi_h_fin", "Fine fascia WiFi",                          "ora",
-         &Valori::wifiOraFine, 0, 23, WIFI_ACTIVE_HOUR_END},
+         &Valori::wifiOraFine, 0, 23, WIFI_ACTIVE_HOUR_END, 1},
         {"cine_h",     "Ora del fetch cinema (in fascia percorso slitta alla sua fine)", "ora",
-         &Valori::cinemaOra, 0, 23, CINEMA_DAILY_FETCH_HOUR},
+         &Valori::cinemaOra, 0, 23, CINEMA_DAILY_FETCH_HOUR, 1},
         {"route_min",  "Percorso, dentro la fascia percorso",       "min",
-         &Valori::routeMin, ROUTE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, ROUTE_FETCH_MIN},
+         &Valori::routeMin, ROUTE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, ROUTE_FETCH_MIN, CYCLE_MIN},
     };
 
     inline constexpr size_t N_CAMPI = sizeof(CAMPI) / sizeof(CAMPI[0]);
+
+    /** Vero se ogni campo ha un passo positivo e default, pavimento e tetto
+     *  multipli del passo: un default fuori passo sarebbe rifiutato dalla
+     *  stessa pagina che lo mostra. */
+    inline constexpr bool passiValidi()
+    {
+      for (size_t i = 0; i < N_CAMPI; ++i)
+      {
+        const Campo& c = CAMPI[i];
+        if (c.step == 0) return false;
+        if (c.minimo % c.step || c.massimo % c.step || c.predefinito % c.step) return false;
+        if (c.predefinito < c.minimo || c.predefinito > c.massimo) return false;
+      }
+      return true;
+    }
+    static_assert(passiValidi(), "un campo di Timings ha passo nullo, o default/limiti fuori passo o fuori range");
 
     /** Lunghezza a compile-time: Preferences tronca in silenzio oltre i 15
      *  caratteri, quindi una chiave troppo lunga sarebbe un bug muto. */
@@ -469,12 +469,27 @@ namespace Timings
         return "l'inizio della fascia WiFi supera la fine";
       if (v.cinemaOra < v.wifiOraInizio || v.cinemaOra > v.wifiOraFine)
         return "l'ora del fetch cinema cade fuori dalla fascia WiFi";
-      if (v.coalesceMin >= v.owmMin || v.coalesceMin >= v.outlookMin ||
-          v.coalesceMin >= v.googleMin || v.coalesceMin >= v.mailMin ||
-          v.coalesceMin >= v.tuyaMin || v.coalesceMin >= v.routeMin)
-        return "il coalescing e' maggiore o uguale a una cadenza di fetch";
-      if ((uint32_t)v.displayRefreshMin * 60UL < DISPLAY_REFRESH_PIENO_S)
-        return "il refresh del display e' piu' breve della durata di un refresh";
+      return nullptr;
+    }
+
+    /** Motivo del rifiuto di un singolo campo, nullptr se il valore è
+     *  ammesso. Il testo nomina chiave e limiti, perchè la pagina lo mostra
+     *  com'è a chi ha scritto il valore. */
+    inline const char* campoNonValido(const Campo& c, uint16_t v)
+    {
+      static char motivo[96];
+      if (v < c.minimo || v > c.massimo)
+      {
+        snprintf(motivo, sizeof motivo, "%s fuori dai limiti %u..%u %s",
+                 c.chiave, (unsigned)c.minimo, (unsigned)c.massimo, c.unita);
+        return motivo;
+      }
+      if (v % c.step)
+      {
+        snprintf(motivo, sizeof motivo, "%s deve essere multiplo di %u %s (un ciclo del sensore)",
+                 c.chiave, (unsigned)c.step, c.unita);
+        return motivo;
+      }
       return nullptr;
     }
   }
@@ -559,7 +574,9 @@ namespace Timings
     prefs.end();
 
     // Clamp per campo: un pavimento puo' essere stato alzato da un
-    // aggiornamento firmware successivo alla scrittura del valore.
+    // aggiornamento firmware successivo alla scrittura del valore. Un valore
+    // fuori passo sale al multiplo successivo, che resta entro il tetto
+    // perchè anche il tetto è un multiplo del passo.
     uint8_t corretti = 0;
     for (size_t i = 0; i < N_CAMPI; ++i)
     {
@@ -568,10 +585,12 @@ namespace Timings
       uint16_t v = letto;
       if (v < c.minimo) v = c.minimo;
       if (v > c.massimo) v = c.massimo;
+      if (v % c.step) v = (uint16_t)(v + c.step - v % c.step);
       if (v != letto)
       {
-        LOG("timings", "%s=%u fuori dai limiti [%u..%u]: uso %u",
-            c.chiave, (unsigned)letto, (unsigned)c.minimo, (unsigned)c.massimo, (unsigned)v);
+        LOG("timings", "%s=%u fuori dai limiti [%u..%u] o dal passo %u: uso %u",
+            c.chiave, (unsigned)letto, (unsigned)c.minimo, (unsigned)c.massimo,
+            (unsigned)c.step, (unsigned)v);
         valori.*(c.campo) = v;
         ++corretti;
       }
@@ -613,10 +632,10 @@ namespace Timings
     for (size_t i = 0; i < N_CAMPI; ++i)
     {
       const Campo& c = CAMPI[i];
-      const uint16_t v = nuovi.*(c.campo);
-      if (v < c.minimo || v > c.massimo)
+      const char* err = campoNonValido(c, nuovi.*(c.campo));
+      if (err)
       {
-        if (motivo) *motivo = "valore fuori dai limiti";
+        if (motivo) *motivo = err;
         return false;
       }
     }

@@ -34,9 +34,10 @@ Il modulo non possiede nessun tempo: è una riga della tabella dei task del
   comunque vada. I modi di fallimento di Tuya sono permanenti sulla scala dei
   minuti (credenziali, region, device model) e ogni ritento costerebbe un altro
   handshake TLS senza cambiare l'esito.
-- **`runsOutsideRadioHours`** vale `TUYA_IGNORE_ACTIVE_HOUR` (default 0), ed è l'unico
-  task che può alzarlo: a 1 la radio si accende per il solo publish anche fuori
-  dalla fascia WiFi, mentre tutto il resto resta confinato.
+- **Segue il sensore**: nel ciclo dello scheduler il publish viene dopo il passo
+  del sensore, quindi pubblica il campione appena letto. Fuori dalla fascia WiFi non
+  si pubblica mai: di notte la radio resta spenta e nell'app resta l'ultimo dato
+  della sera.
 - Radio giù non alza il guasto: lo scheduler registra `SKIPPED` senza chiamare
   `runPublish()`, quindi lo slot resta intatto e il badge non compare.
 
@@ -240,10 +241,10 @@ Trappole dell'API, tutte pagate almeno una volta:
 
 `Weather::detail::drawIndoorTuyaBadge()` disegna `TUYA ERR` in FONT_SMALL rosso,
 seduto sul bordo inferiore del riquadro Interno e allineato al suo margine destro
-(con la striscia bianca che interrompe il bordo), quando `Tuya::hasFailed()`. Il
-ridisegno lo chiede `dopoTuya()` nel `.ino`, **solo quando il badge compare o
-sparisce**, confrontando `hasFailed()` con lo stato del pannello disegnato
-(`g_tuya_badge_mostrato`): un refresh pieno costa ~24 s.
+(con la striscia bianca che interrompe il bordo), quando `Tuya::hasFailed()`. **Tuya
+non comanda il refresh**: il badge si legge al momento del disegno, e il frame si
+disegna comunque a ogni ciclo della fascia WiFi, quindi compare o sparisce nel frame
+del ciclo in cui è cambiato l'esito.
 
 Perchè sul bordo inferiore, misurato dalle tabelle GFXglyph: sul bordo superiore
 il titolo "Interno" in FONT_TITLE occupa 80 px e il badge in FONT_SMALL 100,

@@ -129,21 +129,13 @@ static void verificaFascia()
 
   g_epochFinta = 1000;   // orologio non sincronizzato
   ok(!isInsideRouteHours() && !isRouteSourceActive(), "senza orologio fuori fascia");
-  ok(msUntilNextBoundary() == UINT32_MAX, "  e nessun bordo calcolabile");
 
   impostaOra(2026, 11, 6, 7, 29);
   ok(!isInsideRouteHours(), "07:29 fuori dalla fascia 07:30-09:00");
-  ok(msUntilNextBoundary() == 60000, "  bordo fra un minuto");
   impostaOra(2026, 11, 6, 7, 30);
   ok(isInsideRouteHours() && isRouteSourceActive(), "07:30 dentro");
-  ok(msUntilNextBoundary() == 90UL * 60000UL, "  prossimo bordo alle 09:00");
   impostaOra(2026, 11, 6, 9, 0);
   ok(!isInsideRouteHours(), "09:00 fuori: fine esclusa");
-  ok(msUntilNextBoundary() == (22UL * 60 + 30) * 60000UL, "  prossimo bordo domani 07:30");
-
-  // 29/03/2026 alle 02:00 si passa alle 03:00: la notte dura 23 ore.
-  impostaOra(2026, 3, 28, 9, 0);
-  ok(msUntilNextBoundary() == (21UL * 60 + 30) * 60000UL, "bordo attraverso l'ora legale");
 
   s.source = Source::Cinema; apply(s, nullptr);
   impostaOra(2026, 11, 6, 8, 0);
@@ -155,17 +147,17 @@ static void verificaFascia()
 
   s.source = Source::Route; apply(s, nullptr);
   impostaOra(2026, 11, 6, 15, 0);
-  ok(isRouteSourceActive(), "sorgente Percorso: attiva anche fuori fascia");
+  ok(isRouteSourceActive() && !isInsideRouteHours(),
+     "sorgente Percorso: attiva anche fuori fascia, ma fuori dalla fascia del fetch");
   const uint32_t scaricato = (uint32_t)g_epochFinta - 50 * 60;
   ok(shownImage(true, scaricato) == ShownImage::Route, "  percorso di 50 min mostrato");
-  ok(msUntilRouteStale(scaricato) == 601000UL, "  scade fra 10 min");
   ok(shownImage(true, (uint32_t)g_epochFinta - 61 * 60) == ShownImage::Cinema, "  oltre 1 h torna il cinema");
   ok(shownImage(false, scaricato) == ShownImage::Cinema, "  senza immagine il cinema");
 
   s.source = Source::Auto; apply(s, nullptr);
   impostaOra(2026, 11, 6, 8, 0);
-  ok(shownImage(true, (uint32_t)g_epochFinta - 29 * 60) == ShownImage::Route, "Auto: 29 min, entro 3 cadenze");
-  ok(shownImage(true, (uint32_t)g_epochFinta - 31 * 60) == ShownImage::Cinema, "Auto: 31 min, scaduto");
+  ok(shownImage(true, (uint32_t)g_epochFinta - 14 * 60) == ShownImage::Route, "Auto: 14 min, entro 3 cadenze da 5");
+  ok(shownImage(true, (uint32_t)g_epochFinta - 16 * 60) == ShownImage::Cinema, "Auto: 16 min, scaduto");
   impostaOra(2026, 11, 6, 10, 0);
   ok(shownImage(true, (uint32_t)g_epochFinta) == ShownImage::Cinema, "Auto fuori fascia: cinema");
 }

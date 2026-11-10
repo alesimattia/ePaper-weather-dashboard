@@ -123,8 +123,6 @@ namespace Weather
     inline uint8_t    tcHistHead      = 0;     // indice next-write nel ring
     inline time_t     tcHistLastEpoch = 0;     // anti-doppione fra fetch ravvicinati
 
-    inline bool     needsRefresh   = false;   // c'e' qualcosa di nuovo da mostrare
-
     // =======================================================================
     // Helper interni
     // =======================================================================
@@ -992,9 +990,7 @@ namespace Weather
      * pattern paged di GxEPD2. Ogni refresh pieno costa ~24 s misurati, ed è
      * l'unica modalità che questo firmware usa: il driver 097c avrebbe anche un
      * partial da 639 ms, ma renderebbe un frame senza rosso, quindi il progetto
-     * non lo usa di proposito (vedi DISPLAY_PARTIAL_REFRESH nel .ino). Il flag
-     * needsRefresh fa da debouncer per evitare refresh ridondanti quando più
-     * eventi scattano ravvicinati.
+     * non lo usa di proposito (vedi DISPLAY_PARTIAL_REFRESH nel .ino).
      */
     inline void renderFrame()
     {
@@ -1100,15 +1096,6 @@ namespace Weather
     tcHistHead      = 0;
     tcHistLastEpoch = 0;
 
-    /**
-     * Il primo frame si vuole sempre, anche a placeholder: senza questo il
-     * pannello resterebbe come lo ha lasciato display.init() finche' qualcosa
-     * non porta dati nuovi, e su un dispositivo senza rete e senza sensore
-     * non succederebbe mai. QUANDO disegnarlo lo decide lo scheduler, che
-     * attende il primo esito di rete oppure PRIMO_FRAME_ATTESA_MS.
-     */
-    needsRefresh = true;
-
     if (!isConfigured())
       LOG("OWM", "API key assente in Env.h: meteo disattivato");
   }
@@ -1131,8 +1118,8 @@ namespace Weather
    * tocca a lui, che e' compito dello scheduler.
    *
    * In caso di successo registra il campione corrente nello storico del
-   * mini-chart temperatura. Il ridisegno non lo chiede da se': lo fa lo
-   * scheduler sull'esito, come per ogni altro task.
+   * mini-chart temperatura. Il dato compare nel frame dello stesso ciclo, che
+   * lo scheduler disegna dopo i fetch.
    * @return true se la richiesta e' andata a buon fine.
    */
   inline bool runFetch()
@@ -1144,37 +1131,17 @@ namespace Weather
   }
 
   /**
-   * Ridisegna lo schermo (background + banner) e azzera il flag dei dati
-   * nuovi. Nessuna rete.
+   * Ridisegna lo schermo (background + banner). Nessuna rete.
    *
-   * Non decide se sia il momento: quello lo fa lo scheduler, che chiama
-   * questa funzione solo quando sporco() e' vero, il rate limit del pannello
-   * e' scaduto e il primo frame e' consentito. Prima di disegnare scarta il
-   * meteo troppo vecchio, vedi detail::expireIfStale().
+   * Non decide se sia il momento: lo scheduler la chiama a ogni ciclo della
+   * fascia WiFi, dopo il sensore e i fetch dello stesso ciclo. Prima di
+   * disegnare scarta il meteo troppo vecchio, vedi detail::expireIfStale().
    */
   inline void render()
   {
     using namespace detail;
     expireIfStale();
     renderFrame();
-    needsRefresh = false;
-  }
-
-  /**
-   * Forza il refresh del display al prossimo giro di render(). Usato dal
-   * .ino per notificare l'arrivo di nuovi dati da ridisegnare senza
-   * accoppiamento diretto al flag interno.
-   */
-  inline void markDirty()
-  {
-    detail::needsRefresh = true;
-  }
-
-  /** Vero quando c'e' qualcosa di nuovo da mostrare: lo legge lo scheduler
-   *  per decidere se il refresh del pannello vale i suoi ~24 s. */
-  inline bool sporco()
-  {
-    return detail::needsRefresh;
   }
 }
 

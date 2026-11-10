@@ -71,17 +71,6 @@
 #define LOG_LEVEL 2
 
 /**
- * A 1 il publish della telemetria Tuya puo' accendere la radio anche fuori
- * dalla fascia WiFi, cosi' l'app riceve dati 24 ore su 24 mentre meteo,
- * calendari, mail e refresh del pannello restano confinati alla finestra. A 0
- * di notte non si pubblica e nell'app resta visibile l'ultimo dato della sera.
- *
- * Alimenta il campo `runsOutsideRadioHours` della tabella dei task: è l'unico task che
- * lo usa, tutti gli altri stanno dentro la fascia.
- */
-#define TUYA_IGNORE_ACTIVE_HOUR 0
-
-/**
  * Conferma applicativa del cloud Tuya, da alzare durante il bring-up e da
  * riabbassare a regime: il PUBACK dice che il broker ha ricevuto il messaggio,
  * non che il cloud ne abbia accettato il contenuto. Costo e meccanismo sono
@@ -111,6 +100,23 @@
 #define ROUTEFINDER_ORIGIN      "https://routefinder-7w0a.onrender.com"
 #define ROUTEFINDER_PREWARM_URL ROUTEFINDER_ORIGIN "/health"
 
+/**
+ * Un server render.com del free tier, con l'ultimo contatto che decide se il
+ * ping di sveglia serve (vedi prewarmServer()). Sta prima di ogni funzione del
+ * file perchè il preprocessore di Arduino ne genera i prototipi in quel punto,
+ * e quelli che lo nominano non compilerebbero.
+ */
+struct RenderServer
+{
+	const char *flow;
+	const char *healthUrl;
+	bool contacted;          // falso finchè il server non ha risposto, o dopo RENDER_SPINDOWN_MS
+	uint32_t lastContactMs;  // millis() dell'ultima risposta HTTP, del ping o del download
+};
+
+static RenderServer g_cinema_server = {"cinema", CINEMA_PREWARM_URL, false, 0};
+static RenderServer g_route_server = {"route", ROUTEFINDER_PREWARM_URL, false, 0};
+
 #include <GxEPD2_3C.h>
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
@@ -139,6 +145,16 @@
 #include "Routefinder.h"
 
 SPIClass hspi(HSPI);
+
+/**
+ * Bluetooth permanentemente disattivo. Il firmware non lo usa, e queste due
+ * funzioni, che il core dichiara sovrascrivibili (esp32-hal-bt.h), fanno sì che
+ * initArduino() rilasci comunque la memoria del controller BT, ~36 KB: il
+ * rilascio è irreversibile fino al riavvio, quindi il controller non può più
+ * partire, anche se un domani una libreria BT entrasse nel link.
+ */
+extern "C" bool btClassicInUse(void) { return false; }
+extern "C" bool bleInUse(void) { return false; }
 
 /**
  * Istanza del display. Tipo del pannello (Layout::Panel), altezza della page
@@ -324,28 +340,62 @@ static constexpr const char *cinemaColorsParam(uint8_t planes)
  * HTTPC_ERROR_READ_TIMEOUT (-11) e' l'esito nominale, 200 significa che il
  * server era gia' caldo, un errore di connessione che il ping non e' partito.
  *
- * Gira solo come onRoundStart() del task che scarichera' davvero l'immagine:
- * svegliare render a ogni wake da DISPLAY_REFRESH_MIN terrebbe l'istanza
- * sempre accesa, bruciando le ore-istanza del free tier senza servire a niente.
+ * Gira solo come onRoundStart() del task che scaricherà davvero l'immagine,
+ * e solo se l'istanza dorme: render la spegne dopo RENDER_SPINDOWN_MS senza
+ * richieste, quindi un server che ha risposto da meno di così è sveglio. Nella
+ * fascia percorso le richieste sono a un ciclo l'una dall'altra e il ping
+ * parte solo al primo ciclo; il cinema, giornaliero, lo manda sempre.
  */
-static void prewarmServer(const char *flow, const char *healthUrl)
+/**
+ * Vero se il server ha risposto da meno di RENDER_SPINDOWN_MS. Il flag si
+ * azzera al primo controllo oltre la soglia: senza, dopo 24,8 giorni senza
+ * contatti il confronto signed su millis() si invertirebbe.
+ */
+static bool isServerAwake(RenderServer &server)
 {
+	if (!server.contacted) return false;
+	if ((int32_t)(millis() - server.lastContactMs) >= (int32_t)RENDER_SPINDOWN_MS)
+	{
+		server.contacted = false;
+		return false;
+	}
+	return true;
+}
+
+/** Registra una risposta HTTP del server, cioè la prova che l'istanza è su. */
+static void noteServerContact(RenderServer &server)
+{
+	server.contacted = true;
+	server.lastContactMs = millis();
+}
+
+static void prewarmServer(RenderServer &server)
+{
+	if (isServerAwake(server))
+	{
+		LOGV("img", "%s pre-warm non necessario: il server ha risposto da meno di %lu min",
+			 server.flow, (unsigned long)(RENDER_SPINDOWN_MS / 60000UL));
+		return;
+	}
 	WiFiClientSecure client;
 	HTTPClient http;
 	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
-	if (!Net::beginHttps(http, client, healthUrl))
+	if (!Net::beginHttps(http, client, server.healthUrl))
 	{
-		LOG("img", "%s pre-warm: http.begin fallita", flow);
+		LOG("img", "%s pre-warm: http.begin fallita", server.flow);
 		return;
 	}
 	uint32_t t0 = millis();
 	int code = http.GET();
 	http.end();
-	LOG("img", "%s pre-warm %s -> %d in %lu ms", flow, healthUrl, code, (unsigned long)(millis() - t0));
+	// Un codice HTTP positivo è una risposta dell'istanza; il timeout di
+	// lettura (-11), esito nominale a istanza ferma, non lo è.
+	if (code > 0) noteServerContact(server);
+	LOG("img", "%s pre-warm %s -> %d in %lu ms", server.flow, server.healthUrl, code, (unsigned long)(millis() - t0));
 }
 
-static void prewarmCinemaServer() { prewarmServer("cinema", CINEMA_PREWARM_URL); }
-static void prewarmRouteServer() { prewarmServer("route", ROUTEFINDER_PREWARM_URL); }
+static void prewarmCinemaServer() { prewarmServer(g_cinema_server); }
+static void prewarmRouteServer() { prewarmServer(g_route_server); }
 
 /**
  * Scarica un'immagine nel formato di /cinema/arduino e la salva nello slot
@@ -358,12 +408,16 @@ static void prewarmRouteServer() { prewarmServer("route", ROUTEFINDER_PREWARM_UR
  * qualunque errore (HTTP diverso da 200, Content-Length diverso da
  * Layout::CINEMA_TOTAL_SZ, corpo interrotto, scrittura fallita) la scrittura
  * si annulla e l'immagine cinema attiva resta quella di prima.
+ * Ogni risposta HTTP, anche un errore, conta come contatto con il server: è
+ * ciò che evita il ping di sveglia al ciclo successivo.
+ * @param server server render.com da cui si scarica, per il ping condizionato.
  * @param token valore dell'header X-Routefinder-Token, nullptr se non serve.
  * @return true se l'immagine è stata scaricata e salvata.
  */
-static bool downloadImageToStore(const char *flow, const char *url, const char *token,
+static bool downloadImageToStore(RenderServer &server, const char *url, const char *token,
 								 uint32_t timeoutMs, CinemaStore::Kind kind)
 {
+	const char *flow = server.flow;
 	LOG("img", "%s fetching %s", flow, url);
 	// L'erase dello slot libero ferma la cache della flash: avviene prima che
 	// la connessione TLS esista.
@@ -391,6 +445,7 @@ static bool downloadImageToStore(const char *flow, const char *url, const char *
 	}
 	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
 	int code = http.GET();
+	if (code > 0) noteServerContact(server);
 	if (code != 200)
 	{
 		LOG("img", "%s: HTTP status %d", flow, code);
@@ -467,7 +522,7 @@ static bool fetchCinemaImage()
 		LOG("cinema", "URL troncato (%d caratteri), resta l'immagine precedente", urlLength);
 		return false;
 	}
-	return downloadImageToStore("cinema", url, nullptr, CINEMA_HTTP_TIMEOUT_MS, CinemaStore::Kind::Cinema);
+	return downloadImageToStore(g_cinema_server, url, nullptr, CINEMA_HTTP_TIMEOUT_MS, CinemaStore::Kind::Cinema);
 }
 
 /**
@@ -485,7 +540,7 @@ static bool fetchRouteImage()
 		LOG("route", "URL troncato (%d caratteri)", urlLength);
 		return false;
 	}
-	return downloadImageToStore("route", url, ROUTEFINDER_TOKEN, ROUTE_HTTP_TIMEOUT_MS, CinemaStore::Kind::Route);
+	return downloadImageToStore(g_route_server, url, ROUTEFINDER_TOKEN, ROUTE_HTTP_TIMEOUT_MS, CinemaStore::Kind::Route);
 }
 
 /**
@@ -558,63 +613,37 @@ static Scheduler::Outcome runRouteFetch()
 
 /** Riga del percorso nella tabella dei task, cercata da setup(). */
 static Scheduler::Task *g_route_task = nullptr;
-static bool g_route_source_was_active = false;
+static bool g_route_fetch_was_active = false;
 
 /**
- * Precondizione del percorso: sorgente attiva, orologio valido perchè
- * l'istante del download decide se l'immagine è ancora mostrabile, arrivo e
- * token configurati, archivio disponibile.
+ * Precondizione del percorso: sorgente percorso attiva e ora dentro la fascia
+ * percorso, qualunque sia la sorgente, così routefinder non riceve richieste
+ * fuori fascia nemmeno con la sorgente forzata a Percorso; poi orologio valido
+ * perchè l'istante del download decide se l'immagine è ancora mostrabile,
+ * arrivo e token configurati, archivio disponibile.
  *
- * All'ingresso nella sorgente percorso rimette il task a mai eseguito, così il
- * primo fetch della fascia parte subito invece di dipendere dall'aritmetica
- * signed di millis() sull'ultimo slot, che dopo 24,8 giorni senza giri non è
- * più affidabile. È l'unico effetto collaterale ed è idempotente: lo scheduler
- * valuta la precondizione più volte per giro.
+ * All'ingresso nella fascia rimette il task a mai eseguito, così il primo
+ * fetch parte al primo ciclo della fascia invece di dipendere dal conteggio
+ * dei cicli dell'ultimo slot, di un'altra giornata. È l'unico effetto
+ * collaterale ed è idempotente: lo scheduler valuta la precondizione più
+ * volte per giro.
  */
 static bool routeReady()
 {
-	const bool active = Routefinder::isRouteSourceActive();
-	if (active && !g_route_source_was_active && g_route_task != nullptr) g_route_task->state.neverRun = true;
-	g_route_source_was_active = active;
+	const bool active = Routefinder::isRouteSourceActive() && Routefinder::isInsideRouteHours();
+	if (active && !g_route_fetch_was_active && g_route_task != nullptr) g_route_task->state.neverRun = true;
+	g_route_fetch_was_active = active;
 	return active && Clock::valido() && Routefinder::hasDestination() &&
 		   Net::isCredentialSet(ROUTEFINDER_TOKEN) && CinemaStore::isAvailable();
 }
 
-/** Immagine del riquadro nell'ultimo frame disegnato. */
-static Routefinder::ShownImage g_drawn_image = Routefinder::ShownImage::Cinema;
-static bool g_frame_drawn = false;
-
 /** Immagine che il riquadro deve mostrare adesso, dalla sorgente scelta e dal
- *  percorso salvato. */
+ *  percorso salvato. La legge drawTestBackground() a ogni frame, quindi un
+ *  cambio di fascia, di sorgente o di freschezza compare al ciclo successivo. */
 static Routefinder::ShownImage currentShownImage()
 {
 	return Routefinder::shownImage(CinemaStore::image(CinemaStore::Kind::Route) != nullptr,
 								   CinemaStore::routeDownloadedAt());
-}
-
-/**
- * Scadenza del controllo della sorgente: subito se il riquadro a schermo non è
- * più quello giusto e nessuno ha ancora chiesto il ridisegno, altrimenti al
- * prossimo bordo della fascia o all'istante in cui il percorso invecchia. È ciò
- * che sveglia il dispositivo esattamente alle 07:00 e alle 09:00 invece che
- * fino a SLEEP_MAX_S più tardi.
- */
-static uint32_t msUntilSourceCheck()
-{
-	if (g_frame_drawn && currentShownImage() != g_drawn_image && !Weather::sporco()) return 0;
-	const uint32_t boundary = Routefinder::msUntilNextBoundary();
-	const uint32_t stale = Routefinder::msUntilRouteStale(CinemaStore::routeDownloadedAt());
-	return stale < boundary ? stale : boundary;
-}
-
-/** Chiede il ridisegno quando il riquadro deve cambiare immagine: ingresso e
- *  uscita dalla fascia, percorso invecchiato, sorgente cambiata da /route. */
-static Scheduler::Outcome runSourceCheck()
-{
-	if (!g_frame_drawn || currentShownImage() == g_drawn_image || Weather::sporco())
-		return Scheduler::Outcome::SKIPPED;
-	Weather::markDirty();
-	return Scheduler::Outcome::OK;
 }
 
 static Scheduler::Outcome runTuyaPublish()
@@ -627,142 +656,59 @@ static Scheduler::Outcome runTuyaPublish()
  *  brucia il suo unico tentativo per cadenza. */
 static bool tuyaReady() { return Tuya::readyToPublish(); }
 
-/** Stato del badge di guasto come si trova sul pannello disegnato. */
-static bool g_tuya_badge_shown = false;
+/** Passo del sensore del ciclo: il valore di ritorno di Indoor::refresh() non
+ *  serve, perchè il frame del ciclo si disegna comunque. */
+static void pollIndoorSensor() { Indoor::refresh(); }
 
 /**
- * Ridisegno solo quando il badge [TUYA ERR] compare o sparisce: un refresh
- * pieno costa ~24 s e la telemetria, a parte quel badge, non cambia niente a
- * schermo. Non passa da markDirtyOnOk perche' qui conta la transizione, non
- * l'esito del singolo giro.
- */
-static void onTuyaOutcome(Scheduler::Outcome)
-{
-	if (Tuya::hasFailed() == g_tuya_badge_shown) return;
-	g_tuya_badge_shown = Tuya::hasFailed();
-	Weather::markDirty();
-}
-
-/** Interrogazione del sensore: OK quando il dato da mostrare è cambiato, cioè
- *  per un campione nuovo o per uno appena scaduto. */
-static Scheduler::Outcome runIndoorSample()
-{
-	return Indoor::refresh() ? Scheduler::Outcome::OK : Scheduler::Outcome::SKIPPED;
-}
-
-/** Scadenza custom del task del sensore. La scadenza custom precede ogni altra
- *  regola dello scheduler, mai eseguito compreso, quindi deve valere 0 al boot:
- *  è Indoor a garantirlo. */
-static uint32_t msUntilIndoorPoll() { return Indoor::msUntilNextPoll(); }
-
-/**
- * Il dato del sensore chiede il ridisegno solo dentro la fascia WiFi: di notte
- * un refresh pieno ogni 5 minuti non servirebbe a nessuno. Il campione viene
- * comunque acquisito, e il primo ridisegno del mattino mostra il più recente.
- */
-static void onIndoorOutcome(Scheduler::Outcome e)
-{
-	if (e == Scheduler::Outcome::OK && Scheduler::isInsideRadioHours()) Weather::markDirty();
-}
-
-/** Chiede il ridisegno quando il task ha portato dati nuovi. */
-static void markDirtyOnOk(Scheduler::Outcome e)
-{
-	if (e == Scheduler::Outcome::OK) Weather::markDirty();
-}
-
-/** Il pannello si ridisegna solo con dati nuovi da mostrare, e non prima che
- *  la rete abbia dato un esito o sia scaduta l'attesa del primo frame. */
-static bool displayReady()
-{
-	return Weather::sporco() && Scheduler::isFirstFrameAllowed();
-}
-
-/** render() azzera da se' il flag dei dati nuovi. */
-static Scheduler::Outcome runDisplayRender()
-{
-	Weather::render();
-	return Scheduler::Outcome::OK;
-}
-
-/** Il display non si auto-sporca: senza questo hook il ridisegno si
- *  richiederebbe da solo a ogni giro. */
-static void onDisplayOutcome(Scheduler::Outcome) {}
-
-/**
- * Tutti i flussi temporizzati del dispositivo. L'ordine delle righe e'
- * l'ordine di esecuzione dentro la rispettiva fase, e non e' arbitrario:
+ * Tutti i flussi di rete del dispositivo. L'ordine delle righe è l'ordine di
+ * esecuzione dentro il passo di rete del ciclo, che viene dopo il sensore e
+ * prima del frame, e non è arbitrario:
  *
  *   - mail prima di Google perche' i due condividono la cache del token
  *     OAuth: chi gira per primo paga il refresh;
  *   - Google prima di Outlook perche' il token appena rinfrescato e' il suo;
- *   - la telemetria Tuya prima del cinema: i secondi del suo handshake TLS
- *     sono altro tempo di copertura del boot di render.com;
+ *   - la telemetria Tuya dopo il sensore, che nello stesso ciclo ha appena
+ *     prodotto il campione da pubblicare, e prima del cinema: i secondi del
+ *     suo handshake TLS sono altro tempo di copertura del boot di render.com;
  *   - percorso e cinema per ultimi perche' sono gli unici che possono pagare
  *     il cold start di render.com, e il tempo di rete degli altri e' la
  *     copertura di quel boot; i loro onRoundStart() mandano il ping di sveglia
- *     all'inizio del giro. Non girano mai nello stesso giro: il cinema e'
- *     sospeso finche' il percorso e' la sorgente del riquadro;
- *   - il controllo della sorgente e il sensore precedono il display, cosi' un
- *     cambio di riquadro o un campione appena prodotto entrano nel frame dello
- *     stesso giro.
+ *     all'inizio del passo, solo se l'istanza dorme. Non girano mai nello
+ *     stesso ciclo: il cinema è sospeso finchè il percorso è la sorgente
+ *     del riquadro.
  *
- * Tuya è l'unico task di rete con maxAttempts a 0, cioè un tentativo per slot
- * comunque vada: i suoi modi di fallimento sono permanenti sulla scala dei
- * minuti (credenziali, region, device model) e ogni ritento costerebbe un
- * altro handshake TLS senza cambiare l'esito. Ed è l'unico con runsOutsideRadioHours
- * potenzialmente a 1, vedi TUYA_IGNORE_ACTIVE_HOUR in testa al file.
+ * Le cadenze sono multipli del ciclo (Timings.h, campo `step`): meteo, mail e
+ * calendari a 10 minuti cadono un ciclo sì e uno no, Tuya e percorso a ogni
+ * ciclo. Nessun task chiede ridisegni: il frame si disegna a ogni ciclo della
+ * fascia WiFi e legge da sè i dati, badge di Tuya compreso.
+ *
+ * Tuya è l'unico task con maxAttempts a 0, cioè un tentativo per slot comunque
+ * vada: i suoi modi di fallimento sono permanenti sulla scala dei minuti
+ * (credenziali, region, device model) e ogni ritento costerebbe un altro
+ * handshake TLS senza cambiare l'esito.
  */
 static Scheduler::Task TASK_TABLE[] = {
-	{"meteo", Scheduler::Cadence::PERIODIC, true, false,
-	 &Timings::Valori::owmMin, nullptr,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runWeatherFetch, weatherReady, isWeatherIncomplete, nullptr, markDirtyOnOk, nullptr},
+	{"meteo", Scheduler::Cadence::PERIODIC, &Timings::Valori::owmMin, nullptr, FETCH_MAX_TENTATIVI,
+	 runWeatherFetch, weatherReady, isWeatherIncomplete, nullptr},
 
-	{"mail", Scheduler::Cadence::PERIODIC, true, false,
-	 &Timings::Valori::mailMin, nullptr,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runMailFetch, mailReady, nullptr, nullptr, markDirtyOnOk, nullptr},
+	{"mail", Scheduler::Cadence::PERIODIC, &Timings::Valori::mailMin, nullptr, FETCH_MAX_TENTATIVI,
+	 runMailFetch, mailReady, nullptr, nullptr},
 
-	{"google", Scheduler::Cadence::PERIODIC, true, false,
-	 &Timings::Valori::googleMin, nullptr,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runGoogleCalendarFetch, googleReady, nullptr, nullptr, markDirtyOnOk, nullptr},
+	{"google", Scheduler::Cadence::PERIODIC, &Timings::Valori::googleMin, nullptr, FETCH_MAX_TENTATIVI,
+	 runGoogleCalendarFetch, googleReady, nullptr, nullptr},
 
-	{"outlook", Scheduler::Cadence::PERIODIC, true, false,
-	 &Timings::Valori::outlookMin, nullptr,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runOutlookCalendarFetch, outlookReady, nullptr, nullptr, markDirtyOnOk, nullptr},
+	{"outlook", Scheduler::Cadence::PERIODIC, &Timings::Valori::outlookMin, nullptr, FETCH_MAX_TENTATIVI,
+	 runOutlookCalendarFetch, outlookReady, nullptr, nullptr},
 
-	{"tuya", Scheduler::Cadence::PERIODIC, true, TUYA_IGNORE_ACTIVE_HOUR,
-	 &Timings::Valori::tuyaMin, nullptr,
-	 FETCH_RITENTO_MS, 0,
-	 runTuyaPublish, tuyaReady, nullptr, nullptr, onTuyaOutcome, nullptr},
+	{"tuya", Scheduler::Cadence::PERIODIC, &Timings::Valori::tuyaMin, nullptr, 0,
+	 runTuyaPublish, tuyaReady, nullptr, nullptr},
 
-	{"route", Scheduler::Cadence::PERIODIC, true, false,
-	 &Timings::Valori::routeMin, nullptr,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runRouteFetch, routeReady, nullptr, prewarmRouteServer, markDirtyOnOk, nullptr},
+	{"route", Scheduler::Cadence::PERIODIC, &Timings::Valori::routeMin, nullptr, FETCH_MAX_TENTATIVI,
+	 runRouteFetch, routeReady, nullptr, prewarmRouteServer},
 
-	{"cinema", Scheduler::Cadence::DAILY, true, false,
-	 nullptr, &Timings::Valori::cinemaOra,
-	 FETCH_RITENTO_MS, FETCH_MAX_TENTATIVI,
-	 runCinemaFetch, cinemaReady, nullptr, prewarmCinemaServer, markDirtyOnOk, nullptr},
-
-	{"source", Scheduler::Cadence::PERIODIC, false, false,
-	 &Timings::Valori::displayRefreshMin, nullptr,
-	 FETCH_RITENTO_MS, 0,
-	 runSourceCheck, nullptr, nullptr, nullptr, nullptr, msUntilSourceCheck},
-
-	{"bsec", Scheduler::Cadence::PERIODIC, false, false,
-	 &Timings::Valori::displayRefreshMin, nullptr,
-	 FETCH_RITENTO_MS, 0,
-	 runIndoorSample, Indoor::attivo, nullptr, nullptr, onIndoorOutcome, msUntilIndoorPoll},
-
-	{"display", Scheduler::Cadence::PERIODIC, false, false,
-	 &Timings::Valori::displayRefreshMin, nullptr,
-	 FETCH_RITENTO_MS, 0,
-	 runDisplayRender, displayReady, nullptr, nullptr, onDisplayOutcome, nullptr},
+	{"cinema", Scheduler::Cadence::DAILY, nullptr, &Timings::Valori::cinemaOra, FETCH_MAX_TENTATIVI,
+	 runCinemaFetch, cinemaReady, nullptr, prewarmCinemaServer},
 };
 
 static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0]);
@@ -777,8 +723,6 @@ static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0])
 void drawTestBackground()
 {
 	const Routefinder::ShownImage shown = currentShownImage();
-	g_drawn_image = shown;
-	g_frame_drawn = true;
 	const GxEPDImage::Descriptor *stored =
 		shown == Routefinder::ShownImage::Route    ? CinemaStore::image(CinemaStore::Kind::Route) :
 		shown == Routefinder::ShownImage::Cinema   ? CinemaStore::image(CinemaStore::Kind::Cinema) :
@@ -932,17 +876,33 @@ void setup()
 	 * Nessuna rete qui dentro.
 	 */
 	CinemaStore::begin();
+	LOG("BT", "memoria del controller Bluetooth rilasciata: %s", btMemReleased(BT_MODE_BTDM) ? "si" : "NO");
 	/**
 	 * Apre la finestra di manutenzione sulla rete di casa in sola STA, e accende
 	 * l'access point di emergenza solo se la STA non sale entro
 	 * MAINT_STA_TIMEOUT_S. Alla scadenza loop() chiama Maintenance::chiudi(), che
 	 * consegna la radio spenta allo scheduler e il ciclo passa al light sleep.
+	 *
+	 * Di notte la radio non si accende: con l'ora già valida, cioè dopo un
+	 * riavvio software (OTA, crash, watchdog) perchè il timer RTC la conserva,
+	 * la finestra non si apre. Dopo un'interruzione di alimentazione l'ora non
+	 * è nota, e solo la rete può dirla: la finestra si apre come sempre.
 	 */
-	Maintenance::begin();
+	if (Clock::valido() && !Scheduler::isInsideRadioHours())
+		LOG("MAINT", "fuori dalla fascia WiFi con l'ora valida: finestra di manutenzione non aperta");
+	else
+		Maintenance::begin();
 	for (uint8_t i = 0; i < TASK_COUNT; ++i)
 		if (strcmp(TASK_TABLE[i].tag, "route") == 0) g_route_task = &TASK_TABLE[i];
-	Scheduler::begin(TASK_TABLE, TASK_COUNT, wifiOn, wifiOff);
-	// Riferimento temporale per il timeout di boot WiFi (vedi PRIMO_FRAME_ATTESA_MS).
+
+	Scheduler::Hooks hooks;
+	hooks.radioOn = wifiOn;
+	hooks.radioOff = wifiOff;
+	hooks.sensorActive = Indoor::attivo;
+	hooks.msUntilSensorPoll = Indoor::msUntilNextPoll;
+	hooks.pollSensor = pollIndoorSensor;
+	hooks.drawFrame = Weather::render;
+	Scheduler::begin(TASK_TABLE, TASK_COUNT, hooks);
 }
 
 /**
@@ -955,8 +915,9 @@ void setup()
  * Niente light sleep qui, altrimenti il WebServer non risponderebbe.
  *
  * Scaduta la finestra, Maintenance::chiudi() spegne AP e WiFi e il ciclo torna al
- * comportamento energetico ordinario: STA acceso solo per i fetch dovuti e
- * spento subito dopo, con light sleep fino al prossimo evento dello scheduler.
+ * comportamento energetico ordinario: a ogni ciclo del sensore la STA si accende
+ * solo per i fetch dovuti e si spegne subito dopo, poi il frame, poi il light
+ * sleep fino alla scadenza esatta del sensore. Di notte solo il sensore.
  */
 void loop()
 {
@@ -970,10 +931,14 @@ void loop()
 		 * e' aperta, altrimenti il web server non risponderebbe.
 		 *
 		 * Mentre qualcuno usa le pagine lo scheduler aspetta: un fetch o un
-		 * refresh lascerebbero il web server muto per decine di secondi.
+		 * refresh lascerebbero il web server muto per decine di secondi. Il
+		 * sensore no: costa ~50 ms, e BSEC perde l'accuratezza se il poll
+		 * ritarda oltre il 6,25% del suo periodo.
 		 */
 		if (!Maintenance::clientAttivo())
 			Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);
+		else
+			Scheduler::serviceSensor();
 		delay(MAINTENANCE_LOOP_DELAY_MS);
 		return;
 	}

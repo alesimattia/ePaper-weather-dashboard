@@ -85,6 +85,16 @@ appartiene a nessuno dei due.
   `esp_timer_get_time()/1000` e `time()` poggia sulla stessa base più l'offset
   di `settimeofday`; quella base avanza in light sleep. La deriva la correggono
   `resyncIfStale()` e il polling di lwIP, quindi `sntp` **non va mai fermato**.
+- **L'ora sopravvive a un riavvio software**: il core 3.3.11 ha
+  `CONFIG_LIBC_TIME_SYSCALL_USE_RTC_HRT`, e per ESP-IDF il timer RTC conserva l'ora
+  attraverso ogni reset tranne il power-on. Dopo un OTA, un crash o un watchdog
+  `valido()` è quindi vero al boot. Per questo `sincronizza()`, alla prima chiamata
+  del boot con l'ora già valida, avvia comunque SNTP (`configTzTime()`) senza
+  attendere: senza la prima risposta `everSynced` resterebbe falso e
+  `resyncIfStale()` non correggerebbe più la deriva fino a un power cycle. Su questa
+  stessa proprietà poggia la regola notturna del `setup()`: con l'ora valida fuori
+  dalla fascia WiFi la finestra di manutenzione non si apre (vedi
+  [[scheduler_task_table]]).
 - **Soglia 1700000000 e non 100000**: quest'ultima corrisponde a 27,7 h di
   uptime, oltre le quali un clock mai sincronizzato diventa indistinguibile da
   uno valido.

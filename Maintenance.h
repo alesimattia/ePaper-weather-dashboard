@@ -214,9 +214,11 @@ namespace Maintenance
     static const char CONFIG_TESTA[] PROGMEM =
         "<form method=POST action=/config>";
 
+    // step viene dal descrittore: il browser propone solo multipli del ciclo
+    // per le cadenze, e applica() rifiuta comunque un valore fuori passo.
     static const char CONFIG_RIGA_FMT[] PROGMEM =
-        "<label>%s <input type=number name=%s value=%u min=%u max=%u required> %s"
-        " (minimo %u, predefinito %u)</label><br>";
+        "<label>%s <input type=number name=%s value=%u min=%u max=%u step=%u required> %s"
+        " (minimo %u, passo %u, predefinito %u)</label><br>";
 
     static const char CONFIG_CODA[] PROGMEM =
         "<p><button>Salva</button></form>"
@@ -263,8 +265,8 @@ namespace Maintenance
         const int n = snprintf_P(riga, sizeof riga, CONFIG_RIGA_FMT,
                                  c.descrizione, c.chiave,
                                  (unsigned)(Timings::get().*(c.campo)),
-                                 (unsigned)c.minimo, (unsigned)c.massimo, c.unita,
-                                 (unsigned)c.minimo, (unsigned)c.predefinito);
+                                 (unsigned)c.minimo, (unsigned)c.massimo, (unsigned)c.step, c.unita,
+                                 (unsigned)c.minimo, (unsigned)c.step, (unsigned)c.predefinito);
         server.sendContent(riga, (size_t)n);
       }
       server.sendContent_P(CONFIG_CODA);
@@ -336,7 +338,7 @@ namespace Maintenance
       {
         salvato = Timings::save();
         server.sendContent_P(salvato
-            ? PSTR("</ul><p>Salvato, attivo dal prossimo giro senza riavvio<ul>")
+            ? PSTR("</ul><p>Salvato, attivo dal prossimo ciclo senza riavvio<ul>")
             : PSTR("</ul><p><b>Salvataggio fallito</b>: valori attivi solo fino al riavvio<ul>"));
       }
       else if (proposti)
@@ -503,7 +505,7 @@ namespace Maintenance
                                (unsigned)(s.windowEndMin / 60), (unsigned)(s.windowEndMin % 60));
         server.sendContent(riga, (size_t)n);
         server.sendContent_P(salvato
-            ? PSTR("</ul><p>Salvato, attivo dal prossimo giro senza riavvio")
+            ? PSTR("</ul><p>Salvato, attivo dal prossimo ciclo senza riavvio")
             : PSTR("</ul><p><b>Salvataggio fallito</b>: valori attivi solo fino al riavvio"));
       }
       else

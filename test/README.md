@@ -65,25 +65,34 @@ Due dettagli non ovvi:
 fascia WiFi e spostare l'ora del cinema sono legittimi insieme e illegittimi
 presi uno alla volta); ogni vincolo incrociato respinto senza toccare lo
 stato; round-trip su NVS; clamp al boot di un valore diventato illegale
-perché un aggiornamento ha alzato il pavimento, con riscrittura; NVS non
+perché un aggiornamento ha alzato il pavimento, con riscrittura; cadenza fuori
+dal passo del ciclo respinta con il motivo e, se arriva da NVS, portata al
+multiplo successivo; schema precedente che azzera il namespace; NVS non
 disponibile; schema assente; ripristino dei predefiniti.
 
 **`test_scheduler`** — interpretazione della stringa POSIX del fuso e le due
 ore patologiche del cambio (quella inesistente di marzo e quella ripetuta di
-ottobre, con la convenzione fissata invece che sperata); cadenza periodica e
-coalescing; ritento a 30 s e soglia
-dopo due fallimenti; `SALTATO` che lascia lo slot intatto; cadenza giornaliera
-con il recupero in giornata (`tm_hour >= ora`); fascia oraria che rimanda i
-task di rete alla sua apertura; orologio non sincronizzato con fascia
-fail-open e giornaliera sospesa; cambio dell'ora legale; rollover di
-`millis()` a 49,7 giorni; clamp del light sleep fra 30 e 300 s.
+ottobre, con la convenzione fissata invece che sperata). Poi il ciclo, con
+sensore, radio e pannello finti che registrano la sequenza dei passi: ordine
+sensore, radio, task, radio giù, frame; cadenza da 10 minuti un ciclo sì e uno
+no per venti cicli con fetch di durata variabile; sleep fino alla scadenza
+esatta del sensore, senza pavimento; fase di rete più lunga del ciclo con il
+sensore interrogato fra un task e l'altro entro il 6,25%; ritento al ciclo
+successivo con lo slot ancorato e soglia dopo due fallimenti; connessione
+fallita senza tentativi spesi; notte con il solo sensore, e senza sensore sonno
+fino all'apertura della fascia anche attraverso l'ora legale; primo ciclo del
+mattino che rende dovuti i periodici ma non il giornaliero; giornaliero che
+aspetta l'ora valida senza doppioni; finestra di manutenzione con STA in
+ritardo, STA mai salita, ora da sincronizzare e client attivo; ciclo interno
+senza sensore; rollover di `millis()` a 49,7 giorni; fascia fail-open con
+orologio non sincronizzato; cambio dell'ora legale.
 
 **`test_routefinder`** — parser delle coordinate "lat, lng" (segni, spazi,
 decimali oltre il sesto, fuori range, forme malformate); URL con coordinate
 negative; round-trip su NVS e ritorno ai default quando la fascia WiFi non
-contiene più la fascia del percorso; fascia ai minuti con fine esclusa,
-bordo successivo anche attraverso il cambio dell'ora legale; immagine del
-riquadro nelle quattro sorgenti e freschezza del percorso. Il test dichiara da
+contiene più la fascia del percorso; fascia ai minuti con fine esclusa;
+immagine del riquadro nelle quattro sorgenti e freschezza del percorso, con la
+sorgente forzata a Percorso attiva anche fuori dalla fascia del fetch. Il test dichiara da
 sè le coordinate con `ROUTEFINDER_HOST_TEST`: con le virgolette l'include di
 `Env.h` troverebbe sempre quello vero accanto agli header del firmware.
 
