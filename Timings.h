@@ -205,16 +205,20 @@
 #define RENDER_SPINDOWN_MS (15UL * 60UL * 1000UL)
 
 /** Telemetria Tuya: attesa del CONNACK, che comprende l'handshake TLS, e del
- *  PUBACK in QoS 1. Il terzo e' l'attesa della conferma applicativa del cloud
- *  e vale solo con TUYA_REQUEST_ACK alzato, quindi a regime non si paga. */
+ *  PUBACK in QoS 1, che vale anche come attesa del resto di un pacchetto
+ *  iniziato. Il terzo e' l'attesa della conferma applicativa del cloud e vale
+ *  solo con TUYA_REQUEST_ACK alzato, quindi a regime non si paga. */
 #define TUYA_CONNECT_TIMEOUT_MS 8000UL
 #define TUYA_PUBACK_TIMEOUT_MS 3000UL
 #define TUYA_ACK_TIMEOUT_MS 2000UL
 
-/** Passo con cui si attendono i flag alzati dal task esp-mqtt. Piu' fitto di
- *  WIFI_ATTESA_POLL_MS perche' qui si attende un CONNACK, non un'associazione
- *  alla rete. */
-#define TUYA_ATTESA_POLL_MS 10
+/** Keepalive dichiarato nel CONNECT verso Tuya, in secondi. La connessione
+ *  resta aperta e muta fino allo spegnimento della radio: il dispositivo non
+ *  manda mai un PINGREQ nè un DISCONNECT, e il broker lo considera online per
+ *  1,5 volte questo valore dall'ultimo traffico. 1200 è il massimo ammesso
+ *  (30..1200), quindi la telemetria resta online per 30 minuti dopo ogni
+ *  publish. */
+#define TUYA_KEEPALIVE_S 1200
 
 /** Budget wall-clock di UNA esecuzione del fetch mail, non una cadenza:
  *  limita quanto a lungo la sequenza token + list + batch puo' occupare la
@@ -306,6 +310,10 @@ static_assert(MAIL_GOOGLE_FETCH_MIN >= MAIL_GOOGLE_FETCH_MIN_FLOOR &&
               "MAIL_GOOGLE_FETCH_MIN fuori dai limiti");
 static_assert(TUYA_PUBLISH_MIN >= TUYA_PUBLISH_MIN_FLOOR && TUYA_PUBLISH_MIN <= CADENZA_MAX_MIN,
               "sotto il pavimento il publish Tuya ripubblica lo stesso campione BSEC");
+static_assert(TUYA_KEEPALIVE_S >= 30 && TUYA_KEEPALIVE_S <= 1200,
+              "Tuya ammette un keepalive da 30 a 1200 secondi");
+static_assert((unsigned long)TUYA_PUBLISH_MIN * 60UL < (unsigned long)TUYA_KEEPALIVE_S * 3UL / 2UL,
+              "con questa cadenza il broker Tuya vedrebbe il dispositivo offline fra un publish e il successivo");
 static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CADENZA_MAX_MIN,
               "ROUTE_FETCH_MIN fuori dai limiti");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,

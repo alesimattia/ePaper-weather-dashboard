@@ -702,9 +702,33 @@ dati compaiano nell'app Android **Smart Life**. Il dispositivo si associa
 scansionando il QR code generato dalla console: il firmware non fa nessun
 pairing.
 
-Una sessione MQTT per messaggio (connect, publish QoS 1, PUBACK, teardown): al
-ritorno di `runPublish()` **non resta nessun task esp-mqtt vivo**, invariante che
-rende sicuro il light sleep successivo e motivo per cui il modulo non espone nessuno `stop()`.
+Una sessione MQTT per messaggio (connect, publish QoS 1, PUBACK): dopo il PUBACK la
+connessione **resta aperta e muta**, e la rilascia `Tuya::releaseSession()`, chiamata da
+`wifiOff()` del `.ino` subito dopo lo spegnimento della radio, quindi prima di ogni light
+sleep. Su ogni fallimento `runPublish()` la chiude da sè.
+
+**Perchè la connessione non si chiude a fine publish.** Tuya dichiara offline il
+dispositivo nell'istante in cui la connessione si chiude, sia con un DISCONNECT MQTT
+(motivo `client_disconnect` nei Device Logs) sia con una semplice chiusura TCP
+(`client_closed`, dopo circa 0,5 s), e l'app Smart Life nasconde i valori di un
+dispositivo offline dietro un overlay. Con sessioni di pochi secondi ogni 5 minuti il
+dispositivo era offline quasi sempre e i valori non si vedevano. Una connessione aperta e
+muta, invece, lascia il dispositivo online per 1,5 volte il keepalive dall'ultimo
+traffico (misurato con 8 minuti di silenzio). Rilasciata a radio già spenta, la chiusura
+non può mandare nessun pacchetto: il broker vede solo silenzio.
+
+Per questo il client non è esp-mqtt: la connessione deve restare aperta senza nessun task
+che la serva, e `esp_mqtt_client_stop()` manda un DISCONNECT senza nessuna API per
+evitarlo. Il modulo implementa il sottoinsieme di MQTT 3.1.1 che serve (CONNECT,
+SUBSCRIBE, PUBLISH in QoS 1, lettura di CONNACK, SUBACK, PUBACK e PUBLISH) sopra
+`esp-tls` del core e dichiara nel CONNECT un keepalive di `TUYA_KEEPALIVE_S` (1200 s, il
+massimo ammesso). Di notte, con la radio spenta, il dispositivo risulta offline dopo 30
+minuti: è atteso. **Costo**: l'heap di una sessione TLS (circa 40 KB) resta occupato
+durante i task che seguono Tuya nella tabella; il log `[Tuya] connessione tenuta aperta`
+riporta l'heap libero a ogni publish. Il comportamento è coperto da `test/test_tuya.cpp`
+(vedi [test/README.md](test/README.md)); la rete, il TLS e il fatto che lo spegnimento
+della radio non faccia uscire nessun FIN si provano solo sul dispositivo, guardando nei
+Device Logs che dopo ogni `Online` non compaia un `Offline` con motivo `client_closed`.
 
 | | |
 |---|---|
@@ -714,7 +738,7 @@ rende sicuro il light sleep successivo e motivo per cui il modulo non espone nes
 | Password | HMAC-SHA256 del DeviceSecret sullo stesso timestamp, in esadecimale minuscolo |
 | Topic | `tylink/{deviceId}/thing/property/report` |
 
-Nessuna libreria da installare: il client è **esp-mqtt** del core, l'HMAC viene da
+Nessuna libreria da installare: il trasporto è **esp-tls** del core, l'HMAC viene da
 **mbedtls** e il certificato del broker è verificato con il **certificate bundle**
 compilato nel core, quindi non c'è nessun PEM da aggiornare quando Tuya ruota la CA. È
 l'unico modulo che verifica davvero il certificato invece di fare `setInsecure()`: su
@@ -1109,8 +1133,9 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `MAINT_CLIENT_IDLE_MS` | `30000` ms | Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima richiesta HTTP è più recente di così, o finchè un dispositivo è associato all'AP di emergenza. |
 | `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
-| `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. |
+| `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. Vale anche come attesa del resto di un pacchetto iniziato. |
 | `TUYA_ACK_TIMEOUT_MS` | `2000` ms | Attesa della conferma applicativa del cloud, pagata solo con `TUYA_REQUEST_ACK` a 1. |
+| `TUYA_KEEPALIVE_S` | `1200` s | Keepalive dichiarato nel CONNECT: il broker tiene il dispositivo online per 1,5 volte questo valore dall'ultimo traffico. 1200 è il massimo ammesso da Tuya (30..1200); la cadenza `tuya_min` deve restare sotto i 30 minuti, altrimenti il dispositivo risulta offline fra un publish e il successivo. |
 | `SLEEP_MAX_S` | 24 h | Tetto di sicurezza di un light sleep. Con il sensore lo sleep dura fino alla sua scadenza esatta, senza pavimento; il tetto serve alla notte senza sensore, che dorme fino all'apertura della fascia. |
 | `BSEC_MARGINE_POLL_MS` | `1000` ms | Il poll del sensore cade questo margine dopo i 300 s, mai prima: lo 0,3% del periodo, dentro il 6,25% che BSEC tollera. |
 | `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). |

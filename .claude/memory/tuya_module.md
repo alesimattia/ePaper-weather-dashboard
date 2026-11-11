@@ -1,6 +1,6 @@
 ---
 name: Modulo Tuya (TuyaLink su MQTT)
-description: Tuya.h pubblica il BME680 su TuyaLink; protocollo verificato sull'SDK ufficiale, catena TLS reale del broker EU, esp-mqtt e bundle CA nativi del core, task dello scheduler con un solo tentativo per slot, badge TUYA ERR sul pannello
+description: Tuya.h pubblica il BME680 su TuyaLink con un client MQTT minimale su esp-tls; la connessione resta aperta dopo il PUBACK e si rilascia a radio spenta perchè Tuya segna offline sulla chiusura; formato accettato dal cloud, device model, catena TLS, diagnostica dai Device Logs, task dello scheduler, badge TUYA ERR
 type: project
 ---
 
@@ -10,26 +10,28 @@ che Tuya offre per hardware non suo. Il dispositivo si associa all'app Android
 Smart Life scansionando il QR code generato dalla console; il firmware non fa
 nessun pairing.
 
-API: `begin()`, `readyToPublish()` (pura), `runPublish()`, `hasFailed()`.
-Una sessione MQTT per messaggio: connect, publish QoS 1, PUBACK, teardown.
+API: `begin()`, `readyToPublish()` (pura), `runPublish()`, `releaseSession()`,
+`hasFailed()`. Una sessione MQTT per messaggio: connect, publish QoS 1, PUBACK;
+la connessione resta poi aperta fino a `releaseSession()`.
 
 ## Posto nell'architettura
 
 Il modulo non possiede nessun tempo: è una riga della tabella dei task del
 `.ino` (vedi [[scheduler_task_table]]), con gli adattatori `runTuyaPublish`,
-`tuyaReady` e `onTuyaOutcome`. Quattro conseguenze da tenere a mente:
+`tuyaReady` e `onTuyaOutcome`. Conseguenze da tenere a mente:
 
 - `readyToPublish()` è l'hook `preconditionsMet()`: credenziali presenti (riconosciute
   con `Net::isCredentialSet()`, lo stesso criterio degli altri produttori),
   campione BSEC valido **e orologio sincronizzato**. Il campione scade al
   secondo campione perso (vedi [[bsec_modi_campionamento]]), quindi con il
-  sensore guasto Tuya si sospende invece di ripubblicare un valore vecchio. Falso sospende il task e lo esclude dal
-  calcolo del prossimo risveglio, e soprattutto **non consuma lo slot**: con un
-  solo tentativo per cadenza, uno slot speso senza poter pubblicare sarebbe
-  perso fino alla cadenza piena. La condizione sull'orologio conta al boot,
-  dove la finestra di manutenzione non chiama `wifiOn()` e quindi non
-  sincronizza: senza quella guardia il primo giro segnalerebbe un guasto Tuya
-  che è solo un'ora non ancora pronta, pagandolo con due refresh pieni.
+  sensore guasto Tuya si sospende invece di ripubblicare un valore vecchio. Falso
+  sospende il task e lo esclude dal calcolo del prossimo risveglio, e soprattutto
+  **non consuma lo slot**: con un solo tentativo per cadenza, uno slot speso senza
+  poter pubblicare sarebbe perso fino alla cadenza piena. La condizione
+  sull'orologio conta al boot, dove la finestra di manutenzione non chiama
+  `wifiOn()` e quindi non sincronizza: senza quella guardia il primo giro
+  segnalerebbe un guasto Tuya che è solo un'ora non ancora pronta, pagandolo con
+  due refresh pieni.
 - **`maxAttempts` a 0**, unico task del firmware: un tentativo per slot
   comunque vada. I modi di fallimento di Tuya sono permanenti sulla scala dei
   minuti (credenziali, region, device model) e ogni ritento costerebbe un altro
@@ -40,23 +42,81 @@ Il modulo non possiede nessun tempo: è una riga della tabella dei task del
   della sera.
 - Radio giù non alza il guasto: lo scheduler registra `SKIPPED` senza chiamare
   `runPublish()`, quindi lo slot resta intatto e il badge non compare.
+- **`wifiOff()` del `.ino` chiama `Tuya::releaseSession()`** subito dopo
+  `WiFi.mode(WIFI_OFF)`: è l'unico punto in cui lo scheduler spegne la radio, e
+  copre anche la guardia "radio ancora accesa" prima del light sleep.
 
 Cadenza in `Timings.h` come `tuya_min`, quindi modificabile da `/config` con
 persistenza NVS. **Il pavimento è `BSEC_PERIODO_ULP_S / 60`**, cioè 5 min:
 sotto, la cache di Indoor non ha un campione nuovo da dare e si ripubblica lo
-stesso. `TUYA_CONNECT_TIMEOUT_MS` / `TUYA_PUBACK_TIMEOUT_MS` /
-`TUYA_ACK_TIMEOUT_MS` / `TUYA_ATTESA_POLL_MS` stanno anch'essi in `Timings.h`;
-in `Tuya.h` restano solo i valori che non sono tempi (URI del broker,
-identifier dei DP, stack del task, `TUYA_REQUEST_ACK`).
+stesso. **Il tetto utile è sotto i 30 minuti**: oltre, il dispositivo risulta
+offline fra un publish e il successivo (static_assert sul default).
+`TUYA_CONNECT_TIMEOUT_MS` / `TUYA_PUBACK_TIMEOUT_MS` / `TUYA_ACK_TIMEOUT_MS` /
+`TUYA_KEEPALIVE_S` stanno in `Timings.h`; in `Tuya.h` restano solo i valori che
+non sono tempi (URI del broker, identifier dei DP, `TUYA_REQUEST_ACK`).
+`TUYA_PUBACK_TIMEOUT_MS` vale anche come attesa del resto di un pacchetto
+iniziato.
 
 L'ora valida la dice `Clock::valido()`, non una copia locale della soglia: il
 modulo include `Clock.h` e non `Scheduler.h`, perchè la dipendenza fra moduli e
 scheduler va in un verso solo.
 
+## Stato online: la connessione non si chiude con la radio accesa
+
+**Tuya segna offline il dispositivo nell'istante in cui la connessione si chiude**,
+e l'app Smart Life nasconde i valori di un dispositivo offline dietro un overlay.
+Misurato nei Device Logs della console (eu.platform.tuya.com, Device Logs del
+device, con evento, motivo e payload di ogni report):
+
+| Chiusura | Evento nei log |
+|---|---|
+| DISCONNECT MQTT | `Offline`, motivo `client_disconnect`, subito |
+| chiusura TCP subito dopo il publish, senza DISCONNECT | `Offline`, motivo `client_closed`, circa 0,5 s |
+| connessione aperta e muta per 8 minuti, keepalive 1200 | nessun `Offline`, app senza overlay |
+
+La chiusura TCP dopo gli 8 minuti di silenzio non ha generato nessun evento: la
+ragione non è chiarita. Un dispositivo che mantiene la connessione aperta e muta
+resta online per **1,5 volte il keepalive dall'ultimo traffico** (keepalive
+ammesso 30..1200 s). Una nuova connessione con lo stesso client id sostituisce
+la precedente.
+
+Conseguenze di design:
+
+- Dopo il PUBACK `runPublish()` **lascia la connessione aperta**, senza PINGREQ e con
+  keepalive 1200 dichiarato nel CONNECT; su ogni fallimento la chiude subito (il
+  dispositivo non ha pubblicato comunque).
+- `releaseSession()` la rilascia **a radio già spenta**, quando nessun FIN può uscire:
+  il broker vede solo silenzio e il dispositivo resta online fino al publish
+  successivo (30 minuti con 1200 s). Prima di ogni light sleep la connessione è già
+  rilasciata.
+- Una connessione rimasta aperta (radio mai spenta dallo scheduler, come nella
+  finestra di manutenzione) si chiude all'inizio del `runPublish()` successivo.
+- **Costo**: una sessione TLS (circa 40 KB di heap) resta occupata durante i task che
+  seguono Tuya nella tabella (percorso e cinema, che fanno TLS a loro volta). Il log
+  `[Tuya] connessione tenuta aperta ... heap libero` lo riporta a ogni publish. Se
+  l'heap non bastasse, il rimedio è spostare Tuya in fondo alla tabella, perdendo la
+  copertura del boot di render.com che l'ordine attuale dà.
+- Di notte, fuori dalla fascia WiFi, il dispositivo risulta offline dopo 30 minuti:
+  atteso.
+- **Non verificato (solo sul dispositivo)**: che lo spegnimento della radio non faccia
+  uscire un FIN o un RST dallo stack lwIP (distruzione dell'interfaccia con socket
+  aperti). Si controlla nei Device Logs: dopo ogni `Online` non deve comparire un
+  `Offline` con motivo `client_closed`.
+- `esp_tls_conn_destroy()` non invia nessun close_notify (`libesp-tls.a` non riferisce
+  `mbedtls_ssl_close_notify`): è solo il FIN TCP.
+
+**Perchè il client non è esp-mqtt**: la connessione deve restare aperta senza un task
+che la serva, e `esp_mqtt_client_stop()` invia un DISCONNECT quando il client è
+connesso (lo stato `MQTT_STATE_CONNECTED` lo decide, nessuna API pubblica lo evita;
+`esp_mqtt_abort_connection` è statica). Chiudere il trasporto dall'event handler
+lascerebbe il task a leggere un socket chiuso (`FD_SET(-1)` nel `select` del
+transport). Il core è IDF 5.5.5, esp-mqtt in `0e9ec17`.
+
 ## Protocollo TuyaLink, formule verificate
 
-Confermate tre volte: doc Tuya, componente ESPHome `hzkincony/esphome-tuya-iot`,
-e SDK ufficiale `tuya/tuya-iot-core-sdk` (`src/tuyalink_core.c`).
+Confermate dalla doc Tuya, dal componente ESPHome `hzkincony/esphome-tuya-iot`, dall'SDK
+ufficiale `tuya/tuya-iot-core-sdk` (`src/tuyalink_core.c`) e dal broker reale
+(CONNACK 0 e `report_response` con `code` 0).
 
 ```
 broker    mqtts://m1.tuyaeu.com:8883        (EU centrale; us / ueaz.us / weaz.eu / cn / in)
@@ -66,11 +126,13 @@ password  hex_lower(HMAC_SHA256(key=deviceSecret,
                     msg="deviceId={deviceId},timestamp={ts10},secureMode=1,accessType=1"))
 topic     tylink/{deviceId}/thing/property/report
 risposta  tylink/{deviceId}/thing/property/report_response
+modello   tylink/{deviceId}/thing/model/get  ->  .../model/get_response
 ```
 
 Vincoli che non si vedono dal codice:
 
 - **MQTT 3.1.1 obbligatorio**: 3.1 e 5 rifiutati. QoS 0 e 1, QoS 2 non supportato.
+- CONNECT con flag `0xC2` (username, password, sessione pulita).
 - `ts10` in **secondi, 10 cifre**, e deve essere **identico** in username e nella
   stringa firmata: due `time(nullptr)` separati sbagliano a cavallo del secondo,
   producendo un fallimento intermittente.
@@ -78,164 +140,125 @@ Vincoli che non si vedono dal codice:
   non riordinabili.
 - Serve una licenza per device (authorization code gratuiti in sviluppo).
 
-## Payload, e le tre divergenze fra le fonti
+Il **device model** si legge dal dispositivo con `thing/model/get` e payload
+`{"msgId":..,"time":..,"data":{"format":"complete"}}`: la risposta porta, per ogni
+property, `code`, `abilityId`, `accessMode` e `typeSpec` (tipo, min, max, step, scale).
+È il modo di verificare identifier e tipi senza passare dalla console.
+
+## Payload e device model
 
 ```json
 {"msgId":"7","time":1757246400,"data":{"temp_value":{"value":23.4},"hum_value":{"value":47},"press_value":{"value":1013},"iaq_value":{"value":48},"iaq_acc":{"value":2}},"sys":{"ack":1}}
 ```
 
-L'SDK ufficiale (`tuyalink_message_send`) compone
-`{"msgId":"%d", "time":%d, "data":%s [,"sys":{"ack":%d}]}` e il suo esempio
-`data_model_basic_demo.c` passa `{"power":{"value":1234,"time":...}}`. Da qui:
+- **`data` vuole oggetti con `value`**, non il valore piatto (il componente ESPHome
+  scrive la forma piatta: non conforme, e il fallimento è silenzioso).
+- **Il `time` per property è omesso e il cloud accetta lo stesso** (`code` 0): la doc lo
+  marca "Required" e l'SDK lo manda, ma il messaggio senza passa; passano anche le forme
+  con `time` per property in secondi e in millisecondi. Il `time` di messaggio vale per
+  tutte le property e accetta 10 o 13 cifre; il firmware usa i secondi.
+- **`msgId` è una stringa di max 32 caratteri**; l'SDK usa un contatore incrementale.
+- L'SDK pubblica in QoS 0. Il modulo usa QoS 1: il PUBACK è l'unico segnale di
+  consegna disponibile prima di tornare a dormire.
+- Il `time` del messaggio è l'epoch del campione (`millis() - lastUpdateMs`), non l'istante
+  del publish: il task del sensore gira a valle dei task di rete, quindi la cache
+  contiene il campione del giro precedente, vecchio fino a cinque minuti.
 
-1. **`data` vuole oggetti con `value`**, non il valore piatto. Il componente
-   ESPHome scrive `root["data"][key] = value`, cioè la forma piatta: **è non
-   conforme**, e nessuno se ne accorge perchè il fallimento è silenzioso. Se un
-   giorno il cloud rifiutasse la forma annidata, la piatta è il fallback.
-2. **`time` accetta 10 o 13 cifre**, e l'SDK usa i **secondi**: il suo
-   `system_timestamp()` ritorna `uint32_t`, che non basta per un epoch in ms.
-   Il `time` per property è opzionale, quello di messaggio vale per tutte.
-3. **`msgId` è una stringa di max 32 caratteri**; l'SDK usa un contatore
-   incrementale reso come stringa, non un id casuale.
+**Device model della console** (letto con `thing/model/get`): tutte le property sono
+`ro`. Gli identifier coincidono con i `TUYA_DP_*`.
 
-L'SDK pubblica in **QoS 0**. Il modulo usa QoS 1 di proposito: il PUBACK è
-l'unico segnale di consegna disponibile prima di tornare a dormire.
+| Campo di Sample | Tipo C | Identifier | Tipo nel modello | Range |
+|---|---|---|---|---|
+| `temperature` | `float` | `temp_value` | `float`, step 1.0 | -25..60 °C |
+| `humidity` | `uint8_t` | `hum_value` | `value`, scale 0, step 1 | 0..100 % |
+| `pressure` | `uint16_t` | `press_value` | `value`, scale 0, step 1 | 0..1500 mBar |
+| `iaq` | `uint16_t` | `iaq_value` | `value`, scale 0, step 1 | 0..500 |
+| `iaqAccuracy` | `uint8_t` | `iaq_acc` | `value`, scale 0, step 1 | 0..5 |
+
+Il cloud accetta `22.5` su `temp_value` malgrado lo step 1.0. Il catalogo dei tipi della
+console elenca nove tipi senza Float (value, string, date, boolean, enum, raw, struct,
+array, fault) e l'SDK dell'app TuyaLink mappa sui DP solo value, string, date, bool,
+enum, bitmap, array, struct; la Cloud API invece definisce `float` e `double`. Per un
+decimale la forma portabile è Value con scale 1 e valore intero già scalato (23,4
+diventa 234, a cura del dispositivo); il firmware non la usa perchè il modello ha il
+`float`. La scale va tenuta a zero sulle quattro Value: una scale diversa scala il valore
+nell'app senza che niente segnali l'errore.
 
 ## Il fallimento silenzioso, e come si diagnostica
 
-**Il PUBACK conferma la consegna MQTT, non l'accettazione dei datapoint.** Con
-un identifier fuori dal device model, un valore fuori dai `min`/`max` dichiarati
-o una `scale` non combaciante, il publish risulta riuscito e i valori non
-compaiono nell'app.
+**Il PUBACK conferma la consegna MQTT, non l'accettazione dei datapoint.** Con un
+identifier fuori dal modello (2003), un valore fuori dai limiti o una scale non
+combaciante il publish risulta riuscito e i valori non compaiono nell'app.
 
-Il `report_response` **non arriva di default**: richiede `"sys":{"ack":1}` nel
-messaggio, forma che non compare nelle pagine di documentazione consultabili ed
-è stata presa dall'SDK. Il modulo la implementa sotto `TUYA_REQUEST_ACK`
-(default 0 in `Tuya.h`; il `.ino` lo alza a 1 per il bring-up e va riabbassato
-quando la telemetria è confermata, perchè costa fino a 4 s di radio a publish):
-a 1 aggiunge il campo, sottoscrive il topic di risposta attendendo
-il SUBACK prima di pubblicare, e logga il `code` (0 = accettato) o il corpo
-intero in caso di rifiuto. Costa ~1148 byte di flash, 120 di RAM e fino a
-`TUYA_ACK_TIMEOUT_MS` per publish.
+Il `report_response` **non arriva di default**: richiede `"sys":{"ack":1}`. Il modulo lo
+implementa sotto `TUYA_REQUEST_ACK` (default 0 in `Tuya.h`; il `.ino` lo alza a 1 per il
+bring-up e va riabbassato a regime, perchè costa fino a 4 s di radio a publish): a 1
+aggiunge il campo, sottoscrive il topic di risposta attendendo il SUBACK prima di
+pubblicare, e logga il `code` o il corpo intero in caso di rifiuto. Codici: 0 ok, 1003
+formato dati, 1004 device inesistente, 2002 modello non definito, 2003 property non
+definita, 2006 verifica dati fallita. Un rifiuto **non alza il badge**: l'esito di
+`runPublish()` resta quello del PUBACK.
 
-**Corrispondenza fra tipo in console e tipo in Sample**: il device model
-rispecchia i tipi del firmware, quindi non c'è nessuna scalatura e il valore si
-trasmette com'è.
+Strumenti di diagnosi: i **Device Logs** della console mostrano ogni report (payload,
+risultato, valori per property) e gli eventi Online/Offline con il motivo; "Online
+Debugging" e "Device Debugging" funzionano solo con il device online, quindi con
+sessioni brevi non servono. Senza dispositivo si prova tutto dal PC con un client MQTT
+minimale su `ssl` (connect, model/get, publish con sys.ack): il device model e il
+`report_response` sono la verità.
 
-| Campo di Sample | Tipo C | Identifier | Tipo in console | Range |
-|---|---|---|---|---|
-| `temperature` | `float` | `temp_value` | Float, pitch 0.1 | -50..80 °C |
-| `humidity` | `uint8_t` | `hum_value` | Value, scale 0, pitch 1 | 0..100 % |
-| `pressure` | `uint16_t` | `press_value` | Value, scale 0, pitch 1 | 0..2000 mBar |
-| `iaq` | `uint16_t` | `iaq_value` | Value, scale 0, pitch 1 | 0..500 |
-| `iaqAccuracy` | `uint8_t` | `iaq_acc` | Value, scale 0, pitch 1 | 0..5 |
+## TLS: la catena del broker e il bundle del core
 
-Tutte le property sono Report Only, perchè il firmware non si sottoscrive a
-`property/set`. La scale va tenuta a zero sulle quattro Value: una scale diversa
-scala il valore nell'app senza che niente segnali l'errore. Il pitch è la
-distanza fra valori ammessi e la quantità trasferita vale `step × 10^scale`; la
-documentazione non chiarisce se venga validato sui report o se guidi solo il
-widget, quindi sul Float va messo 0.1, cioè la risoluzione che `%.1f` produce.
+La catena presentata da `m1.tuyaeu.com:8883` cambia: sono state osservate catene
+DigiCert (RapidSSL) e GoDaddy. La corrente è leaf `*.tuyaeu.com` → GoDaddy TLS
+Intermediate CA DV R1v1 → GoDaddy TLS Root CA R1 → Go Daddy Root Certificate Authority G2
+(autofirmata), con verifica piena riuscita. Il SAN wildcard copre `m1.tuyaeu.com`, quindi
+**non serve `skip_cert_common_name_check`**.
 
-Il tipo Float non è documentato nei payload TuyaLink e compare solo
-nell'elenco dei tipi della Cloud API. La piattaforma TSL analoga di Alibaba
-pretende almeno un decimale sui float, e `%.1f` lo garantisce anche sui valori
-tondi.
+Il bundle del core (`libmbedtls.a`, `esp_crt_bundle_attach`, 112 root CA) contiene Go
+Daddy Root G2, DigiCert Global Root G2 e Starfield Root G2: per questo il modulo usa il
+bundle e non un PEM, che andrebbe rifatto a ogni rotazione di CA. A differenza degli
+altri moduli, che fanno `setInsecure()`, qui la verifica va fatta: su questa connessione
+transita l'HMAC del DeviceSecret.
 
-## TLS: la catena reale del broker, misurata
+## Cosa offre il core, e i gotcha di esp-tls
 
-`openssl s_client -connect m1.tuyaeu.com:8883` sul DC EU restituisce:
+Zero librerie da installare, tutto in `esp32-libs/3.3.11`: `esp-tls` per il trasporto,
+`mbedtls/md.h` per l'HMAC (`mbedtls_md_hmac()` one-shot), `lwip/sockets.h` per `select()`.
 
-```
-leaf        CN=*.tuyaeu.com        SAN: *.tuyaeu.com, tuyaeu.com
-intermedia  DigiCert Inc, RapidSSL TLS RSA CA G1
-root        DigiCert Inc, DigiCert Global Root G2
-Verify return code: 0 (ok)
-```
-
-Tre conseguenze:
-
-- la root è **DigiCert Global Root G2**, non la GoDaddy Root G2 che riportano la
-  doc Tuya e il componente ESPHome (che la incorpora in un PEM costante, quindi
-  sul DC EU sta verificando contro una CA che non è nella catena);
-- il SAN wildcard copre `m1.tuyaeu.com`, quindi **non serve
-  `skip_cert_common_name_check`**: la verifica piena passa;
-- il certificato leaf viene rinnovato ogni ~6 mesi, quindi un PEM hardcoded è
-  esattamente la scelta fragile. Il modulo usa `esp_crt_bundle_attach`.
-
-Il bundle del core contiene quella root: simbolo `esp_crt_bundle_attach` in
-`libmbedtls.a` (oggetto `esp_crt_bundle.c.obj`), blob `x509_crt_bundle` di
-69788 byte con 112 root CA. A differenza di tutti gli altri moduli, che fanno
-`setInsecure()`, qui la verifica va fatta: su questa connessione transita
-l'HMAC del DeviceSecret.
-
-## Cosa offre il core, e i gotcha dell'API esp-mqtt
-
-Zero librerie da installare, tutto verificato in `esp32-libs/3.3.11`:
-
-- **esp-mqtt**: include path `mqtt/esp-mqtt/include` in `flags/includes`,
-  `-lmqtt` in `flags/ld_libs`. `CONFIG_MQTT_PROTOCOL_311=y` con `PROTOCOL_5`
-  non impostato, cioè esattamente la versione che Tuya pretende.
-  `CONFIG_MQTT_USE_CUSTOM_CONFIG` non impostato, quindi valgono i default: task
-  stack 6144, buffer 1024, network timeout 10 s, reconnect 10 s.
-- **mbedtls**: `mbedtls/md.h` in include path, `-lmbedtls`/`-lmbedcrypto`
-  linkate, `mbedtls_md_hmac()` one-shot.
-- `CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384` con asymmetric non attivo:
-  **~32 KB di heap per sessione TLS**, stesso profilo dei `WiFiClientSecure`
-  degli altri moduli, che già convivono con i 46,8 KB dei piani cinema.
-
-Trappole dell'API, tutte pagate almeno una volta:
-
-- la struct di config di IDF 5.x annida struct anonime: i **designated
-  initializer annidati non sono portabili in C++**, servono `cfg = {}` più
-  assegnazioni campo per campo;
-- **`network.disable_auto_reconnect = true` è obbligatorio**: col default, dopo
-  un fallimento il task riprova in background dopo 10 s, cioè mentre lo
-  scheduler ha già spento la radio e sta entrando in light sleep;
-- `esp_mqtt_client_publish()` **può bloccare** fino al network timeout, e con
-  client connesso scrive il PUBLISH nel contesto del task chiamante;
-- la doc di `esp_mqtt_client_destroy()` dichiara solo di distruggere l'handle e
-  **non garantisce di fermare il task**: chiamare `stop()` prima, ignorandone il
-  ritorno (`ESP_FAIL` su client non avviato è un esito accettabile);
-- `esp_mqtt_client_subscribe` in C++ è una macro per `_single`;
-- l'event handler gira nel task esp-mqtt: bastano `volatile bool` **finchè
-  l'handler non passa dati al chiamante**, quindi logga da sè codici di errore e
-  message id. Se un giorno servisse passare un payload, servirebbe un event
-  group o una coda.
+- `esp_tls_conn_new_sync()` ritorna 1 o -1; su -1 l'handle va comunque distrutto con
+  `esp_tls_conn_destroy()`, e il motivo si legge con `esp_tls_get_error_handle()`.
+- `cfg.timeout_ms` limita la connessione; i timeout di lettura li fa il modulo con
+  `select()` sul socket (`esp_tls_get_conn_sockfd()`), dopo aver controllato
+  `esp_tls_get_bytes_avail()`: i byte già decifrati da mbedtls non si vedono dal socket.
+- `esp_tls_conn_read/write` ritornano `ESP_TLS_ERR_SSL_WANT_READ/WRITE` da riprovare;
+  0 in lettura è connessione chiusa.
+- L'handshake gira nello stack del task Arduino, come quello dei `WiFiClientSecure`
+  degli altri moduli, e costa circa 32 KB di heap per sessione
+  (`CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384`, asymmetric non attivo).
+- Un pacchetto in ingresso più grande del buffer di ricezione (384 byte) si legge e si
+  scarta, per restare allineati ai pacchetti successivi; il resto di un pacchetto
+  iniziato che non arriva fa considerare persa la sessione.
 
 ## Decisioni di design non ovvie
 
-1. **Invariante di `runPublish()`**: al ritorno non esiste nessun task esp-mqtt
-   vivo nè handle allocato, in qualunque modo sia andata. È ciò che rende sicuro
-   il light sleep che parte poco dopo, e il motivo per cui i passi della
-   sequenza sono concatenati in un solo `if`: senza RAII è l'unico modo di
-   garantire che il cleanup sia raggiunto da ogni percorso. Per la stessa
-   ragione il modulo **non espone nessun `stop()`**, che sarebbe codice morto
-   suggerendo il contrario.
-
-2. **`failedLast` pessimista**: alzato prima di qualunque operazione fallibile e
+1. **`failedLast` pessimista**: alzato prima di qualunque operazione fallibile e
    azzerato **solo** dal PUBACK, così ogni uscita anticipata lascia il guasto
    segnalato anche se in futuro si aggiunge un `return` in mezzo alla sequenza.
-   Non è la politica dello slot, che è dello scheduler: è solo lo stato del
-   badge.
-
-3. **`snprintf` e non ArduinoJson** per il payload: schema fisso noto a compile
+   Non è la politica dello slot, che è dello scheduler: è solo lo stato del badge.
+2. **`snprintf` e non ArduinoJson** per il payload: schema fisso noto a compile
    time, niente da parsare, e un `JsonDocument` allocherebbe nel momento di
    massima pressione di heap. Il campo `sys` è concatenato al format come macro,
    così la composizione resta un unico `snprintf` senza rami.
-
-4. **Il `time` del messaggio è l'epoch del campione**, ricavato da
-   `millis() - s.lastUpdateMs`, non l'istante del publish: il task del sensore
-   gira a valle di quelli di rete, quindi la cache contiene il campione del giro
-   precedente, vecchio fino a cinque minuti.
-
-5. **Posizione in tabella: prima del cinema.** I secondi dell'handshake TLS
-   diventano altro tempo di copertura del boot di render.com, e il cinema resta
-   l'ultimo, che è la ragione per cui quell'ordine esiste.
-
-6. **Guardia difensiva su `s.valid` dentro `runPublish()`**, benchè
-   `readyToPublish()` la copra già: pubblicare senza campione manderebbe cinque
-   zeri al cloud, indistinguibili nell'app da una misura vera.
+3. **Posizione in tabella: prima del cinema.** I secondi dell'handshake TLS diventano
+   altro tempo di copertura del boot di render.com, e il cinema resta l'ultimo; con la
+   connessione tenuta aperta è anche la posizione che sovrappone una sessione TLS
+   inattiva ai fetch di percorso e cinema.
+4. **Guardia difensiva su `s.valid` dentro `runPublish()`**, benchè `readyToPublish()` la
+   copra già: pubblicare senza campione manderebbe cinque zeri al cloud,
+   indistinguibili nell'app da una misura vera.
+5. **Buffer statici** (trasmissione da 512 byte con intestazione scritta a ritroso, corpo
+   di ricezione da 384): niente stack nè heap per i pacchetti, e un pacchetto parte con
+   una sola scrittura.
 
 ## Badge TUYA ERR sul pannello
 
@@ -251,24 +274,29 @@ il titolo "Interno" in FONT_TITLE occupa 80 px e il badge in FONT_SMALL 100,
 contro i 168 utili del riquadro largo 200. Accanto al titolo entrerebbe solo in
 Picopixel, che sul vetro è alto circa 1 mm e il firmware non usa.
 
+## Test su host
+
+`test/test_tuya.cpp` compila il `Tuya.h` vero contro un `esp-tls` finto che fa da broker
+scriptabile (`test/stub/esp_tls.h`) e un HMAC-SHA256 indipendente
+(`test/stub/mbedtls/md.h`, vettore RFC 4231), due volte: con `TUYA_REQUEST_ACK` a 1 e a 0.
+Controlla il contenuto di CONNECT, SUBSCRIBE e PUBLISH, che non partano mai DISCONNECT
+nè PINGREQ, che la connessione resti aperta dopo il PUBACK e si rilasci senza scrivere
+byte, la chiusura su ogni fallimento, i timeout con broker muto, le letture frammentate
+e i pacchetti oltre il buffer. Il test dichiara da sè le guardie di `Env.h`, `Indoor.h`
+e `Net.h`, che veri tirerebbero dentro credenziali, BSEC e `WiFiClientSecure`. Rete, TLS
+e comportamento dello stack lwip allo spegnimento della radio non sono coperti.
+
 ## How to apply
 
-Al bring-up, in quest'ordine: log seriale (CONNECTED, poi PUBACK), poi "Device
-Debugging" in console per verificare i **valori**, poi QR code e app. Il passo
-in console non è saltabile: è l'unico punto in cui si vede un tipo o una scale
-non combacianti, a meno di alzare `TUYA_REQUEST_ACK`.
+Al bring-up, in quest'ordine: log seriale (`publish ok`, poi `il cloud ha accettato`),
+poi i **Device Logs** della console per verificare i valori e che dopo ogni `Online` non
+segua un `Offline` con motivo `client_closed`, poi l'app (dispositivo online, nessun
+overlay, valori visibili).
 
-Su un errore di connessione, `connect_return_code` 0x04/0x05 punta a
-credenziali, firma o timestamp; un errore di trasporto punta a CA, DNS o
-**region del broker diversa da quella dell'account Smart Life**, che dà un
-errore indistinguibile da credenziali sbagliate.
-
-Rischio aperto non verificabile a tavolino: lo stato online di un device
-TuyaLink segue la connessione MQTT, che qui dura pochi secondi ogni `tuya_min`.
-Tuya documenta che sensori e device low-power si mostrano offline solo dopo
-24 h, ma dipende dalla categoria scelta in console. Se l'app lo mostrasse sempre
-offline pur aggiornando i valori, l'unica alternativa sarebbe tenere l'MQTT
-vivo, incompatibile con il light sleep.
+Su un errore di connessione, `connect_return_code` 0x04/0x05 punta a credenziali, firma
+o timestamp; un errore di trasporto punta a CA, DNS o **region del broker diversa da
+quella dell'account Smart Life**, che dà un errore indistinguibile da credenziali
+sbagliate.
 
 Correlate: [[scheduler_task_table]] per la tabella dei task e i suoi hook,
 [[timings_nvs_config]] per pavimenti e vincoli incrociati delle cadenze,

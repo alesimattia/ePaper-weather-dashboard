@@ -19,9 +19,14 @@ trap 'rm -rf "$OUT"' EXIT
 FLAGS="-std=gnu++20 -Istub -I.. -Wall -Wextra -Wno-format-security -Wno-unused-parameter"
 
 falliti=0
-for t in test_timings test_scheduler test_routefinder; do
-  echo "── $t ─────────────────────────────────────────────────────────"
-  if ! g++ $FLAGS -o "$OUT/$t" "$t.cpp"; then
+for caso in test_timings test_scheduler test_routefinder test_tuya test_tuya:-DTUYA_REQUEST_ACK=0; do
+  # Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira due
+  # volte, con e senza la conferma applicativa del cloud.
+  t=${caso%%:*}
+  extra=""
+  [ "$t" != "$caso" ] && extra=${caso#*:}
+  echo "── $caso ─────────────────────────────────────────────────────────"
+  if ! g++ $FLAGS $extra -o "$OUT/$t" "$t.cpp"; then
     echo "compilazione FALLITA"; falliti=$((falliti+1)); continue
   fi
   "$OUT/$t" || falliti=$((falliti+1))

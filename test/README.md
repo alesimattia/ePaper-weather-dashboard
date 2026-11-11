@@ -2,7 +2,8 @@
 
 Verificano la logica **pura** di [`Timings.h`](../Timings.h) e
 [`Scheduler.h`](../Scheduler.h): validazione dei tempi e calcolo delle
-scadenze. Sono su host perché sul dispositivo la stessa verifica richiederebbe
+scadenze; più il protocollo di [`Tuya.h`](../Tuya.h), contro un broker finto.
+Sono su host perché sul dispositivo la stessa verifica richiederebbe
 di aspettare ore (cadenze giornaliere, rollover di `millis()`, cambio dell'ora
 legale) e di provocare a mano condizioni scomode come una NVS corrotta.
 
@@ -29,7 +30,8 @@ non viene dalla libc, per il motivo nella sezione qui sotto.
 ## Come sono costruiti
 
 `stub/` contiene il minimo indispensabile di piattaforma — `Arduino.h`,
-`Preferences.h`, `WiFi.h`, `esp_sleep.h` — e **nient'altro**. Gli header del
+`Preferences.h`, `WiFi.h`, `esp_sleep.h`, e per Tuya `esp_tls.h`,
+`esp_crt_bundle.h` (che esiste solo perchè `Tuya.h` lo include per nome), `mbedtls/md.h`, `lwip/sockets.h` — e **nient'altro**. Gli header del
 firmware sono inclusi da `..`, quindi i test esercitano il codice vero: una
 copia non direbbe niente.
 
@@ -96,8 +98,27 @@ sorgente forzata a Percorso attiva anche fuori dalla fascia del fetch. Il test d
 sè le coordinate con `ROUTEFINDER_HOST_TEST`: con le virgolette l'include di
 `Env.h` troverebbe sempre quello vero accanto agli header del firmware.
 
+**`test_tuya`** — il client MQTT di `Tuya.h` contro un `esp-tls` finto
+([`stub/esp_tls.h`](stub/esp_tls.h)) che fa da broker scriptabile e un
+HMAC-SHA256 indipendente ([`stub/mbedtls/md.h`](stub/mbedtls/md.h), verificato
+con il vettore RFC 4231). Il punto che conta è che la sessione non mandi mai
+**DISCONNECT nè PINGREQ** e che, dopo un PUBACK, la connessione **resti aperta**
+fino a `releaseSession()`, perchè Tuya dichiara offline il dispositivo nell'istante
+in cui la connessione si chiude: il test lo controlla, insieme alla chiusura
+immediata su ogni fallimento e a quella di una sessione rimasta aperta prima di
+aprirne una nuova. Poi contenuto di CONNECT (flag, keepalive, client id,
+username, password), SUBSCRIBE e PUBLISH, con il payload identico a quello che
+il cloud ha accettato nella prova dal vivo; CONNACK rifiutato, broker muto con
+i timeout rispettati, PUBACK per un altro packet id, connessione chiusa a metà,
+handshake fallito, campione non valido; letture di un byte alla volta con
+`WANT_READ` e pacchetti più grandi del buffer. Gira due volte, con
+`TUYA_REQUEST_ACK` a 1 e a 0, perchè i due rami hanno sequenze diverse. Il test
+dichiara da sè le guardie di `Env.h`, `Indoor.h` e `Net.h`, che veri
+tirerebbero dentro credenziali, BSEC e `WiFiClientSecure`.
+
 ## Cosa NON coprono
 
 Tutto ciò che richiede l'hardware: rendering del pannello, fetch HTTP reali,
-sensore BME680, radio, upload del firmware. Per quelli vale il collaudo sul
+sensore BME680, radio, upload del firmware, e per Tuya la rete, il TLS e la
+verifica del certificato. Per quelli vale il collaudo sul
 dispositivo descritto nel [README](../README.md).

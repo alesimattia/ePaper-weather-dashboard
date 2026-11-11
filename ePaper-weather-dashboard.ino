@@ -837,6 +837,10 @@ static void wifiOff()
 {
 	WiFi.disconnect(true, false);
 	WiFi.mode(WIFI_OFF);
+
+	// La connessione Tuya resta aperta dopo il publish e si rilascia solo a
+	// radio spenta: con la radio su la chiusura farebbe segnare offline il device.
+	Tuya::releaseSession();
 }
 
 void setup()

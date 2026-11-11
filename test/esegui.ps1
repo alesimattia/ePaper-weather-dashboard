@@ -59,9 +59,11 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $falliti = 0
 
-foreach ($nome in @('test_timings', 'test_scheduler', 'test_routefinder'))
+foreach ($caso in @('test_timings', 'test_scheduler', 'test_routefinder', 'test_tuya', 'test_tuya:/DTUYA_REQUEST_ACK=0'))
 {
-	Write-Host "── $nome ─────────────────────────────────────────────────────"
+	# Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira due volte, con e senza la conferma del cloud.
+	$nome, $extra = $caso -split ':', 2
+	Write-Host "── $caso ─────────────────────────────────────────────────────"
 
 	$exe = Join-Path $out "$nome.exe"
 	$src = Join-Path $test "$nome.cpp"
@@ -75,7 +77,7 @@ foreach ($nome in @('test_timings', 'test_scheduler', 'test_routefinder'))
 		"call `"$vcvars`" >nul 2>&1"
 		# Il backslash finale di /Fo va raddoppiato: cl interpreta \" come una
 		# virgoletta letterale e si mangerebbe il resto della riga di comando.
-		"cl $flags /I `"$test\stub`" /I `"$radice`" /Fo`"$out\\`" /Fe`"$exe`" `"$src`""
+		"cl $flags $extra /I `"$test\stub`" /I `"$radice`" /Fo`"$out\\`" /Fe`"$exe`" `"$src`""
 	) | Set-Content -Path $bat -Encoding ASCII
 	cmd /c "`"$bat`""
 

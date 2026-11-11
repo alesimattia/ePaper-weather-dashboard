@@ -3,10 +3,12 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <lwip/sockets.h>
 #include <time.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <mqtt_client.h>
+#include <esp_tls.h>
 #include <esp_crt_bundle.h>
 #include <mbedtls/md.h>
 
@@ -24,37 +26,58 @@
  * MQTT, così che il dispositivo, una volta associato con il QR code generato
  * dalla console Tuya, mostri i dati nell'app Android Smart Life.
  *
- * Flusso di una pubblicazione, sincrona e con una sessione MQTT per messaggio:
+ * Flusso di una pubblicazione, sincrono e con una sessione MQTT per messaggio:
  *   1. autenticazione: username e password sono derivati dal DeviceSecret con
  *      HMAC-SHA256 su un timestamp Unix, quindi serve l'orologio sincronizzato;
- *   2. connessione TLS 1.2 al broker della propria region, porta 8883;
+ *   2. connessione TLS 1.2 al broker della propria region, porta 8883, e CONNECT;
  *   3. publish in QoS 1 su tylink/{deviceId}/thing/property/report;
- *   4. attesa del PUBACK e chiusura immediata della sessione. Con
+ *   4. attesa del PUBACK e chiusura della connessione TLS. Con
  *      TUYA_REQUEST_ACK si attende anche la conferma applicativa del cloud,
  *      che è l'unico modo per accorgersi di un device model non allineato.
  *
- * Il client MQTT è quello nativo del core (esp-mqtt, già linkato) e l'HMAC
- * viene da mbedtls: non serve nessuna libreria aggiuntiva. Il certificato del
- * broker è verificato con il certificate bundle di mbedtls compilato nel core,
- * quindi non c'è nessun PEM da incorporare e da correggere quando Tuya ruota
- * la CA. A differenza degli altri moduli, che usano setInsecure(), qui la
- * verifica va fatta: su questa connessione transita l'HMAC del DeviceSecret.
+ * Tuya dichiara offline il dispositivo nell'istante in cui la connessione si
+ * chiude, con un DISCONNECT MQTT (motivo client_disconnect) ma anche con una
+ * semplice chiusura TCP (client_closed), e l'app Smart Life nasconde i valori
+ * di un dispositivo offline. Se invece la connessione resta aperta e muta, il
+ * broker considera il dispositivo online per 1,5 volte il keepalive dall'ultimo
+ * traffico. Per questo la connessione NON si chiude a fine publish: resta
+ * aperta, senza nessun PINGREQ, con un keepalive di TUYA_KEEPALIVE_S dichiarato
+ * nel CONNECT, e si rilascia con releaseSession() solo dopo che lo scheduler ha
+ * spento la radio, quando nessun pacchetto può più uscire. Il broker vede
+ * allora solo silenzio, e il dispositivo resta online fino al publish
+ * successivo.
+ *
+ * Per questo il client MQTT è scritto qui e non è esp-mqtt del core: la
+ * connessione deve restare aperta senza nessun task che la serva, e fermare il
+ * client con esp_mqtt_client_stop() invia un DISCONNECT, senza nessuna API
+ * pubblica che lo eviti. Il sottoinsieme di
+ * MQTT 3.1.1 che serve è piccolo (CONNECT, SUBSCRIBE, PUBLISH in QoS 1 e la
+ * lettura di CONNACK, SUBACK, PUBACK e PUBLISH in ingresso), il trasporto è
+ * esp-tls del core e l'HMAC viene da mbedtls: non serve nessuna libreria
+ * aggiuntiva. Il certificato del broker è verificato con il certificate bundle
+ * di mbedtls compilato nel core, quindi non c'è nessun PEM da incorporare e da
+ * correggere quando Tuya ruota la CA. A differenza degli altri moduli, che
+ * usano setInsecure(), qui la verifica va fatta: su questa connessione transita
+ * l'HMAC del DeviceSecret.
  *
  * API, allineata a quella degli altri moduli di rete:
  *   - Tuya::begin()           : compone topic e client id, azzera lo stato;
  *   - Tuya::readyToPublish()  : precondizione non temporale (funzione pura);
  *   - Tuya::runPublish()      : pubblica, presuppone la STA connessa;
+ *   - Tuya::releaseSession()  : rilascia la connessione, a radio già spenta;
  *   - Tuya::hasFailed()       : esito dell'ultimo tentativo, per il pannello.
  *
  * Il modulo non decide QUANDO tocca a lui: cadenza, ritenti e fascia oraria
  * sono dello scheduler, che chiama runPublish() solo con lo slot aperto e la
  * radio su. readyToPublish() è l'hook `preconditionsMet()` della tabella dei task.
  *
- * Invariante di runPublish(): al ritorno non esiste nessun task esp-mqtt vivo
- * nè nessun handle allocato, in qualunque modo sia andata. È la condizione che
- * rende sicuro il light sleep che lo scheduler avvia poco dopo, ed è la ragione
- * per cui il modulo non espone nessuna funzione di stop da chiamare prima di
- * dormire: sarebbe codice morto che suggerisce il contrario.
+ * Invariante del light sleep: il modulo non ha task propri, quindi una
+ * connessione rimasta aperta non fa nulla da sola, ma non deve arrivare al
+ * light sleep. runPublish() la chiude su ogni fallimento e la lascia aperta
+ * solo dopo un PUBACK; releaseSession() la rilascia, ed è chiamata da
+ * wifiOff() del .ino subito dopo lo spegnimento della radio, quindi prima di
+ * ogni sleep. Il costo è l'heap di una sessione TLS (~40 KB) tenuta durante i
+ * task che seguono Tuya nella tabella.
  *
  * Il modulo non disegna niente e non comanda il refresh del pannello: il badge
  * di guasto lo legge Weather al momento del disegno, quindi compare nel frame
@@ -63,9 +86,9 @@
 
 /**
  * Broker MQTT della region in cui è stato creato il prodotto sulla console
- * Tuya. Deve coincidere con la region dell'account Smart Life: un broker
- * sbagliato risponde con un errore di autenticazione, indistinguibile da
- * credenziali errate.
+ * Tuya, nella forma mqtts://host:porta. Deve coincidere con la region
+ * dell'account Smart Life: un broker sbagliato risponde con un errore di
+ * autenticazione, indistinguibile da credenziali errate.
  *
  * Alternative: mqtts://m1.tuyaus.com:8883      (US west)
  *              mqtts://m1-ueaz.tuyaus.com:8883 (US east)
@@ -108,12 +131,6 @@
 /** Accuratezza del calibratore BSEC, 0..3: dice se l'IAQ è attendibile. */
 #ifndef TUYA_DP_IAQ_ACCURACY
 #define TUYA_DP_IAQ_ACCURACY "iaq_acc"
-#endif
-
-/** Stack del task esp-mqtt: esplicito perchè l'handshake TLS gira lì dentro.
- *  Non è un tempo, quindi resta qui e non in Timings.h. */
-#ifndef TUYA_MQTT_TASK_STACK
-#define TUYA_MQTT_TASK_STACK 6144
 #endif
 
 /**
@@ -159,9 +176,11 @@ namespace Tuya
   // -------------------------------------------------------------------------
   namespace detail
   {
-    /** Composti una volta in begin(): dipendono solo dal DeviceID. */
+    /** Composti una volta in begin(): dipendono solo dal DeviceID e dall'URI. */
     inline char clientId[48] = {0};
     inline char topic[96]    = {0};
+    inline char brokerHost[64] = {0};
+    inline int  brokerPort     = 0;
 #if TUYA_REQUEST_ACK
     inline char ackTopic[112] = {0};
 #endif
@@ -172,7 +191,7 @@ namespace Tuya
     inline char password[65]  = {0};
     inline char payload[384]  = {0};
 
-    inline esp_mqtt_client_handle_t client = nullptr;
+    inline esp_tls_t* tls = nullptr;
     inline bool     enabled = false;
     inline uint32_t msgSeq  = 0;
 
@@ -185,18 +204,41 @@ namespace Tuya
     inline bool failedLast = false;
 
     /**
-     * Flag scritti dall'event handler, che gira nel task esp-mqtt, e letti dal
-     * task Arduino. Bastano dei volatile bool perchè l'handler non pubblica
-     * nessun dato verso il chiamante: codici di errore e message id li logga
-     * da sè, quindi restano solo store e load atomici.
+     * Stato della sessione corrente, scritto dalla lettura dei pacchetti e
+     * letto da runPublish(): tutto avviene nel task chiamante, quindi bastano
+     * dei bool semplici.
      */
-    inline volatile bool connected = false;
-    inline volatile bool published = false;
-    inline volatile bool failed    = false;
+    inline bool connected = false;
+    inline bool published = false;
+    inline bool failed    = false;
 #if TUYA_REQUEST_ACK
-    inline volatile bool subscribed  = false;
-    inline volatile bool ackReceived = false;
+    inline bool subscribed  = false;
+    inline bool ackReceived = false;
 #endif
+
+    /** Identificatore del pacchetto in corso e quello del PUBLISH da confermare. */
+    inline uint16_t packetId  = 0;
+    inline uint16_t publishId = 0;
+
+    /** Tipi di pacchetto MQTT 3.1.1 che il modulo legge, dai quattro bit alti del primo byte. */
+    inline constexpr uint8_t PACKET_CONNACK = 2;
+    inline constexpr uint8_t PACKET_PUBLISH = 3;
+    inline constexpr uint8_t PACKET_PUBACK  = 4;
+    inline constexpr uint8_t PACKET_SUBACK  = 9;
+
+    /**
+     * Buffer di trasmissione: i primi TX_HEADER_SPACE byte sono riservati
+     * all'intestazione, che si scrive a ritroso una volta nota la lunghezza
+     * del corpo, così un pacchetto parte con una sola scrittura. 512 byte
+     * contengono il PUBLISH più lungo (topic 96, payload 384).
+     */
+    inline constexpr size_t TX_HEADER_SPACE = 5;
+    inline uint8_t txBuffer[512];
+    inline size_t  txUsed     = TX_HEADER_SPACE;
+    inline bool    txOverflow = false;
+
+    /** Corpo dell'ultimo pacchetto letto; un pacchetto più grande si scarta. */
+    inline uint8_t rxBody[384];
 
     /**
      * Tiene un eventuale NaN fuori dal payload: BSEC può produrlo e "nan" non
@@ -205,6 +247,28 @@ namespace Tuya
     inline float toFloatDp(float value)
     {
       return isnan(value) ? 0.0f : value;
+    }
+
+    /**
+     * Separa host e porta dall'URI del broker, nella forma mqtts://host:porta.
+     * @return false se l'URI non ha schema, host o porta validi.
+     */
+    inline bool parseBrokerUri(const char* uri)
+    {
+      static const char scheme[] = "mqtts://";
+      if (strncmp(uri, scheme, sizeof(scheme) - 1) != 0) return false;
+
+      const char* host  = uri + sizeof(scheme) - 1;
+      const char* colon = strchr(host, ':');
+      if (colon == nullptr) return false;
+
+      const size_t hostLength = (size_t)(colon - host);
+      if (hostLength == 0 || hostLength >= sizeof(brokerHost)) return false;
+
+      memcpy(brokerHost, host, hostLength);
+      brokerHost[hostLength] = 0;
+      brokerPort = atoi(colon + 1);
+      return brokerPort > 0 && brokerPort < 65536;
     }
 
     /**
@@ -270,11 +334,13 @@ namespace Tuya
      * Il time del messaggio è l'epoch del campione e non l'istante del
      * publish: il task del sensore gira a valle di quelli di rete, quindi la
      * cache contiene il campione del giro precedente e datarlo "adesso"
-     * sarebbe sbagliato. Il time per property viene omesso perchè quello di
-     * messaggio vale per tutte le proprietà, e la documentazione Tuya ammette
-     * esplicitamente sia i secondi a 10 cifre sia i millisecondi a 13. Anche
-     * l'SDK ufficiale usa i secondi: il suo system_timestamp() ritorna un
-     * uint32_t, che non basterebbe a contenere un epoch in millisecondi.
+     * sarebbe sbagliato. Il time per property viene omesso: la documentazione
+     * Tuya lo marca obbligatorio, ma il cloud accetta il messaggio senza
+     * (verificato con il report_response, code 0), e quello di messaggio vale
+     * per tutte le proprietà. Vale sia in secondi a 10 cifre sia in millisecondi
+     * a 13; l'SDK ufficiale usa i secondi perchè il suo system_timestamp()
+     * ritorna un uint32_t, che non basterebbe a contenere un epoch in
+     * millisecondi.
      *
      * Con TUYA_REQUEST_ACK la coda porta anche il campo sys.ack, che chiede al
      * cloud di rispondere sul topic di report_response.
@@ -307,136 +373,395 @@ namespace Tuya
       return n > 0 && (size_t)n < sizeof(payload);
     }
 
+    // -----------------------------------------------------------------------
+    // Trasporto: lettura e scrittura sulla connessione esp-tls.
+    // -----------------------------------------------------------------------
+
+    /** Esito di una lettura: dati arrivati, nessun dato entro il timeout, connessione persa. */
+    enum class ReadResult : uint8_t { OK, TIMEOUT, CLOSED };
+
     /**
-     * Attende che un flag venga alzato dall'event handler, uscendo anche su
-     * failed per non consumare il timeout intero quando il broker ha già
-     * rifiutato la connessione. Il poll con delay() replica il pattern del
-     * busy-wait di wifiOn() nel .ino; delay() è vTaskDelay(), quindi cede la
-     * CPU e lascia girare i task di rete e gli idle.
+     * Attende che la connessione abbia dati da leggere, per al più timeoutMs.
+     * I byte già decifrati e rimasti nel buffer di mbedtls non si vedono dal
+     * socket, quindi si controllano prima con esp_tls_get_bytes_avail().
+     * @return 1 se c'è qualcosa da leggere, 0 allo scadere del tempo, -1 se il
+     *         socket non esiste più o select() fallisce.
      */
-    inline bool waitFlag(volatile bool& flag, uint32_t timeoutMs)
+    inline int waitReadable(uint32_t timeoutMs)
     {
-      uint32_t t0 = millis();
-      while (!flag && !failed && (millis() - t0) < timeoutMs)
+      if (esp_tls_get_bytes_avail(tls) > 0) return 1;
+
+      int fd = -1;
+      if (esp_tls_get_conn_sockfd(tls, &fd) != ESP_OK || fd < 0) return -1;
+
+      fd_set readSet;
+      FD_ZERO(&readSet);
+      FD_SET(fd, &readSet);
+
+      struct timeval timeout;
+      timeout.tv_sec  = (time_t)(timeoutMs / 1000UL);
+      timeout.tv_usec = (suseconds_t)((timeoutMs % 1000UL) * 1000UL);
+
+      const int ready = select(fd + 1, &readSet, nullptr, nullptr, &timeout);
+      return ready < 0 ? -1 : (ready > 0 ? 1 : 0);
+    }
+
+    /**
+     * Legge esattamente `count` byte entro timeoutMs. Una connessione chiusa o
+     * in errore alza `failed`; un timeout no, perchè a pacchetto non iniziato
+     * è solo silenzio del broker.
+     */
+    inline ReadResult readBytes(uint8_t* out, size_t count, uint32_t timeoutMs)
+    {
+      const uint32_t startMs = millis();
+      size_t received = 0;
+
+      while (received < count)
       {
-        delay(TUYA_ATTESA_POLL_MS);
+        const uint32_t spentMs     = millis() - startMs;
+        const uint32_t remainingMs = spentMs >= timeoutMs ? 0 : timeoutMs - spentMs;
+
+        const int ready = waitReadable(remainingMs);
+        if (ready == 0) return ReadResult::TIMEOUT;
+        if (ready < 0)
+        {
+          failed = true;
+          return ReadResult::CLOSED;
+        }
+
+        const ssize_t n = esp_tls_conn_read(tls, (char*)out + received, count - received);
+        if (n > 0)
+          received += (size_t)n;
+        else if (n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE)
+          continue;
+        else
+        {
+          failed = true;
+          return ReadResult::CLOSED;
+        }
+      }
+      return ReadResult::OK;
+    }
+
+    /**
+     * Scrive tutto il buffer sulla connessione. Un errore alza `failed`;
+     * WANT_READ e WANT_WRITE si riprovano finchè dura TUYA_PUBACK_TIMEOUT_MS.
+     */
+    inline bool writeAll(const uint8_t* data, size_t length)
+    {
+      const uint32_t startMs = millis();
+      size_t sent = 0;
+
+      while (sent < length)
+      {
+        const ssize_t n = esp_tls_conn_write(tls, (const char*)data + sent, length - sent);
+        if (n > 0)
+        {
+          sent += (size_t)n;
+          continue;
+        }
+        if ((n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE) &&
+            (millis() - startMs) < TUYA_PUBACK_TIMEOUT_MS)
+        {
+          delay(1);
+          continue;
+        }
+        failed = true;
+        return false;
+      }
+      return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Composizione dei pacchetti MQTT 3.1.1.
+    // -----------------------------------------------------------------------
+
+    /** Azzera il corpo del pacchetto in composizione. */
+    inline void beginBody()
+    {
+      txUsed     = TX_HEADER_SPACE;
+      txOverflow = false;
+    }
+
+    inline void putByte(uint8_t value)
+    {
+      if (txUsed < sizeof(txBuffer))
+        txBuffer[txUsed++] = value;
+      else
+        txOverflow = true;
+    }
+
+    inline void putU16(uint16_t value)
+    {
+      putByte((uint8_t)(value >> 8));
+      putByte((uint8_t)(value & 0xFF));
+    }
+
+    inline void putBytes(const void* data, size_t length)
+    {
+      if (txUsed + length > sizeof(txBuffer))
+      {
+        txOverflow = true;
+        return;
+      }
+      memcpy(txBuffer + txUsed, data, length);
+      txUsed += length;
+    }
+
+    /** Stringa MQTT: lunghezza a due byte seguita dai caratteri, senza terminatore. */
+    inline void putString(const char* text)
+    {
+      const size_t length = strlen(text);
+      putU16((uint16_t)length);
+      putBytes(text, length);
+    }
+
+    /**
+     * Completa il pacchetto con la sua intestazione (primo byte e lunghezza
+     * rimanente a lunghezza variabile) e lo invia con una sola scrittura.
+     */
+    inline bool sendPacket(uint8_t firstByte)
+    {
+      if (txOverflow) return false;
+
+      uint8_t lengthBytes[4];
+      size_t  lengthCount = 0;
+      size_t  remaining   = txUsed - TX_HEADER_SPACE;
+      const size_t bodyLength = remaining;
+      do
+      {
+        uint8_t digit = (uint8_t)(remaining % 128);
+        remaining /= 128;
+        if (remaining > 0) digit |= 0x80;
+        lengthBytes[lengthCount++] = digit;
+      } while (remaining > 0 && lengthCount < sizeof(lengthBytes));
+
+      const size_t start = TX_HEADER_SPACE - 1 - lengthCount;
+      txBuffer[start] = firstByte;
+      memcpy(txBuffer + start + 1, lengthBytes, lengthCount);
+
+      return writeAll(txBuffer + start, 1 + lengthCount + bodyLength);
+    }
+
+    /**
+     * CONNECT con sessione pulita, utente e password. Il keepalive è quello che
+     * regola per quanto il broker considera online il dispositivo dopo l'ultimo
+     * traffico: vedi TUYA_KEEPALIVE_S.
+     */
+    inline bool sendConnect()
+    {
+      beginBody();
+      putString("MQTT");
+      putByte(4);       // livello del protocollo: MQTT 3.1.1, l'unico che Tuya accetta
+      putByte(0xC2);    // flag: username, password, sessione pulita
+      putU16((uint16_t)TUYA_KEEPALIVE_S);
+      putString(clientId);
+      putString(username);
+      putString(password);
+      return sendPacket(0x10);
+    }
+
+    /** PUBLISH in QoS 1 del property report, senza retain. */
+    inline bool sendPublish()
+    {
+      beginBody();
+      putString(topic);
+      publishId = ++packetId;
+      putU16(publishId);
+      putBytes(payload, strlen(payload));
+      return sendPacket(0x32);
+    }
+
+#if TUYA_REQUEST_ACK
+    /** SUBSCRIBE al topic di risposta del cloud, in QoS 0. */
+    inline bool sendSubscribe()
+    {
+      beginBody();
+      putU16(++packetId);
+      putString(ackTopic);
+      putByte(0);
+      return sendPacket(0x82);
+    }
+
+    /**
+     * Risposta del cloud al property report: msgId, time e un campo code, dove
+     * 0 significa accettato. In caso di rifiuto il corpo porta anche il
+     * motivo, quindi viene loggato per intero: è l'informazione che manca
+     * quando i valori non compaiono nell'app malgrado il PUBACK.
+     *
+     * La sottoscrizione è in QoS 0, quindi dopo il topic non c'è un packet id
+     * e il resto del pacchetto è il corpo JSON. Il corpo non è terminato da
+     * zero: va copiato.
+     */
+    inline void handleCloudResponse(uint8_t firstByte, const uint8_t* body, size_t length)
+    {
+      if (length < 2) return;
+
+      size_t offset = 2 + (size_t)((body[0] << 8) | body[1]);
+      if (((firstByte >> 1) & 3) > 0) offset += 2;
+      if (offset > length) return;
+
+      char text[160];
+      size_t n = length - offset;
+      if (n > sizeof(text) - 1) n = sizeof(text) - 1;
+      memcpy(text, body + offset, n);
+      text[n] = 0;
+
+      const char* p = strstr(text, "\"code\":");
+      const long code = (p != nullptr) ? strtol(p + 7, nullptr, 10) : -1;
+
+      if (code == 0)
+        LOG("Tuya", "il cloud ha accettato le proprietà (code 0)");
+      else
+        LOG("Tuya", "il cloud ha RIFIUTATO le proprietà: %s", text);
+
+      ackReceived = true;
+    }
+#endif
+
+    /**
+     * Applica allo stato un pacchetto letto: CONNACK, PUBACK del publish in
+     * corso e, con TUYA_REQUEST_ACK, SUBACK e risposta del cloud. Gli altri
+     * tipi non servono a una sessione di un solo messaggio e si ignorano.
+     */
+    inline void handlePacket(uint8_t firstByte, const uint8_t* body, size_t length)
+    {
+      switch (firstByte >> 4)
+      {
+        case PACKET_CONNACK:
+          if (length < 2)
+          {
+            failed = true;
+            break;
+          }
+          if (body[1] == 0)
+            connected = true;
+          else
+          {
+            // 0x04 e 0x05 puntano a credenziali, firma o timestamp.
+            LOG("Tuya", "connessione rifiutata, return code 0x%02x", (unsigned)body[1]);
+            failed = true;
+          }
+          break;
+
+        case PACKET_PUBACK:
+          // In QoS 1 il PUBACK del broker conferma la consegna del publish.
+          if (length >= 2 && (uint16_t)((body[0] << 8) | body[1]) == publishId) published = true;
+          break;
+
+#if TUYA_REQUEST_ACK
+        case PACKET_SUBACK:
+          subscribed = true;
+          break;
+
+        case PACKET_PUBLISH:
+          handleCloudResponse(firstByte, body, length);
+          break;
+#endif
+
+        default:
+          break;
+      }
+    }
+
+    /**
+     * Legge un pacchetto MQTT e lo applica allo stato. Il primo byte attende al
+     * più timeoutMs; una volta iniziato, il resto deve arrivare entro
+     * TUYA_PUBACK_TIMEOUT_MS, altrimenti il flusso non è più allineato ai
+     * pacchetti e la sessione si considera persa.
+     */
+    inline ReadResult pollPacket(uint32_t timeoutMs)
+    {
+      uint8_t firstByte = 0;
+      const ReadResult first = readBytes(&firstByte, 1, timeoutMs);
+      if (first != ReadResult::OK) return first;
+
+      size_t   length     = 0;
+      uint32_t multiplier = 1;
+      for (uint8_t i = 0;; ++i)
+      {
+        uint8_t digit = 0;
+        if (readBytes(&digit, 1, TUYA_PUBACK_TIMEOUT_MS) != ReadResult::OK || i == 4)
+        {
+          failed = true;
+          return ReadResult::CLOSED;
+        }
+        length += (size_t)(digit & 0x7F) * multiplier;
+        if ((digit & 0x80) == 0) break;
+        multiplier *= 128;
+      }
+
+      // Un pacchetto più grande del buffer non serve a questa sessione: si
+      // legge e si scarta, per restare allineati al successivo.
+      const bool keep = length <= sizeof(rxBody);
+      size_t left = length;
+      while (left > 0)
+      {
+        const size_t chunk = left < sizeof(rxBody) ? left : sizeof(rxBody);
+        if (readBytes(rxBody, chunk, TUYA_PUBACK_TIMEOUT_MS) != ReadResult::OK)
+        {
+          failed = true;
+          return ReadResult::CLOSED;
+        }
+        left -= chunk;
+      }
+
+      if (keep)
+        handlePacket(firstByte, rxBody, length);
+      else
+        LOG("Tuya", "pacchetto di %u byte scartato: più grande del buffer", (unsigned)length);
+      return ReadResult::OK;
+    }
+
+    /**
+     * Attende che un flag di sessione venga alzato leggendo i pacchetti in
+     * arrivo, uscendo anche su failed per non consumare il timeout intero
+     * quando il broker ha già rifiutato la connessione o l'ha chiusa.
+     */
+    inline bool waitFlag(const bool& flag, uint32_t timeoutMs)
+    {
+      const uint32_t startMs = millis();
+      while (!flag && !failed)
+      {
+        const uint32_t spentMs = millis() - startMs;
+        if (spentMs >= timeoutMs) break;
+        pollPacket(timeoutMs - spentMs);
       }
       return flag;
     }
 
     /**
-     * Chiude la sessione e libera l'handle. Va chiamata su ogni percorso di
-     * uscita di runPublish(): un task esp-mqtt che sopravvivesse resterebbe in
-     * attesa su un socket morto mentre lo scheduler spegne la radio e manda
-     * l'MCU in light sleep.
-     *
-     * esp_mqtt_client_stop() non viene omessa affidandosi a destroy(): la sua
-     * documentazione dichiara solo di distruggere l'handle e non garantisce di
-     * fermare il task. Il suo ESP_FAIL su client in stato non valido è un
-     * esito accettabile, quindi il ritorno si ignora.
+     * Chiude la connessione TLS e libera l'handle, senza inviare nessun
+     * pacchetto MQTT. Con la radio accesa la chiusura manda un FIN al broker,
+     * che segna subito offline il dispositivo: si usa quindi sui fallimenti di
+     * runPublish(), dove il dispositivo non ha pubblicato comunque, e da
+     * releaseSession() a radio già spenta, dove il FIN non può uscire.
      */
-    inline void shutdown()
+    inline void closeSession()
     {
-      if (client == nullptr) return;
-
-      if (connected) esp_mqtt_client_disconnect(client);
-      esp_mqtt_client_stop(client);
-      esp_mqtt_client_destroy(client);
-
-      client    = nullptr;
+      if (tls != nullptr)
+      {
+        esp_tls_conn_destroy(tls);
+        tls = nullptr;
+      }
       connected = false;
     }
 
     /**
-     * Event handler del client, invocato nel task esp-mqtt.
-     *
-     * Scrive i flag e logga gli errori qui dentro, senza passare dati al task
-     * chiamante. Il log dell'errore è l'unica diagnostica che distingue i modi
-     * di fallimento del bring-up, che altrimenti si presentano tutti come "non
-     * si connette": un connect return code 0x04 o 0x05 punta a credenziali,
-     * firma o timestamp, un errore di trasporto punta a CA, DNS o region
-     * sbagliata.
+     * Logga il motivo di una connessione TLS fallita. È la diagnostica che
+     * distingue i modi di fallimento del bring-up, che altrimenti si
+     * presentano tutti come "non si connette": un errore di certificato punta
+     * al bundle CA o alla region, un timeout a DNS o rete.
      */
-    inline void onMqttEvent(void* /*handler_args*/, esp_event_base_t /*base*/,
-                            int32_t event_id, void* event_data)
+    inline void logConnectFailure()
     {
-      esp_mqtt_event_handle_t e = (esp_mqtt_event_handle_t)event_data;
-
-      switch ((esp_mqtt_event_id_t)event_id)
-      {
-        case MQTT_EVENT_CONNECTED:
-          connected = true;
-          break;
-
-        case MQTT_EVENT_PUBLISHED:
-          // In QoS 1 l'evento è il PUBACK del broker. Per sessione si pubblica
-          // un solo messaggio, quindi non serve confrontare il message id, e
-          // non confrontarlo evita di leggere un dato che il chiamante sta
-          // ancora scrivendo mentre il publish è in corso.
-          published = true;
-          break;
-
-        case MQTT_EVENT_DISCONNECTED:
-          connected = false;
-          failed    = true;
-          break;
-
-#if TUYA_REQUEST_ACK
-        case MQTT_EVENT_SUBSCRIBED:
-          subscribed = true;
-          break;
-
-        case MQTT_EVENT_DATA:
-        {
-          /**
-           * Risposta del cloud al property report: msgId, time e un campo
-           * code, dove 0 significa accettato. In caso di rifiuto il corpo
-           * porta anche il motivo, quindi viene loggato per intero: è
-           * l'informazione che manca quando i valori non compaiono nell'app
-           * malgrado il PUBACK.
-           *
-           * La risposta è di poche decine di byte e il buffer di esp-mqtt è
-           * di 1024, quindi arriva sempre in un frammento unico e non serve
-           * riassemblare su current_data_offset. e->data non è terminato da
-           * zero: va copiato.
-           */
-          char body[160];
-          int n = (e == nullptr) ? 0 : e->data_len;
-          if (n > (int)sizeof(body) - 1) n = (int)sizeof(body) - 1;
-          if (n > 0) memcpy(body, e->data, (size_t)n);
-          body[n > 0 ? n : 0] = 0;
-
-          const char* p = (n > 0) ? strstr(body, "\"code\":") : nullptr;
-          long code = (p != nullptr) ? strtol(p + 7, nullptr, 10) : -1;
-
-          if (code == 0)
-            LOG("Tuya", "il cloud ha accettato le proprietà (code 0)");
-          else
-            LOG("Tuya", "il cloud ha RIFIUTATO le proprietà: %s", body);
-
-          ackReceived = true;
-          break;
-        }
-#endif
-
-        case MQTT_EVENT_ERROR:
-          if (e != nullptr && e->error_handle != nullptr)
-          {
-            if (e->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED)
-              LOG("Tuya", "connessione rifiutata, return code 0x%02x",
-                  (unsigned)e->error_handle->connect_return_code);
-            else
-              LOG("Tuya", "errore di trasporto: esp_tls=0x%x stack=0x%x errno=%d",
-                  (unsigned)e->error_handle->esp_tls_last_esp_err,
-                  e->error_handle->esp_tls_stack_err,
-                  e->error_handle->esp_transport_sock_errno);
-          }
-          failed = true;
-          break;
-
-        default:
-          break;
-      }
+      esp_tls_error_handle_t errorHandle = nullptr;
+      if (esp_tls_get_error_handle(tls, &errorHandle) == ESP_OK && errorHandle != nullptr)
+        LOG("Tuya", "connessione TLS fallita: esp_err=0x%x tls=0x%x flags=0x%x",
+            (unsigned)errorHandle->last_error, (unsigned)errorHandle->esp_tls_error_code,
+            (unsigned)errorHandle->esp_tls_flags);
+      else
+        LOG("Tuya", "connessione TLS fallita, heap libero %u", (unsigned)ESP.getFreeHeap());
     }
   } // namespace detail
 
@@ -453,7 +778,7 @@ namespace Tuya
   {
     using namespace detail;
 
-    client     = nullptr;
+    tls        = nullptr;
     connected  = false;
     published  = false;
     failed     = false;
@@ -465,6 +790,13 @@ namespace Tuya
     if (!enabled)
     {
       LOG("Tuya", "credenziali assenti in Env.h: telemetria disattivata");
+      return;
+    }
+
+    if (!parseBrokerUri(TUYA_MQTT_URI))
+    {
+      enabled = false;
+      LOG("Tuya", "TUYA_MQTT_URI non valido (atteso mqtts://host:porta): telemetria disattivata");
       return;
     }
 
@@ -514,10 +846,13 @@ namespace Tuya
    * solo con lo slot aperto e la radio su. Presuppone anche l'orologio
    * sincronizzato, con la guardia qui sotto per il caso in cui non lo sia.
    *
-   * Al ritorno non resta nessun task esp-mqtt vivo nè nessun handle allocato,
-   * qualunque sia l'esito: è l'invariante che rende sicuro il light sleep, ed
-   * è il motivo per cui i passi della sequenza sono concatenati in un solo if,
-   * così che il cleanup sia raggiunto da ogni percorso.
+   * Dopo un PUBACK la connessione resta aperta e muta, per i motivi spiegati
+   * in testa al file, e la rilascia releaseSession() a radio spenta; su ogni
+   * altro esito è già chiusa al ritorno. I passi della sequenza sono
+   * concatenati in un solo if, così che la chiusura sia raggiunta da ogni
+   * percorso di fallimento. Una connessione rimasta aperta da una chiamata
+   * precedente, perchè lo scheduler non ha spento la radio come nella finestra
+   * di manutenzione, si chiude prima di aprirne una nuova.
    *
    * Lo stato del badge è pessimista: failedLast viene alzato prima di
    * qualunque operazione fallibile e solo il PUBACK lo azzera, così ogni
@@ -561,46 +896,34 @@ namespace Tuya
       return false;
     }
 
-    connected = false;
+    closeSession();
+
     published = false;
     failed    = false;
+    packetId  = 0;
+    publishId = 0;
 #if TUYA_REQUEST_ACK
     subscribed  = false;
     ackReceived = false;
 #endif
 
-    esp_mqtt_client_config_t cfg = {};
-    // Assegnazioni campo per campo e non designated initializer: la struct di
-    // IDF 5.x annida struct anonime, che in C++ non si inizializzano in modo
-    // portabile per designatore.
-    cfg.broker.address.uri                    = TUYA_MQTT_URI;
-    cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.credentials.client_id                 = clientId;
-    cfg.credentials.username                  = username;
-    cfg.credentials.authentication.password   = password;
-    // Tuya accetta solo MQTT 3.1.1: dichiarato qui anche se il core è
-    // compilato con CONFIG_MQTT_PROTOCOL_311, così il vincolo resta scritto
-    // dove è verificabile.
-    cfg.session.protocol_ver                  = MQTT_PROTOCOL_V_3_1_1;
-    cfg.session.keepalive                     = 60;
-    // Senza questo, dopo un fallimento il task riproverebbe da solo dopo
-    // qualche secondo, cioè mentre lo scheduler ha già spento la radio e sta
-    // entrando in light sleep.
-    cfg.network.disable_auto_reconnect        = true;
-    cfg.network.timeout_ms                    = (int)TUYA_CONNECT_TIMEOUT_MS;
-    cfg.task.stack_size                       = TUYA_MQTT_TASK_STACK;
+    esp_tls_cfg_t cfg = {};
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.timeout_ms        = (int)TUYA_CONNECT_TIMEOUT_MS;
 
-    client = esp_mqtt_client_init(&cfg);
-    if (client == nullptr)
+    tls = esp_tls_init();
+    if (tls == nullptr)
     {
       LOG("Tuya", "init del client fallita, heap libero %u", (unsigned)ESP.getFreeHeap());
       return false;
     }
 
     bool ok = false;
-    if (esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, onMqttEvent, nullptr) == ESP_OK &&
-        esp_mqtt_client_start(client) == ESP_OK &&
-        waitFlag(connected, TUYA_CONNECT_TIMEOUT_MS))
+    if (esp_tls_conn_new_sync(brokerHost, (int)strlen(brokerHost), brokerPort, &cfg, tls) != 1)
+    {
+      logConnectFailure();
+    }
+    else if (sendConnect() && waitFlag(connected, TUYA_CONNECT_TIMEOUT_MS))
     {
 #if TUYA_REQUEST_ACK
       /**
@@ -609,32 +932,35 @@ namespace Tuya
        * perdere la risposta. Un fallimento qui non blocca la telemetria, si
        * perde solo la conferma.
        */
-      if (esp_mqtt_client_subscribe(client, ackTopic, 0) >= 0)
+      if (sendSubscribe())
         waitFlag(subscribed, TUYA_ACK_TIMEOUT_MS);
       else
         LOG("Tuya", "sottoscrizione al topic di risposta fallita");
 #endif
 
-      int msgId = esp_mqtt_client_publish(client, topic, payload, 0, /*qos*/ 1, /*retain*/ 0);
-      if (msgId < 0)
-        LOG("Tuya", "publish rifiutato dal client (%d)", msgId);
+      if (failed)
+        LOG("Tuya", "connessione persa prima del publish");
+      else if (!sendPublish())
+        LOG("Tuya", "publish non inviato");
       else
         ok = waitFlag(published, TUYA_PUBACK_TIMEOUT_MS);
 
 #if TUYA_REQUEST_ACK
       /**
        * L'esito di runPublish() resta quello del PUBACK: la conferma del
-       * cloud è diagnostica e il suo codice viene loggato dall'event handler,
-       * quindi un rifiuto applicativo non va confuso con una mancata
-       * consegna. Attesa solo se il messaggio è stato consegnato: senza
-       * PUBACK non c'è nulla che il cloud possa confermare.
+       * cloud è diagnostica e il suo codice viene loggato alla lettura della
+       * risposta, quindi un rifiuto applicativo non va confuso con una
+       * mancata consegna. Attesa solo se il messaggio è stato consegnato:
+       * senza PUBACK non c'è nulla che il cloud possa confermare.
        */
       if (ok && !waitFlag(ackReceived, TUYA_ACK_TIMEOUT_MS))
         LOG("Tuya", "nessuna conferma dal cloud entro il timeout");
 #endif
     }
 
-    shutdown();
+    // Dopo un PUBACK la connessione resta aperta: chiuderla farebbe segnare
+    // offline il dispositivo. La rilascia releaseSession() a radio spenta.
+    if (!ok) closeSession();
 
     if (ok)
     {
@@ -644,11 +970,25 @@ namespace Tuya
       LOG("Tuya", "publish ok: T=%.1f RH=%u P=%u IAQ=%u acc=%u",
           s.temperature, (unsigned)s.humidity, (unsigned)s.pressure,
           (unsigned)s.iaq, (unsigned)s.iaqAccuracy);
+      LOG("Tuya", "connessione tenuta aperta fino allo spegnimento della radio, heap libero %u",
+          (unsigned)ESP.getFreeHeap());
     }
     else
       LOG("Tuya", "publish non confermato");
 
     return ok;
+  }
+
+  /**
+   * Rilascia la connessione lasciata aperta da runPublish(). Va chiamata solo a
+   * radio già spenta: con la radio accesa la chiusura manderebbe un FIN al
+   * broker, che segnerebbe subito offline il dispositivo. La chiama wifiOff()
+   * del .ino subito dopo lo spegnimento; senza una connessione aperta non fa
+   * niente.
+   */
+  inline void releaseSession()
+  {
+    detail::closeSession();
   }
 
   /**
