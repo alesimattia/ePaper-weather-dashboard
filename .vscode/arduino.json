@@ -1,7 +1,7 @@
 {
     "sketch": "ePaper-weather-dashboard.ino",
     "board": "esp32:esp32:esp32",
-    "port": "/dev/tty.usbmodem5B140745561",
+    "port": "/dev/tty.usbmodem5ABA0264671",
     "programmer": "esptool",
     "configuration": "JTAGAdapter=default,PSRAM=disabled,PartitionScheme=min_spiffs,CPUFreq=80,FlashMode=qio,FlashFreq=80,FlashSize=4M,UploadSpeed=115200,LoopCore=1,EventsCore=1,DebugLevel=none,EraseFlash=all,ZigbeeMode=default",
     "output": ".build"

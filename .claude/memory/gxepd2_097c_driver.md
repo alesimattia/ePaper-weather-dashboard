@@ -1,6 +1,6 @@
 ---
 name: Driver custom GxEPD2_SOLUM_097c_960x672
-description: Driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL): tre colori chiusi dalla misura con il probe dei livelli (VSH1 15 V nero, VSH2 5 V rosso, come la letteratura BWR), il PARTIAL da 640 ms, 2,3x piu veloce dell'unico B/N differenziale MISURATO fra i driver a 3 colori di GxEPD2 (GDEY042Z98 1,46 s; gli altri quattro dichiarano solo la costante del pieno), il suo LIMITE DIREZIONALE (aggiunge inchiostro bene, lo toglie male: nero->bianco lascia grigio, causa fisica nel film, tensione/simmetria/multiciclo/VCOM/DURATA tutti e cinque esclusi per misura, e 28 frame sono il punto in cui il nero satura), la ricetta GFXcanvas1 + invert per scriverci testo, il waveform setting da 110 byte di cui 0x32 ne scrive 105 (tensioni su 0x03/0x04/0x2C, l'OTP le sovrascrive, da cui il nero pallido), modello durata = 20 ms x frame + 83 ms valido solo senza power down, semantica (0x26, 0x24) = (precedente, nuovo) con TP/RP condivisi, le due trappole di 0x26 chiuse dal flag, perche il partial non passa dal template (nextPageBW disegna due volte e vuole disarmare setPaged), Mode 2 dell'OTP VUOTO, deep sleep 0x01 ritiene la RAM e 0x03 no, bit SM del MUX che dimezza il pilotaggio (nero -> grigio a righe), 0x21 che FUNZIONA e il cui {40 00} fa sparire l'accent, identificazione del pannello, init di fabbrica, vincoli e costi noti
+description: Driver SOLUM 9.7" SSD1677 (submodule GxEPD2_SOLUM_ESL): tre colori chiusi dalla misura con il probe dei livelli (VSH1 15 V nero, VSH2 5 V rosso, come la letteratura BWR), il PARTIAL da 640 ms, 2,3x piu veloce dell'unico B/N differenziale MISURATO fra i driver a 3 colori di GxEPD2 (GDEY042Z98 1,46 s; gli altri quattro dichiarano solo la costante del pieno), il suo LIMITE DIREZIONALE (aggiunge inchiostro bene, lo toglie male: nero->bianco lascia grigio, causa fisica nel film, tensione/simmetria/multiciclo/VCOM/DURATA tutti e cinque esclusi per misura, e 28 frame sono il punto in cui il nero satura), la ricetta GFXcanvas1 + invert per scriverci testo, il waveform setting da 110 byte di cui 0x32 ne scrive 105 (tensioni su 0x03/0x04/0x2C, l'OTP le sovrascrive, da cui il nero pallido), modello durata = 20 ms x frame + 83 ms valido solo senza power down, semantica (0x26, 0x24) = (precedente, nuovo) con TP/RP condivisi, le due trappole di 0x26 chiuse dal flag, perche il partial non passa dal template (nextPageBW disegna due volte e vuole disarmare setPaged), Mode 2 dell'OTP VUOTO, deep sleep 0x01 ritiene la RAM e 0x03 no, bit SM del MUX che dimezza il pilotaggio (nero -> grigio a righe), 0x21 che FUNZIONA e il cui {40 00} fa sparire l'accent, identificazione del pannello, init di fabbrica, vincoli e costi noti, e il partial usato dentro il loop paged dal refresh differenziale (in [[differential_refresh]])
 type: reference
 ---
 
@@ -361,10 +361,12 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   indefinita, non azzerata. La sordità la prova la stessa osservazione, perchè mentre il controller
   dorme la sonda gli manda un riempimento a nero di TUTTA la RAM B/N più un refresh: da sveglio lo
   schermo sarebbe diventato nero, e invece è tornata l'immagine di prima. Risveglio 234 ms.
-  **Il driver resta su `0x03`**: il firmware fa comunque un refresh pieno a ogni risveglio, quindi
-  la ritenzione varrebbe i 18 ms del pattern di pulizia al prezzo di ~2 µA continui, ed è anche
-  l'accoppiata che non può sbagliare — perdere la RAM senza riarmare `_initial_write` stamperebbe
-  esattamente quel frame casuale.
+  **Senza un riferimento del refresh differenziale il driver manda `0x03`**: ogni frame pieno riparte
+  comunque da reset e init, quindi la ritenzione varrebbe i 18 ms del pattern di pulizia al prezzo di
+  ~2 µA continui, ed è anche l'accoppiata che non può sbagliare — perdere la RAM senza riarmare
+  `_initial_write` stamperebbe esattamente quel frame casuale. **Con un riferimento valido non manda
+  nessun deep sleep** e lascia il controller nel modo Sleep, che il datasheet documenta (25-40 µA, RAM
+  accessibile) a differenza di `0x01`: vedi [[differential_refresh]].
 
 - **SSD2677 non è un'alternativa**: è un altro protocollo, e la scelta la determina il silicio, non
   la preferenza. Comandi scritti dai due driver: SSD1677 (`GDEM133Z91`) usa
@@ -377,7 +379,9 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   `GDEY116F51`, 2bpp packed su `0x10`) è la strada giusta solo per un pannello davvero a 4 colori:
   i SOLUM BWY fino alla 11.6", non questa 9.7".
 
-- **Il partial esiste, 639 ms misurati sul vetro, e vive fuori dal template.** Dettaglio completo
+- **Il partial esiste, 639 ms misurati sul vetro, e le sue API opt-in vivono fuori dal template.**
+  Dentro il template lo usa il refresh differenziale, che passa da `refresh(false)` a finestra piena e
+  lascia `hasFastPartialUpdate` false ([[differential_refresh]]). Dettaglio completo
   nella sezione "Partial in bianco e nero" più sotto. `hasFastPartialUpdate = false` non è prudenza
   ma struttura, e **le due leve vanno tenute distinte** perchè è facile attribuirle allo stesso flag:
   in modalità finestra parziale `GxEPD2_3C` scrive il piano accent dentro `0x26` a ogni pagina
@@ -435,8 +439,10 @@ limite fisico del bus), non misurate a oscilloscopio: per numeri veri serve una 
   portabile là ([[gxepd2_122c_driver]]).
 - dirty flag `_color_dirty`: il cleanup accent viene saltato quando non serve (tipico sulle catene
   di frame B/N). Costa 8-9 ms, perchè `0x26` si pulisce col pattern hardware.
-- `hibernate()` idempotente, azzera i due flag di `0x26` (`_color_dirty` e
-  `_previous_in_color_ram`): il deep sleep **perde** la RAM del controller, e la ragione è quella,
+- `hibernate()` idempotente. Con un riferimento del differenziale valido esce dopo il power off e
+  lascia il controller in Sleep ([[differential_refresh]]). Altrimenti manda il deep sleep, azzera i
+  due flag di `0x26` (`_color_dirty` e `_previous_in_color_ram`) e il riferimento: il deep sleep
+  **perde** la RAM del controller, e la ragione è quella,
   non il SWRESET, che dichiara *"RAM are unaffected by this command"*. Per lo stesso motivo
   `_InitDisplay()` riarma `_initial_write` quando arriva da un hibernate: al risveglio i piani sono
   indefiniti, non azzerati, e la prima scrittura deve ripulirli (18 ms col pattern hardware).

@@ -612,7 +612,7 @@ class Frame:
             self.draw_right(date, right_x, top + row_h - L["EVT_DATE_FROM_BOTTOM"], color)
 
     def draw_mail(self):
-        """Mail::draw(): riquadro Posta a due colonne, busta rossa accanto alle non lette."""
+        """Mail::draw(): riquadro Posta a due colonne, busta nera accanto alle non lette."""
         L, c = self.L, self.c
         self.font("TITLE")
         self.fieldset(L["MAIL_X"], L["MAIL_Y"], L["MAIL_W"], L["MAIL_H"], "Posta")
@@ -642,7 +642,7 @@ class Frame:
             self.draw_left(sender, left, line1, BLACK)
             if unread:
                 c.bitmap(left + self.text_width(sender) + L["SMALL_ICON_GAP"], self.small_icon_y(line1),
-                         self.sources["small_icons"]["MAIL"], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], RED)
+                         self.sources["small_icons"]["MAIL"], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], BLACK)
             self.font("SMALL")
             self.draw_left(self.truncate(subject, max_w), left, line2, BLACK)
 
@@ -679,7 +679,7 @@ class Frame:
 
         self.font("LARGE")
         c.bitmap(icon_x, self.small_icon_y(L["INDOOR_ROW1_BASELINE"]), icons["TEMPERATURE"], size, size, BLACK)
-        self.temp_with_degree(f"{SAMPLE_INDOOR['temp']:.1f}", text_x, L["INDOOR_ROW1_BASELINE"], RED, 2, 16, False)
+        self.temp_with_degree(f"{SAMPLE_INDOOR['temp']:.1f}", text_x, L["INDOOR_ROW1_BASELINE"], BLACK, 2, 16, False)
         end = row("HUMIDITY", str(SAMPLE_INDOOR["hum"]), L["INDOOR_ROW2_BASELINE"])
         self.font("SMALL")
         self.draw_left("%", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW2_BASELINE"], BLACK)
@@ -768,8 +768,8 @@ class Frame:
         c.draw_circle(right_label_x + w_r + deg_gap + deg_r, baseline - h_r + deg_r + 1, deg_r, BLACK)
 
     def draw_temp_chart(self, center_x, top_y):
-        """Weather::drawTempChart(): Catmull-Rom sui campioni, passato nero e previsione rossa,
-        tre tick con l'ora, massima e minima a sinistra, pallino sull'ora corrente."""
+        """Weather::drawTempChart(): Catmull-Rom sui campioni, passato pieno e previsione tratteggiata
+        (tutto nero), tre tick con l'ora, massima e minima a sinistra, pallino sull'ora corrente."""
         L, c = self.L, self.c
         now = 0
         e0, e1 = now - 3 * 3600, now + 9 * 3600
@@ -794,19 +794,27 @@ class Frame:
             return 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u
                           + (-p0 + 3 * p1 - 3 * p2 + p3) * u ** 3)
 
+        # Come drawTempChart(): la fase del tratteggio parte dal vertice "adesso" e avanza
+        # solo sui passi della previsione, quindi non dipende dalla lunghezza dello storico.
+        dash_phase = 0
         for index in range(len(points) - 1):
             p1, p2 = points[index], points[index + 1]
             p0 = points[index - 1] if index > 0 else p1
             p3 = points[index + 2] if index + 2 < len(points) else p2
-            # Come drawTempChart(): "adesso" è un vertice, quindi il colore è del segmento.
-            color = BLACK if p1[0] < now else RED
+            # "Adesso" è un vertice, quindi ogni segmento è tutto passato o tutto previsione.
+            is_forecast = p1[0] >= now
             x1, x2 = map_x(p1[0]), map_x(p2[0])
             steps = max(x2 - x1, 1)
             previous = (x1, map_y(p1[1]))
             for step in range(1, steps + 1):
                 u = step / steps
                 current = (x1 + c_div((x2 - x1) * step, steps), map_y(catmull(p0[1], p1[1], p2[1], p3[1], u)))
-                c.line(previous[0], previous[1], current[0], current[1], color)
+                visible = True
+                if is_forecast:
+                    visible = dash_phase % (L["TC_DASH_ON"] + L["TC_DASH_OFF"]) < L["TC_DASH_ON"]
+                    dash_phase += 1
+                if visible:
+                    c.line(previous[0], previous[1], current[0], current[1], BLACK)
                 previous = current
 
         c.hline(chart_l, axis_y, chart_r - chart_l, BLACK)

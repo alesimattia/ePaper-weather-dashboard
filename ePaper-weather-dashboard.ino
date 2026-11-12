@@ -38,30 +38,36 @@
 //#define DISPLAY_VARIANT_122C
 
 /**
- * REFRESH PARZIALE: DISATTIVATO, ed è una scelta di questo firmware e non un
- * limite del pannello.
+ * REFRESH DIFFERENZIALE B/N. 1 = un frame è un partial da ~0,64 s quando il
+ * piano rosso non è cambiato rispetto a quello sul vetro, altrimenti un refresh
+ * pieno da ~24 s; 0 = ogni frame è un refresh pieno, come prima.
  *
- * Il driver 097c sa fare un partial in bianco e nero da 639 ms contro i ~24 s
- * del refresh pieno, ma sotto la sua waveform la RAM 0x26 del controller
- * diventa il FRAME PRECEDENTE invece del piano accent. Conseguenza: un frame
- * aggiornato in partial è per forza SENZA ROSSO, e la scelta è per frame e non
- * per pixel, quindi non esiste il caso "aggiorno in partial una zona e tengo
- * il rosso nel resto dello schermo". Questa dashboard il rosso lo usa (celle
- * del calendario, riquadri, icone meteo), quindi il partial non è applicabile
- * così come è.
+ * Il driver 097c sa fare un partial in bianco e nero, ma un frame partial non
+ * può nè aggiungere nè togliere rosso: il rosso già sul vetro resta fermo,
+ * perchè la waveform non pilota i pixel il cui bit è uguale nelle due RAM
+ * (misurato, sezione PARTIAL del driver). Per questo il firmware disegna il
+ * frame come sempre e il driver, che riceve i due piani una pagina alla volta,
+ * confronta il piano rosso con quello dell'ultimo frame pieno: se è identico
+ * parte il partial, altrimenti il pannello non si tocca e il frame si rifà in
+ * pieno (Weather::renderFrame()). Il meccanismo sta nella sezione REFRESH
+ * DIFFERENZIALE del driver, la politica (catena massima di partial, soglia di
+ * temperatura, distanza massima dall'ultimo frame) in PartialRefresh.h e
+ * Timings.h.
  *
- * A 0 il firmware lavora solo in full-window e non chiama nessuna delle sei
- * API opt-in del driver: drawImagePartial(), drawImagePartialPart(),
- * refreshPartial(), writeImagePrevious(), writeScreenBufferPrevious() e
+ * Gli elementi che cambiano a ogni ciclo, come la temperatura del riquadro
+ * Interno, sono in nero perchè un testo rosso che si sposta impedirebbe il
+ * partial. Il firmware non chiama le sei API opt-in del vecchio partial,
+ * che lavorano fuori dal template: drawImagePartial(), drawImagePartialPart(),
+ * refreshPartial(), writeImageToPrevious(), writeScreenBufferPrevious() e
  * setPartialLut().
- * Lo static_assert dopo la costruzione di `display` sorveglia l'unica strada
- * per cui il partial potrebbe attivarsi da sè, cioè il flag
- * hasFastPartialUpdate del driver.
  *
- * Per riabilitarlo in futuro NON basta mettere 1: vedi il messaggio dell'#error
- * accanto allo static_assert, che elenca cosa va implementato.
+ * Prima di abilitarlo su un pannello nuovo conviene provare l'esempio
+ * GxEPD2_SOLUM_ESL/examples/097c/differential_check, che verifica sul vetro le
+ * assunzioni mai misurate (orientamento delle RAM, power off fra due passate,
+ * sonno di minuti). A 0 il driver non calcola nessun CRC e il percorso di
+ * scrittura resta quello di prima.
  */
-#define DISPLAY_PARTIAL_REFRESH 0
+#define DISPLAY_PARTIAL_REFRESH 1
 
 /**
  * Verbosita' dei log seriali (Log.h). 0 = nessun log, 1 = operativi,
@@ -169,47 +175,20 @@ extern "C" bool bleInUse(void) { return false; }
 GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display(Layout::makePanel());
 
 /**
- * Sorveglianza del refresh parziale, vedi DISPLAY_PARTIAL_REFRESH in testa.
+ * Sorveglianza di hasFastPartialUpdate, che resta false con il differenziale
+ * acceso o spento.
  *
- * Il ramo a 0 controlla il flag del driver, e le due cose che il template fa in
- * modalità finestra parziale vanno tenute distinte, perchè è facile
- * attribuirle allo stesso interruttore:
- *   - GxEPD2_3C scrive il piano accent dentro la RAM 0x26 (GxEPD2_3C.h:340),
- *     che sotto la waveform del partial è il frame precedente. Dipende da
- *     setPartialWindow() e NON dal flag: a proteggere è refresh(x, y, w, h),
- *     che sul driver 097c fa comunque un refresh pieno;
- *   - hasFastPartialUpdate è consultato in un solo punto (GxEPD2_3C.h:355) e fa
- *     ripetere l'intero loop paged dopo il refresh, riscrivendo i due piani
- *     senza rinfrescare e senza riallineare 0x26.
- * Questo firmware lavora in sola full-window, quindi il flag non verrebbe
- * nemmeno letto. L'assert resta come tripwire: vederlo a true vorrebbe dire che
- * qualcuno ha creduto che il template sappia pilotare questo partial.
- *
- * Il ramo a 1 esiste per non far passare il flag come un interruttore che non
- * commuta niente. Riabilitare il partial vuol dire:
- *   1. togliere questo #error;
- *   2. scrivere un percorso di rendering dedicato per le sole zone in bianco e
- *      nero, che chiami epd2.drawImagePartial() FUORI da firstPage()/nextPage():
- *      il partial del driver vive fuori dal template di proposito. Per il testo
- *      si disegna su una GFXcanvas1 di Adafruit_GFX e se ne passa il buffer con
- *      invert = true e pgm = false, vedi il README della libreria;
- *   3. accettare due limiti misurati. Il frame aggiornato in partial non ha
- *      rosso, e dove il nero viene RIMOSSO resta un grigio leggero, perchè su un
- *      film BWR il pigmento rosso è lento e i 560 ms della waveform non gli
- *      bastano. Le aree mai pilotate non degradano, ma il pavimento di grigio
- *      dell'area di lavoro lo azzera solo un refresh pieno: va deciso ogni
- *      quanti partial rifarne uno.
- * NON va alzato hasFastPartialUpdate nel driver: quella è la strada sbagliata,
- * per il motivo scritto sopra.
+ * GxEPD2_3C consulta il flag in un solo punto (GxEPD2_3C.h:355), in modalità
+ * finestra parziale, e fa ripetere l'intero loop paged dopo il refresh,
+ * riscrivendo i due piani senza rinfrescare e senza riallineare 0x26: lavoro
+ * buttato. Il differenziale non lo usa, perchè passa da refresh(false) del loop
+ * a finestra piena. L'assert resta come tripwire: vederlo a true vorrebbe dire
+ * che qualcuno ha creduto che quel flag abiliti il partial.
  */
-#if DISPLAY_PARTIAL_REFRESH
-#error "DISPLAY_PARTIAL_REFRESH = 1 non è implementato: il partial del driver 097c va chiamato out-of-band con epd2.drawImagePartial(), non dal loop paged, e rende un frame senza rosso. Vedi il commento qui sopra per i tre passi."
-#else
 static_assert(!Layout::Panel::hasFastPartialUpdate,
-			  "Il driver dichiara hasFastPartialUpdate = true, ma DISPLAY_PARTIAL_REFRESH è 0: "
-			  "il partial di questo driver non passa dal template e quel flag non lo abilita: "
-			  "vederlo a true segnala un fraintendimento. Rimettere false nel driver.");
-#endif
+			  "Il driver dichiara hasFastPartialUpdate = true, ma il partial di questo driver non passa da quel flag: "
+			  "ripete il loop paged senza rinfrescare, lavoro buttato. Il refresh differenziale si abilita con "
+			  "DISPLAY_PARTIAL_REFRESH. Rimettere false nel driver.");
 
 /**
  * Inizializza il bus HSPI e il display in orientamento landscape fisso.
@@ -221,15 +200,19 @@ static_assert(!Layout::Panel::hasFastPartialUpdate,
  *     Weather::renderFrame() la richiama a ogni frame come difesa. In
  *     partial-window il template chiamerebbe writeImagePart(black, color) e
  *     poi refresh(x, y, w, h), che sul driver 097c fa comunque un refresh
- *     pieno: nessun guadagno e una modalità in più da mantenere.
+ *     pieno: nessun guadagno e una modalità in più da mantenere. Il partial
+ *     passa invece dal refresh differenziale del loop paged a finestra piena
+ *     (setDifferentialRefresh() qui sotto, il resto in Weather::renderFrame()).
  *   - le sei API del partial del driver NON vanno chiamate da qui:
  *     drawImagePartial(), drawImagePartialPart(), refreshPartial(),
- *     writeImagePrevious(), writeScreenBufferPrevious() e setPartialLut(). Sono
- *     opt-in, quindi basta non chiamarle; il perchè sta in
- *     DISPLAY_PARTIAL_REFRESH in testa al file.
+ *     writeImageToPrevious(), writeScreenBufferPrevious() e setPartialLut(). Sono
+ *     opt-in e lavorano fuori dal template, quindi basta non chiamarle; una
+ *     scrittura estranea al loop paged spegnerebbe comunque il riferimento del
+ *     differenziale.
  *   - il resto lo gestisce il driver da sè: init dei due piani alla prima
  *     scrittura, ricarica della waveform dall'OTP a ogni refresh pieno, e
- *     ripulitura della RAM al risveglio da hibernate().
+ *     ripulitura della RAM al risveglio da hibernate(), che con un riferimento
+ *     valido non manda il controller in deep sleep.
  */
 /**
  * Attesa del BUSY del pannello in light sleep invece che a CPU accesa: un
@@ -273,6 +256,8 @@ void initDisplay()
 	display.epd2.setBusyCallback(waitBusyAsleep);
 	display.setRotation(Layout::ROTATION);
 	display.setFullWindow();
+	// Un driver senza il differenziale ignora la chiamata: resta sul refresh pieno.
+	PartialRefresh::setEnabled(display.epd2, DISPLAY_PARTIAL_REFRESH != 0);
 }
 
 // ===========================================================================
@@ -953,17 +938,21 @@ void loop()
 	Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
 
 	/**
-	 * Pannello in deep sleep prima del light sleep dell'MCU: porta il
-	 * controller da standby a 1-5 uA, ed è quasi gratis perchè il refresh
-	 * pieno chiude con 0x22 = 0xF7, che ha già disabilitato analog e clock:
-	 * il _PowerOff() interno a hibernate() è quindi un no-op e resta solo il
-	 * comando di deep sleep. Idempotente: nei giri senza ridisegno il
-	 * pannello è già addormentato e la chiamata non fa nulla.
+	 * Pannello a riposo prima del light sleep dell'MCU. Senza un riferimento
+	 * del refresh differenziale è il deep sleep: porta il controller da
+	 * standby a 1-5 uA, ed è quasi gratis perchè il refresh pieno chiude con
+	 * 0x22 = 0xF7, che ha già disabilitato analog e clock, quindi il
+	 * _PowerOff() interno a hibernate() è un no-op e resta solo il comando di
+	 * deep sleep. Con un riferimento valido il controller resta invece in
+	 * Sleep (25-40 uA) e conserva le due RAM, che il frame successivo usa per
+	 * il partial. Idempotente: nei giri senza ridisegno la chiamata non fa
+	 * niente.
 	 *
-	 * Al risveglio non serve fare niente da qui: alla prima scrittura il
-	 * driver esegue reset hardware, SWRESET e init, e ripulisce i due piani
-	 * perchè il deep sleep NON ritiene la RAM del controller. Sono ~60 ms sul
-	 * primo frame utile.
+	 * Al risveglio dal deep sleep non serve fare niente da qui: alla prima
+	 * scrittura il driver esegue reset hardware, SWRESET e init, e ripulisce i
+	 * due piani perchè il deep sleep NON ritiene la RAM del controller. Sono
+	 * ~60 ms sul primo frame utile; ogni frame pieno riparte comunque da reset
+	 * e init, anche se il controller non dormiva.
 	 *
 	 * Sta solo in questo ramo: nella finestra OTA il loop gira ogni ~10 ms e
 	 * il pannello verrebbe addormentato e risvegliato in continuazione.

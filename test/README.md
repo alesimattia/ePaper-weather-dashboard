@@ -2,7 +2,12 @@
 
 Verificano la logica **pura** di [`Timings.h`](../Timings.h) e
 [`Scheduler.h`](../Scheduler.h): validazione dei tempi e calcolo delle
-scadenze; più il protocollo di [`Tuya.h`](../Tuya.h), contro un broker finto.
+scadenze; il protocollo di [`Tuya.h`](../Tuya.h), contro un broker finto; e il
+refresh differenziale, cioè la politica di [`PartialRefresh.h`](../PartialRefresh.h)
+e la macchina a stati del driver
+([`GxEPD2_SOLUM_Differential.h`](../GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_Differential.h)),
+che non ha I/O proprio perchè si possa provare qui. `test_partial` gira due
+volte, con l'interruttore `DISPLAY_PARTIAL_REFRESH` spento e acceso.
 Sono su host perché sul dispositivo la stessa verifica richiederebbe
 di aspettare ore (cadenze giornaliere, rollover di `millis()`, cambio dell'ora
 legale) e di provocare a mano condizioni scomode come una NVS corrotta.

@@ -24,8 +24,10 @@ task successivi partono comunque.
 **UI mail approvata dall'utente**: riquadro "Posta" sotto il wallpaper con
 griglia 2x2 (097c, 4 mail) / 2x3 (122c, 6 mail), divisore fra le colonne e
 filetti fra le righe, font come gli eventi calendario, testo nero e busta
-`INDOOR_ICON_MAIL` rossa accanto al mittente delle mail non lette (scelta
-nel mockup della variante A). `Mail::draw()` viene chiamato dentro
+`INDOOR_ICON_MAIL` **nera** accanto al mittente delle mail non lette. **Why:** scelta
+dell'utente: le non lette cambiano spesso e una busta rossa che si sposta impedirebbe il refresh
+parziale ([[differential_refresh]]). **How to apply:** non rimettere il rosso sulla busta senza
+riconsiderare il partial; la forma della busta basta a segnalare la mail non letta. `Mail::draw()` viene chiamato dentro
 `Weather::renderFrame()` paged loop e lo scheduler chiede il ridisegno dopo
 un `Mail::runFetch()` riuscito.
 

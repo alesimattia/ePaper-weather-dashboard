@@ -425,10 +425,19 @@ di GxEPD2 aggiunge:
    diretta sul controller.
 3. **Sistema di descrittori universali** (`GxEPDImage::Descriptor`) con
    formato e dimensioni dell'immagine.
-4. **Partial refresh in bianco e nero** (`drawImagePartial()`,
-   `drawImagePartialPart()`): 639 ms contro i ~24 s del refresh pieno, ma un
-   frame partial è senza rosso. È un'API opt-in che il firmware non chiama:
-   ogni frame è un refresh pieno (`DISPLAY_PARTIAL_REFRESH` a 0 nel `.ino`).
+4. **Partial refresh in bianco e nero**: 639 ms contro i ~24 s del refresh
+   pieno, ma un frame partial non scrive rosso (il rosso già sul vetro resta
+   fermo). Il driver lo espone in due modi. Le API opt-in `drawImagePartial()` e
+   `drawImagePartialPart()` lavorano fuori dal template e il firmware non le
+   chiama. Il **refresh differenziale** lavora invece dentro il loop paged:
+   il driver confronta il CRC32 del piano rosso di ogni pagina con quello
+   dell'ultimo frame pieno e, se è identico, scrive il B/N nuovo nella RAM
+   libera e lancia il partial; altrimenti non tocca il pannello e il firmware
+   rifà il frame in pieno (`DISPLAY_PARTIAL_REFRESH` nel `.ino`, politica in
+   [`PartialRefresh.h`](PartialRefresh.h) e `Timings.h`, meccanismo nella
+   sezione REFRESH DIFFERENZIALE del driver). Con un riferimento valido il
+   controller resta in Sleep e non va in deep sleep, perchè il deep sleep perde
+   la RAM.
 
 La documentazione completa (motivazione, API, esempi d'uso, ottimizzazioni
 rispetto al driver stock) sta in:
@@ -526,7 +535,7 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   in rosso ed etichetta; a destra la colonna sole con alba e tramonto, la
   **barra temp-range** morn↔eve in nero con indicatore triangolare sulla
   percepita corrente, e il mini-grafico della temperatura percepita da 3 ore fa
-  a ~9 ore avanti, passato in nero e previsione in rosso), **Previsioni** 440w
+  a ~9 ore avanti, tutto in nero: passato pieno e previsione tratteggiata), **Previsioni** 440w
   (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
 - **Gate del frame nella finestra di manutenzione**: è dello scheduler. Il frame
   del ciclo aspetta i fetch dovuti, che attendono la STA e l'ora valida, per al
@@ -563,8 +572,9 @@ Widget del mese e lista eventi Outlook + Google.
 ### Mail (`Mail.h`)
 
 Ultime mail della casella Gmail, nel riquadro "Posta" sotto al wallpaper cinema
-(4 su 097c in 2×2, 6 su 122c in 2×3). Testo nero, busta delle mail non lette in
-rosso.
+(4 su 097c in 2×2, 6 su 122c in 2×3). Tutto nero, busta delle mail non lette
+compresa: un elemento rosso che cambia di frequente impedirebbe il refresh
+parziale.
 
 | Funzione | Effetto |
 |---|---|
@@ -574,7 +584,7 @@ rosso.
 | `Mail::isConfigured()` | Vero se le credenziali Google di `Env.h` sono configurate: è la precondizione del task `mail`. |
 
 **Cella**: indirizzo del mittente (solo `<email>`, il nome leggibile è scartato)
-in alto a sinistra con la busta 20×20 rossa se la mail è non letta, oggetto
+in alto a sinistra con la busta 20×20 se la mail è non letta, oggetto
 (`FONT_SMALL`, max 60 caratteri) sotto, orario `HH:MM` e data `dd/MM` a destra,
 oppure `--` se la mail non ha `internalDate`. Cella senza mail: placeholder `--`.
 
@@ -1014,7 +1024,7 @@ affiancate, 16 px fra zone impilate:
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
 | Wallpaper         | `x=10..620, y=10..300`    | Background cinema scaricato via HTTP (610w × 290h BWR)  |
-| Posta             | `x=10..620, y=316..450`   | Riquadro con 2×2 = 4 mail su righe da 57 px. Per cella: email mittente + busta rossa se non letta / oggetto / orario HH:MM / data dd/MM |
+| Posta             | `x=10..620, y=316..450`   | Riquadro con 2×2 = 4 mail su righe da 57 px. Per cella: email mittente + busta se non letta / oggetto / orario HH:MM / data dd/MM |
 | Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=207, poi 5 eventi da 46 px (Outlook + Google merged) |
 | Banner Interno    | `x=10..210,  y=466..662`  | 200w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
 | Banner Meteo      | `x=220..500, y=466..662`  | 280w × 196h, blocco corrente 162w + colonna sole 118w   |
@@ -1056,8 +1066,11 @@ I `#define` in testa allo sketch sono:
   variante di pannello (vedi [Selezione del display](#selezione-del-display)).
   Esattamente uno deve essere definito; il dispatcher `Layout.h` emette
   `#error` altrimenti;
-- `DISPLAY_PARTIAL_REFRESH 0` → ogni frame è un refresh pieno; il valore 1 non è
-  implementato e produce `#error`.
+- `DISPLAY_PARTIAL_REFRESH 1` → refresh differenziale B/N: un frame è un partial
+  quando il piano rosso non è cambiato, altrimenti un refresh pieno. A 0 ogni
+  frame è un refresh pieno e il driver non calcola nessun CRC. Catena massima di
+  partial, soglia di temperatura e distanza massima dall'ultimo frame sono in
+  `Timings.h` (`PARTIAL_CHAIN_MAX`, `PARTIAL_MIN_TEMP_C`, `PARTIAL_MAX_GAP_MS`).
 
 Le cadenze vivono in [`Timings.h`](Timings.h), insieme al **pavimento** di ciascuna, e
 sono modificabili a runtime dalla pagina `/config` della finestra di manutenzione
@@ -1130,6 +1143,9 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `WEATHER_MAX_AGE_S` | `3600` s | Età oltre la quale il meteo in cache diventa `--`. |
 | `CLOCK_RESYNC_INTERVAL_MS` | 1 h | Distanza minima fra due risincronizzazioni SNTP forzate all'apertura della radio. |
 | `DISPLAY_BUSY_SLEEP_SLICE_MS` | `5000` ms | Timer di sicurezza del light sleep durante l'attesa del BUSY del refresh; il risveglio vero è il fronte del BUSY. |
+| `PARTIAL_CHAIN_MAX` | `6` | Partial consecutivi al massimo, poi un refresh pieno che azzera il grigio che il partial lascia dove toglie il nero (la letteratura dice uno ogni 5-10). |
+| `PARTIAL_MIN_TEMP_C`, `PARTIAL_TEMP_HYSTERESIS_C` | `18` °C, `2` °C | Sotto la soglia il frame è pieno, perchè la LUT del partial ha frame fissi e non compensa il freddo; dopo un pieno per freddo il partial riparte sopra soglia più isteresi. Valore prudente, non misurato. Senza BME680 collegato la soglia non si applica e il partial si prova comunque; con il sensore collegato un campione non valido tiene il frame pieno. |
+| `PARTIAL_MAX_GAP_MS` | 2 × 300 s + 1 s, in ms | Oltre questa distanza dall'ultimo frame il riferimento del differenziale non si usa (notte, riavvio, finestra di manutenzione). |
 | `MAINT_CLIENT_IDLE_MS` | `30000` ms | Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima richiesta HTTP è più recente di così, o finchè un dispositivo è associato all'AP di emergenza. |
 | `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
@@ -1237,9 +1253,9 @@ Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 - **Boot → primo refresh con WiFi e tutti i fetch OK**: i fetch HTTP in sequenza più un refresh pieno.
 - **Boot → primo refresh senza WiFi**: `PRIMO_FRAME_ATTESA_MS` (15 s) + un refresh pieno, ~39 s.
 - **Boot → primo refresh con cinema in cold start di render.com**: fino a `CINEMA_HTTP_TIMEOUT_MS` (45 s) + un refresh pieno se il pre-warm non è bastato. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
-- **Refresh successivo a regime**: ~24 s (refresh pieno), uno per ciclo.
+- **Refresh successivo a regime**: un partial da ~1,3 s (639 ms più rampe e power off) quando il piano rosso è invariato, altrimenti un refresh pieno da ~24 s; uno per ciclo. La quota di partial dipende da quanto spesso cambia il rosso (temperature e icone meteo, eventi di oggi, percorso al mattino): una simulazione dà il 65-77%, ma è un modello e non una misura. Il log riporta a ogni frame l'esito e i contatori del giorno.
 - **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo della fascia percorso, sorgente cambiata da `/route`, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo.
-- **Usura del pannello**: con la fascia 7-23 sono 192 refresh pieni al giorno. L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
+- **Usura del pannello**: con la fascia 7-23 sono 192 frame al giorno, che senza il refresh differenziale sono 192 refresh pieni (con il differenziale solo quelli in cui il rosso cambia o la catena di partial è al tetto). L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
 
 ---
 

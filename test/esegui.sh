@@ -1,6 +1,7 @@
 #!/bin/bash
 # Compila ed esegue i test su host. Nessuna board coinvolta: verificano la
-# logica pura di Timings.h e Scheduler.h, che sul dispositivo non e'
+# logica pura di Timings.h, Scheduler.h e del refresh differenziale
+# (PartialRefresh.h e la sua macchina a stati), che sul dispositivo non e'
 # osservabile senza aspettare ore.
 #
 #   ./test/esegui.sh
@@ -19,9 +20,10 @@ trap 'rm -rf "$OUT"' EXIT
 FLAGS="-std=gnu++20 -Istub -I.. -Wall -Wextra -Wno-format-security -Wno-unused-parameter"
 
 falliti=0
-for caso in test_timings test_scheduler test_routefinder test_tuya test_tuya:-DTUYA_REQUEST_ACK=0; do
+for caso in test_timings test_scheduler test_routefinder test_tuya test_tuya:-DTUYA_REQUEST_ACK=0 test_partial test_partial:-DDISPLAY_PARTIAL_REFRESH=1; do
   # Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira due
-  # volte, con e senza la conferma applicativa del cloud.
+  # volte, con e senza la conferma applicativa del cloud, e test_partial con
+  # l'interruttore del differenziale spento e acceso.
   t=${caso%%:*}
   extra=""
   [ "$t" != "$caso" ] && extra=${caso#*:}

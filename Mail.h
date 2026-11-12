@@ -472,8 +472,9 @@ namespace Mail
   {
     /**
      * Disegna una mail nella sua cella: mittente e oggetto a sinistra, orario
-     * e data a destra, e la busta rossa accanto al mittente quando la mail non
-     * è letta. Le celle si riempiono per colonna, dall'alto in basso, così la
+     * e data a destra, e la busta nera accanto al mittente quando la mail non
+     * è letta (nera e non rossa, perchè le non lette cambiano spesso e il rosso
+     * impedirebbe il refresh parziale). Le celle si riempiono per colonna, dall'alto in basso, così la
      * lettura resta cronologica: la cache tiene in testa la mail più recente.
      */
     inline void drawMailCell(int idx, const MailMessage& m)
@@ -535,7 +536,7 @@ namespace Mail
       {
         const int16_t iconX = left + Graphics::textWidth(senderBuf) + Layout::SMALL_ICON_GAP;
         display.drawBitmap(iconX, Graphics::smallIconY(line1), INDOOR_ICON_MAIL,
-                           Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_RED);
+                           Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_BLACK);
       }
 
       char subjectBuf[MAIL_SUBJECT_LEN];

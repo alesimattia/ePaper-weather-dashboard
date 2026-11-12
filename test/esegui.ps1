@@ -59,9 +59,9 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $falliti = 0
 
-foreach ($caso in @('test_timings', 'test_scheduler', 'test_routefinder', 'test_tuya', 'test_tuya:/DTUYA_REQUEST_ACK=0'))
+foreach ($caso in @('test_timings', 'test_scheduler', 'test_routefinder', 'test_tuya', 'test_tuya:/DTUYA_REQUEST_ACK=0', 'test_partial', 'test_partial:/DDISPLAY_PARTIAL_REFRESH=1'))
 {
-	# Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira due volte, con e senza la conferma del cloud.
+	# Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira due volte, con e senza la conferma del cloud, e test_partial con l'interruttore del differenziale spento e acceso.
 	$nome, $extra = $caso -split ':', 2
 	Write-Host "── $caso ─────────────────────────────────────────────────────"
 

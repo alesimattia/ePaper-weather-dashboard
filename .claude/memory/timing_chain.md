@@ -14,7 +14,7 @@ Tutti i tempi stanno in `Timings.h`; il **quando** lo decide `Scheduler.h`, mai 
 | Meteo OWM | 10 min (cadenza dei dati); quota 1000/giorno = 1,44 min | soft sui dati, hard sulla quota |
 | Mail, Google, Outlook | nessuno sui dati, ma pavimento 5 min = un ciclo | il costo è la radio: 5-10 s per fetch |
 | Cinema | `CACHE_TTL_SECONDS=3600` in produzione; render dorme a 15 min; ETag/304 | hard lato server. Il palinsesto cambia a giorni, quindi cadenza **giornaliera** |
-| Display | 24 s (refresh pieno); un frame per ciclo in fascia | hard fisico |
+| Display | 24 s (refresh pieno) o ~0,64 s più rampe (partial, solo se il rosso è invariato, vedi [[differential_refresh]]); un frame per ciclo in fascia | hard fisico |
 | Radio | 2-15 s per accensione | costo |
 
 **Sleep:** `Scheduler::sleepUntilNextEvent()` dorme esattamente fino alla scadenza del sensore (~301 s dall'ultimo poll), senza pavimento, perchè BSEC tollera solo il 6,25% di scarto; senza sensore fino al ciclo interno successivo o, di notte, all'apertura della fascia. `SLEEP_MAX_S` (24 h) è solo una guardia. Un pavimento di 30 s con tetto a 300 s portava il poll a ~330 s, il 10% di ritardo, con due risvegli per ciclo.
@@ -38,7 +38,7 @@ I produttori girano in sequenza nello stesso `loop()`, quindi il tempo che uno c
 - **Notte.** Fuori dalla fascia WiFi il ciclo fa solo il passo del sensore: niente radio, Tuya, frame o SNTP, 12 risvegli brevi all'ora, il minimo che conserva l'accuratezza di BSEC. Con l'ora valida al boot (riavvio software) la finestra di manutenzione non si apre. Il Bluetooth è sempre spento: il `.ino` definisce `btClassicInUse()`/`bleInUse()` a `false`, e `initArduino()` rilascia la memoria del controller. Fra mezzanotte e l'apertura della fascia il pannello mostra la data del giorno prima.
 - **Light sleep durante il refresh.** `initDisplay()` registra `setBusyCallback()` di GxEPD2: a radio spenta l'attesa del BUSY (24 s per refresh) avviene in light sleep, con risveglio sul BUSY basso (`Layout::BUSY_WAKE_PIN`) e un timer di sicurezza `DISPLAY_BUSY_SLEEP_SLICE_MS`. Il timeout del driver resta valido perchè `micros()` avanza durante il light sleep. A radio accesa, nella finestra di manutenzione, resta l'attesa attiva. Dopo il risveglio va tolta la sorgente GPIO, altrimenti il BUSY basso sveglierebbe subito ogni sleep dello scheduler.
 
-**Bilancio in fascia, per ora (stime):** 12 cicli, ciascuno con un risveglio, una finestra radio (Tuya ogni ciclo, meteo, mail e calendari un ciclo sì e uno no, percorso solo in fascia percorso) e un refresh pieno. La leva residua è `TUYA_REQUEST_ACK` a 0 dopo il bring-up, che toglie fino a 4 s di radio a publish; il numero di refresh lo decide la sola fascia WiFi (192 al giorno con 7-23).
+**Bilancio in fascia, per ora (stime):** 12 cicli, ciascuno con un risveglio, una finestra radio (Tuya ogni ciclo, meteo, mail e calendari un ciclo sì e uno no, percorso solo in fascia percorso) e un refresh, pieno o partial secondo il rosso. La leva residua è `TUYA_REQUEST_ACK` a 0 dopo il bring-up, che toglie fino a 4 s di radio a publish; il numero di refresh lo decide la sola fascia WiFi (192 al giorno con 7-23).
 
 **Durante la finestra di manutenzione** `loop()` gira con `delay(10)`, lo scheduler valuta il giro al più ogni `MAINTENANCE_SCHEDULER_PERIOD_MS` (1 s) e aspetta finchè un client usa le pagine (vedi [[maintenance_window]]), ma il passo del sensore gira lo stesso con `Scheduler::serviceSensor()`. Un fetch già partito blocca comunque il web server per la sua durata.
 

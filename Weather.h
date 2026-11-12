@@ -23,6 +23,7 @@
 #include "Indoor.h"
 #include "Mail.h"      // Mail::draw() invocato dentro renderFrame()
 #include "Tuya.h"      // Tuya::hasFailed() letto da drawBanner() per il badge di guasto
+#include "PartialRefresh.h"   // politica del refresh differenziale, usata da renderFrame()
 
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Il tipo concreto del
@@ -643,8 +644,8 @@ namespace Weather
     // temp-range (quarta riga della colonna sole).
     //
     // Range temporale: da (now - 3h) a slots[3].epoch (~now + 9h).
-    // Tratto passato in nero, tratto previsione in rosso, pallino "ora" nero,
-    // tutto dentro il paged loop.
+    // Tratto passato pieno, tratto previsione tratteggiato, pallino "ora",
+    // tutto in nero e dentro il paged loop.
     // =======================================================================
 
     /**
@@ -768,17 +769,21 @@ namespace Weather
       /** Disegno curva: per ogni segmento [pts[i], pts[i+1]] interpolazione
        *  Catmull-Rom con vicini pts[i-1] e pts[i+2] (clamp ai bordi).
        *  "Adesso" è sempre un vertice, perchè lo storico sta strettamente prima
-       *  di slots[0] e le previsioni dopo: ogni segmento è tutto passato (nero)
-       *  o tutto previsione (rosso), e il colore cambia sul vertice "adesso". */
+       *  di slots[0] e le previsioni dopo: ogni segmento è tutto passato (pieno)
+       *  o tutto previsione (tratteggiato). Tutto è nero, perchè un tratto rosso
+       *  che si sposta a ogni fetch impedirebbe il refresh parziale. La fase del
+       *  tratteggio parte dal vertice "adesso" e avanza solo sui passi della
+       *  previsione, quindi non dipende dalla lunghezza dello storico. */
       if (n >= 2)
       {
+        int16_t dashPhase = 0;
         for (size_t i = 0; i < n - 1; ++i)
         {
           const TempSample& p1 = pts[i];
           const TempSample& p2 = pts[i + 1];
           const TempSample& p0 = (i == 0)         ? p1 : pts[i - 1];
           const TempSample& p3 = (i + 2 >= n)     ? p2 : pts[i + 2];
-          const uint16_t color = (p1.epoch < now) ? GxEPD_BLACK : GxEPD_RED;
+          const bool isForecast = (p1.epoch >= now);
 
           const int16_t x1 = mapX(p1.epoch);
           const int16_t x2 = mapX(p2.epoch);
@@ -793,7 +798,13 @@ namespace Weather
             const float   tu = catmull(p0.t, p1.t, p2.t, p3.t, u);
             const int16_t cx = x1 + (int16_t)(((long)(x2 - x1) * (long)s) / (long)steps);
             const int16_t cy = mapY(tu);
-            display.drawLine(prevX, prevY, cx, cy, color);
+            bool visible = true;
+            if (isForecast)
+            {
+              visible = (dashPhase % (Layout::TC_DASH_ON + Layout::TC_DASH_OFF)) < Layout::TC_DASH_ON;
+              ++dashPhase;
+            }
+            if (visible) display.drawLine(prevX, prevY, cx, cy, GxEPD_BLACK);
             prevX = cx;
             prevY = cy;
           }
@@ -852,8 +863,10 @@ namespace Weather
 
     /**
      * Disegna il contenuto del riquadro Interno, quattro righe con i dati del
-     * sensore BME680: temperatura in rosso, umidità, qualità dell'aria con il
-     * pedice di accuratezza e pressione. Valori in FONT_LARGE, l'IAQ in
+     * sensore BME680: temperatura, umidità, qualità dell'aria con il
+     * pedice di accuratezza e pressione, tutto in nero perchè i valori cambiano
+     * a ogni ciclo e un testo rosso impedirebbe il refresh parziale. Valori in
+     * FONT_LARGE, l'IAQ in
      * FONT_BODY perchè "Mediocre 500" in FONT_LARGE non entra, unità e
      * pedice in FONT_SMALL.
      */
@@ -864,18 +877,18 @@ namespace Weather
       const int16_t textX     = iconX + Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP;
       char buf[24];
 
-      // Temperatura in rosso, con il "°" disegnato come cerchietto.
+      // Temperatura, con il "°" disegnato come cerchietto.
       display.setFont(Layout::FONT_LARGE);
       display.drawBitmap(iconX, Graphics::smallIconY(Layout::INDOOR_ROW1_BASELINE), INDOOR_ICON_TEMPERATURE,
                          Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_BLACK);
       if (s.valid)
       {
         snprintf(buf, sizeof(buf), "%.1f", s.temperature);
-        drawTempWithDegree(buf, textX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED, 2, 16, false);
+        drawTempWithDegree(buf, textX, Layout::INDOOR_ROW1_BASELINE, GxEPD_BLACK, 2, 16, false);
       }
       else
       {
-        Graphics::drawLeftAligned("--", textX, Layout::INDOOR_ROW1_BASELINE, GxEPD_RED);
+        Graphics::drawLeftAligned("--", textX, Layout::INDOOR_ROW1_BASELINE, GxEPD_BLACK);
       }
 
       // Umidità, con il "%" in FONT_SMALL accanto al valore.
@@ -986,31 +999,22 @@ namespace Weather
     }
 
     /**
-     * Compone un frame completo (background + banner) sul display usando il
-     * pattern paged di GxEPD2. Ogni refresh pieno costa ~24 s misurati, ed è
-     * l'unica modalità che questo firmware usa: il driver 097c avrebbe anche un
-     * partial da 639 ms, ma renderebbe un frame senza rosso, quindi il progetto
-     * non lo usa di proposito (vedi DISPLAY_PARTIAL_REFRESH nel .ino).
+     * Stato della politica del refresh differenziale: ultimo frame, temperatura
+     * che ha fatto scegliere il pieno per freddo, contatori del giorno.
      */
-    inline void renderFrame()
-    {
-      display.setFullWindow();
-      /**
-       * Epoch di riferimento per il calendario: l'orologio di sistema quando è
-       * sincronizzato, così il calendario non dipende dalla riuscita del
-       * meteo; senza orologio l'ora dell'ultimo meteo, che è comunque reale;
-       * senza nessuno dei due 0, e Calendar::draw() mostra il riquadro vuoto.
-       */
-      const time_t calEpoch = Clock::valido() ? time(nullptr)
-                                              : (slots[0].valid ? slots[0].epoch : 0);
+    inline PartialRefresh::State partialState;
 
-      /**
-       * Ogni pagina parte da un buffer bianco, perchè firstPage() e nextPage()
-       * lo azzerano, e disegna solo i riquadri che toccano la sua fascia: quelli
-       * con il titolo sul bordo superiore si allargano in alto di STACK_GAP,
-       * perchè il titolo sporge sopra il bordo. Il tempo misurato è il solo
-       * disegno, senza nextPage(), che contiene SPI e refresh.
-       */
+    /**
+     * Un loop paged completo (background + banner). Ogni pagina parte da un
+     * buffer bianco, perchè firstPage() e nextPage() lo azzerano, e disegna solo
+     * i riquadri che toccano la sua fascia: quelli con il titolo sul bordo
+     * superiore si allargano in alto di STACK_GAP, perchè il titolo sporge sopra
+     * il bordo. Il tempo misurato è il solo disegno, senza nextPage(), che
+     * contiene SPI e refresh. Con il differenziale armato il driver confronta
+     * qui il piano rosso e decide se il frame diventa un partial.
+     */
+    inline void renderPages(time_t calEpoch)
+    {
       uint32_t drawUs = 0;
       uint16_t page = 0;
       display.firstPage();
@@ -1030,6 +1034,110 @@ namespace Weather
       } while (display.nextPage());
       Graphics::endPages();
       LOGV("render", "disegno %lu ms in %u pagine", (unsigned long)(drawUs / 1000UL), (unsigned)page);
+    }
+
+    /**
+     * Giorno locale come chiave intera per i contatori del log, -1 senza ora
+     * valida: i contatori non si azzerano finchè l'orologio non è affidabile.
+     */
+    inline int32_t localDayKey()
+    {
+      if (!Clock::valido()) return -1;
+      const time_t now = time(nullptr);
+      struct tm local;
+      localtime_r(&now, &local);
+      return (int32_t)local.tm_year * 1000 + (int32_t)local.tm_yday;
+    }
+
+    /**
+     * Compone un frame completo (background + banner) sul display usando il
+     * pattern paged di GxEPD2. Un refresh pieno costa ~24 s misurati, un partial
+     * B/N ~0,64 s: il partial è possibile solo se il piano rosso è identico a
+     * quello sul vetro, e questo lo sa solo il driver, che lo verifica mentre
+     * riceve le pagine (vedi la sezione REFRESH DIFFERENZIALE del driver e la
+     * politica in PartialRefresh.h).
+     *
+     * Se la politica lo consente il frame si disegna una prima volta con il
+     * differenziale armato. Se il driver lancia il partial il frame è finito; se
+     * rifiuta perchè il rosso è cambiato non ha toccato il pannello e il frame si
+     * disegna una seconda volta, in pieno. Se il driver non può armare (nessun
+     * riferimento) il primo disegno è già pieno e non se ne fa un secondo. Con
+     * DISPLAY_PARTIAL_REFRESH a 0 o con un pannello senza differenziale è
+     * sempre un solo disegno pieno.
+     */
+    inline void renderFrame()
+    {
+      using Epd = decltype(display.epd2);
+      display.setFullWindow();
+      /**
+       * Epoch di riferimento per il calendario: l'orologio di sistema quando è
+       * sincronizzato, così il calendario non dipende dalla riuscita del
+       * meteo; senza orologio l'ora dell'ultimo meteo, che è comunque reale;
+       * senza nessuno dei due 0, e Calendar::draw() mostra il riquadro vuoto.
+       */
+      const time_t calEpoch = Clock::valido() ? time(nullptr)
+                                              : (slots[0].valid ? slots[0].epoch : 0);
+
+      const uint32_t startMs = millis();
+      PartialRefresh::Reason decision = PartialRefresh::Reason::Disabled;
+      PartialRefresh::Reason outcome = PartialRefresh::Reason::Disabled;
+      bool armed = false;
+      bool partialDone = false;
+      uint16_t refusedMask = 0;
+
+      if constexpr (PartialRefresh::isAvailable<Epd>())
+      {
+        const Indoor::Sample& sensor = Indoor::sample();
+        const PartialRefresh::Inputs inputs = PartialRefresh::makeInputs(
+            partialState, startMs, true, PartialRefresh::chain(display.epd2),
+            Indoor::attivo(), sensor.valid, sensor.temperature);
+        decision = PartialRefresh::decide(PartialRefresh::DEFAULT_PARAMS, inputs);
+        if (decision == PartialRefresh::Reason::Partial)
+        {
+          // Va armato prima di firstPage(), che chiama setPaged() nel driver.
+          armed = PartialRefresh::beginFrame(display.epd2);
+          if (armed)
+          {
+            renderPages(calEpoch);
+            partialDone = PartialRefresh::endFrame(display.epd2);
+            // La mask si legge ora: il secondo disegno la ripulirebbe.
+            if (!partialDone) refusedMask = PartialRefresh::refusedPages(display.epd2);
+          }
+        }
+      }
+
+      // Se il partial non è partito serve un disegno pieno: dopo un rifiuto è il
+      // secondo, negli altri casi (politica contraria, nessun riferimento, driver
+      // senza differenziale) è l'unico, perchè un frame non armato non si disegna
+      // prima.
+      if (!partialDone) renderPages(calEpoch);
+
+      if constexpr (PartialRefresh::isAvailable<Epd>())
+      {
+        if (partialDone) outcome = PartialRefresh::Reason::Partial;
+        else if (decision == PartialRefresh::Reason::Partial)
+          outcome = (armed && refusedMask != 0) ? PartialRefresh::Reason::RedChanged
+                                                : PartialRefresh::Reason::NoReference;
+        else outcome = decision;
+
+        const uint32_t endMs = millis();
+        PartialRefresh::onFrameDone(partialState, endMs, decision, outcome, localDayKey());
+        const PartialRefresh::DayCounters& day = partialState.day;
+        if (partialDone)
+          LOG("display", "partial %u/%u in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+              (unsigned)PartialRefresh::chain(display.epd2), (unsigned)PARTIAL_CHAIN_MAX,
+              (unsigned long)(endMs - startMs), (unsigned)day.partial, (unsigned)day.full,
+              (unsigned)day.redRefused);
+        else if (outcome == PartialRefresh::Reason::RedChanged)
+          LOG("display", "pieno: %s (pagine 0x%02X) in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+              PartialRefresh::reasonText(outcome), (unsigned)refusedMask,
+              (unsigned long)(endMs - startMs), (unsigned)day.partial, (unsigned)day.full,
+              (unsigned)day.redRefused);
+        else
+          LOG("display", "pieno: %s in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+              PartialRefresh::reasonText(outcome), (unsigned long)(endMs - startMs),
+              (unsigned)day.partial, (unsigned)day.full, (unsigned)day.redRefused);
+      }
     }
 
     /**

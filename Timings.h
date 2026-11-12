@@ -250,6 +250,31 @@
  *  risveglio vero è il fronte del BUSY, il timer è solo una guardia. */
 #define DISPLAY_BUSY_SLEEP_SLICE_MS 5000UL
 
+/**
+ * Politica del refresh differenziale (PartialRefresh.h). Un frame è partial solo
+ * se il rosso non è cambiato; questi valori dicono quando farlo pieno comunque.
+ *
+ * PARTIAL_CHAIN_MAX: partial consecutivi al massimo, poi un pieno che azzera il
+ * grigio che il partial lascia dove toglie il nero. La letteratura dice uno
+ * ogni 5-10 passate; il tetto pesa poco sulla quota di partial e molto sul
+ * grigio, quindi si scende a 3-4 se a vista disturba.
+ *
+ * PARTIAL_MIN_TEMP_C e PARTIAL_TEMP_HYSTERESIS_C: sotto la soglia si fa un pieno,
+ * perchè la LUT del partial ha frame fissi e non compensa il freddo come la
+ * waveform dell'OTP. Non è un valore misurato: il BME680 non misura il vetro e il
+ * sensore interno del controller ha ±2 °C, quindi la soglia è prudente. Dopo un
+ * pieno per freddo il partial riparte solo sopra soglia più isteresi. Senza
+ * BME680 collegato la soglia non si applica e il partial si prova comunque.
+ *
+ * PARTIAL_MAX_GAP_MS: oltre questa distanza dall'ultimo frame il riferimento non
+ * si usa (notte, riavvio, finestra di manutenzione). Sono due cicli più il margine
+ * del poll, in millisecondi: un frame saltato non fa perdere il riferimento.
+ */
+#define PARTIAL_CHAIN_MAX 6
+#define PARTIAL_MIN_TEMP_C 18.0f
+#define PARTIAL_TEMP_HYSTERESIS_C 2.0f
+#define PARTIAL_MAX_GAP_MS (2UL * CYCLE_S * 1000UL + BSEC_MARGINE_POLL_MS)
+
 /** Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima
  *  richiesta HTTP servita è più recente di così, per non bloccare il web
  *  server mentre qualcuno usa le pagine. */
@@ -332,6 +357,13 @@ static_assert(WIFI_FAST_CONNECT_TIMEOUT_MS < WIFI_CONNECT_TIMEOUT_MS,
               "il tentativo veloce deve lasciare tempo al ripiego sulla scansione completa");
 static_assert(CINEMA_PREWARM_TIMEOUT_MS < 65535,
               "HTTPClient::setTimeout() prende un uint16_t");
+static_assert(PARTIAL_CHAIN_MAX >= 1 && PARTIAL_CHAIN_MAX <= 15,
+              "la catena di partial va da 1 a 15: la letteratura dice 5-10 e oltre il grigio si accumula");
+static_assert(PARTIAL_MIN_TEMP_C > 0.0f && PARTIAL_MIN_TEMP_C < 40.0f && PARTIAL_TEMP_HYSTERESIS_C >= 0.0f,
+              "soglia di temperatura del partial fuori da un intervallo sensato");
+static_assert(PARTIAL_MAX_GAP_MS > CYCLE_S * 1000UL + BSEC_MARGINE_POLL_MS,
+              "il gap massimo del partial deve superare un ciclo più il margine del poll: "
+              "CYCLE_S è in secondi e BSEC_MARGINE_POLL_MS in millisecondi, vanno convertiti");
 static_assert(PRIMO_FRAME_ATTESA_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 1000UL,
               "l'attesa del primo frame deve scadere dentro la finestra di manutenzione, "
               "che e' l'unico momento in cui il loop gira senza dormire");

@@ -122,6 +122,9 @@ namespace Layout
   inline constexpr int16_t TC_AXIS_PAD_BOT = 16;
   inline constexpr int16_t TC_TICK_H       = 2;
   inline constexpr int16_t TC_DOT_R        = 3;
+  /** Tratteggio della previsione, in passi della curva (1 px in x ciascuno): disegnati e saltati. */
+  inline constexpr int16_t TC_DASH_ON      = 4;
+  inline constexpr int16_t TC_DASH_OFF     = 3;
 
   // Scheda della sidebar: mese, griglia, filetto, eventi.
   inline constexpr int16_t CAL_X  = SIDEBAR_X;
