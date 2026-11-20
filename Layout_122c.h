@@ -10,8 +10,8 @@
  * Qui stanno solo il pannello (driver, pin, page, geometria dello schermo) e
  * le due manopole della dashboard; tutte le coordinate le deriva
  * Layout_common.h, incluso in coda. Rispetto al 9.7" la larghezza è la stessa
- * e i 96 px di altezza in più vanno al wallpaper (+35), alla terza riga della
- * Posta e a due righe di eventi in più nella sidebar.
+ * e l'altezza in più va al wallpaper, alla terza riga della Posta e a righe
+ * di eventi in più nella sidebar.
  */
 
 #include <Arduino.h>

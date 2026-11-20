@@ -597,7 +597,7 @@ class Frame:
 
         grid_x = L["CAL_X"] + L["CAL_PAD"]
         cell_w = (L["CAL_W"] - 2 * L["CAL_PAD"]) // 7
-        self.font("BODY")
+        self.font("SMALL")
         for index, weekday in enumerate(weekdays):
             self.draw_centered(weekday, grid_x + index * cell_w + cell_w // 2, L["CAL_GRID_Y"] + L["CAL_HDR_BASELINE"], BLACK)
         c.hline(L["CAL_X"] + L["BOX_PAD"], L["CAL_GRID_Y"] + L["CAL_HDR_H"], L["CAL_W"] - 2 * L["BOX_PAD"], BLACK)
@@ -614,8 +614,9 @@ class Frame:
             else:
                 self.draw_centered(str(day), cell_x + cell_w // 2, base, BLACK)
 
-        # Calendar::MAX_EVENTS_DISPLAYED: la riga più alta da almeno 45 px fra 7, 6 e 5.
-        rows = 7 if L["EVT_H"] // 7 >= 45 else 6 if L["EVT_H"] // 6 >= 45 else 5
+        # Calendar::MAX_EVENTS_DISPLAYED: il massimo fra 7, 6 e 5 con righe alte almeno MIN_EVT_ROW_H.
+        min_row_h = self.sources["min_event_row_h"]
+        rows = 7 if L["EVT_H"] // 7 >= min_row_h else 6 if L["EVT_H"] // 6 >= min_row_h else 5
         row_h = L["EVT_H"] // rows
         right_x = L["EVT_X"] + L["EVT_W"]
         for row in range(rows):
@@ -631,10 +632,12 @@ class Frame:
             color = RED if start.date() == NOW.date() else BLACK
             date = start.strftime("%d/%m") if start.year == NOW.year else start.strftime("%d/%m/%y")
             time = "tutto gg" if all_day else start.strftime("%H:%M")
+            self.font("SMALL")
             right_w = max(self.text_width(date), self.text_width(time))
-            self.draw_left(self.truncate(title, L["EVT_W"] - right_w - L["EVT_RIGHT_GAP"]), L["EVT_X"], title_base, color)
             self.draw_right(time, right_x, top + L["EVT_TIME_BASELINE"], color)
             self.draw_right(date, right_x, top + row_h - L["EVT_DATE_FROM_BOTTOM"], color)
+            self.font("BODY")
+            self.draw_left(self.truncate(title, L["EVT_W"] - right_w - L["EVT_RIGHT_GAP"]), L["EVT_X"], title_base, color)
 
     def draw_mail(self):
         """Mail::draw(): riquadro Posta a due colonne, busta nera accanto alle non lette."""
@@ -658,9 +661,11 @@ class Frame:
                 continue
             sender, subject, received, unread = SAMPLE_MAILS[index]
             time, date = received.strftime("%H:%M"), received.strftime("%d/%m")
+            self.font("SMALL")
             right_w = max(self.text_width(time), self.text_width(date))
             self.draw_right(time, right, line1, BLACK)
             self.draw_right(date, right, line2, BLACK)
+            self.font("BODY")
             max_w = right - left - right_w - L["MAIL_RIGHT_GAP"]
             reserve = L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"] if unread else 0
             sender = self.truncate(sender, max_w - reserve)
@@ -672,12 +677,15 @@ class Frame:
             self.draw_left(self.truncate(subject, max_w), left, line2, BLACK)
 
     def draw_banner(self):
-        """Weather::drawBanner(): riquadri, badge Tuya, Interno, Meteo e Previsioni."""
+        """Weather::drawBanner(): riquadri, orario accanto al titolo Meteo, badge Tuya, Interno,
+        Meteo e Previsioni."""
         L, c = self.L, self.c
         self.font("TITLE")
-        for x, w, title in ((L["INDOOR_X"], L["INDOOR_W"], "Interno"), (L["WEATHER_X"], L["WEATHER_W"], "Meteo"),
-                            (L["FORECAST_X"], L["FORECAST_W"], "Previsioni")):
-            self.fieldset(x, L["BANNER_Y"], w, L["BANNER_H"], title)
+        self.fieldset(L["INDOOR_X"], L["BANNER_Y"], L["INDOOR_W"], L["BANNER_H"], "Interno")
+        self.fieldset(L["WEATHER_X"], L["BANNER_Y"], L["WEATHER_W"], L["BANNER_H"], "Meteo")
+        self.draw_weather_title_time()
+        self.font("TITLE")
+        self.fieldset(L["FORECAST_X"], L["BANNER_Y"], L["FORECAST_W"], L["BANNER_H"], "Previsioni")
         if SAMPLE_TUYA_FAILED:
             self.font("SMALL")
             width = self.text_width("TUYA ERR")
@@ -691,6 +699,17 @@ class Frame:
         for index in range(3):
             self.draw_block(1 + index, L["FORECAST_X"] + index * L["FORECAST_BLOCK_W"], L["FORECAST_BLOCK_W"])
 
+    def draw_weather_title_time(self):
+        """Weather::drawWeatherTitleTime(): orario del corrente in FONT_BODY sulla baseline del titolo
+        Meteo, nella striscia bianca allungata. Va chiamata con FONT_TITLE impostato."""
+        L, c = self.L, self.c
+        baseline = L["BANNER_Y"] + self.cap_height() // 2
+        time_x = L["WEATHER_X"] + L["TITLE_INSET"] + self.text_width("Meteo") + L["TITLE_TIME_GAP"]
+        text = NOW.strftime("%H:%M")
+        self.font("BODY")
+        c.fill_rect(time_x - 4, L["BANNER_Y"] - 1, self.text_width(text) + 8, 3, WHITE)
+        self.draw_left(text, time_x, baseline, BLACK)
+
     def draw_indoor(self):
         """Weather::renderIndoorBox(): temperatura, umidità, qualità dell'aria e pressione."""
         L, c, icons = self.L, self.c, self.sources["small_icons"]
@@ -703,30 +722,41 @@ class Frame:
             return self.draw_left(text, text_x, baseline, BLACK)
 
         self.font("LARGE")
-        c.bitmap(icon_x, self.small_icon_y(L["INDOOR_ROW1_BASELINE"]), icons["TEMPERATURE"], size, size, BLACK)
+        # Le righe in più del termometro stanno sopra: il bulbo resta dove starebbe un'icona piccola.
+        thermometer_h = L["TEMPERATURE_ICON_H"]
+        c.bitmap(icon_x, self.small_icon_y(L["INDOOR_ROW1_BASELINE"]) - (thermometer_h - size),
+                 icons["TEMPERATURE"], size, thermometer_h, BLACK)
         self.temp_with_degree(f"{shown_temperature(SAMPLE_INDOOR['temp']):.1f}", text_x, L["INDOOR_ROW1_BASELINE"], BLACK, 2, 16, False)
         end = row("HUMIDITY", str(SAMPLE_INDOOR["hum"]), L["INDOOR_ROW2_BASELINE"])
         self.font("SMALL")
         self.draw_left("%", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW2_BASELINE"], BLACK)
-        self.font("BODY")
+        # L'IAQ ripiega su FONT_SMALL quando con il pedice supera il margine destro del riquadro.
+        accuracy = str(SAMPLE_INDOOR["acc"])
+        subscript_w = L["INDOOR_UNIT_GAP"] + self.text_width(accuracy)
         iaq = shown_iaq(SAMPLE_INDOOR["iaq"])
-        end = row("AIR_QUALITY", f"{iaq_label(iaq)} {iaq}", L["INDOOR_ROW3_BASELINE"])
+        text = f"{iaq_label(iaq)} {iaq}"
+        self.font("BODY")
+        if text_x + self.text_width(text) + subscript_w > L["INDOOR_X"] + L["INDOOR_W"] - L["BOX_PAD"]:
+            self.font("SMALL")
+        end = row("AIR_QUALITY", text, L["INDOOR_ROW3_BASELINE"])
         self.font("SMALL")
-        self.draw_left(str(SAMPLE_INDOOR["acc"]), end + L["INDOOR_UNIT_GAP"],
+        self.draw_left(accuracy, end + L["INDOOR_UNIT_GAP"],
                        L["INDOOR_ROW3_BASELINE"] + L["INDOOR_SUBSCRIPT_DROP"], BLACK)
-        self.font("LARGE")
+        self.font("BODY")
         end = row("PRESSURE", str(shown_pressure(SAMPLE_INDOOR["press"])), L["INDOOR_ROW4_BASELINE"])
         self.font("SMALL")
         self.draw_left("mBar", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW4_BASELINE"], BLACK)
 
     def draw_block(self, slot_index, block_x, block_w):
-        """Weather::renderBlock(): orario, icona, percepita e riga sotto (etichetta o pioggia)."""
+        """Weather::renderBlock(): orario, icona, percepita e riga sotto (etichetta o pioggia). Il
+        blocco corrente salta l'orario, che sta accanto al titolo Meteo."""
         L, c = self.L, self.c
         side, icons, conditions, fallback = self.sources["weather_icons"]
         slot = SAMPLE_SLOTS[slot_index]
         center_x = block_x + block_w // 2
-        self.font("BODY")
-        self.draw_centered((NOW + timedelta(hours=3 * slot_index)).strftime("%H:%M"), center_x, L["WX_TIME_BASELINE"], BLACK)
+        if slot_index != 0:
+            self.font("BODY")
+            self.draw_centered((NOW + timedelta(hours=3 * slot_index)).strftime("%H:%M"), center_x, L["WX_TIME_BASELINE"], BLACK)
 
         row = next((cond for cond in conditions if cond[0] <= slot["id"] <= cond[1]), None)
         black, red = icons[(row[3] if slot["night"] else row[2]) if row else fallback]
@@ -753,25 +783,25 @@ class Frame:
         self.draw_centered(text, center_x, L["WX_DESC_BASELINE"], BLACK)
 
     def draw_sun_column(self):
-        """Weather::renderSunColumn(): alba e tramonto, barra mattino/sera e grafico."""
+        """Weather::renderSunColumn(): grafico in cima, barra mattino/sera, alba e tramonto in fondo."""
         L, c, icons = self.L, self.c, self.sources["small_icons"]
         center_x = L["SUN_COL_CENTER_X"]
+        self.draw_temp_chart(L["TC_CENTER_X"], L["TC_TOP_Y"])
+        self.draw_temp_range_bar(center_x, L["TRB_BASELINE"])
         self.font("BODY")
-        for icon, moment, baseline in (("SUNRISE", SAMPLE_SUN[0], L["SUN_ROW1_BASELINE"]),
-                                       ("SUNSET", SAMPLE_SUN[1], L["SUN_ROW2_BASELINE"])):
+        for icon, moment, baseline in (("SUNRISE", SAMPLE_SUN[0], L["SUNRISE_BASELINE"]),
+                                       ("SUNSET", SAMPLE_SUN[1], L["SUNSET_BASELINE"])):
             text = moment.strftime("%H:%M")
             start = center_x - c_div(L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"] + self.text_width(text), 2)
             c.bitmap(start, self.small_icon_y(baseline), icons[icon], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], RED)
             self.draw_left(text, start + L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"], baseline, BLACK)
-        self.draw_temp_range_bar(center_x, L["SUN_ROW3_BASELINE"])
-        self.draw_temp_chart(center_x, L["TC_TOP_Y"])
 
     def draw_temp_range_bar(self, center_x, baseline):
         """Weather::drawTempRangeBar(): barra, triangolo sulla percepita e cifre di mattino e sera."""
         L, c = self.L, self.c
         morn, eve = SAMPLE_MORN_EVE
         current = SAMPLE_SLOTS[0]["feels"]
-        self.font("BODY")
+        self.font("SMALL")
         label_l, label_r = str(round_half_away(morn)), str(round_half_away(eve))
         x1_l, _, w_l, h_l = c.text_bounds(label_l)
         x1_r, _, w_r, h_r = c.text_bounds(label_r)
@@ -1043,6 +1073,7 @@ def generate(fonts_dir):
     sources = {
         "months": read_string_array(calendar, "MESI_IT["),
         "weekdays": read_string_array(calendar, "DOW_IT["),
+        "min_event_row_h": int(re.search(r"MIN_EVT_ROW_H\s*=\s*(\d+);", strip_c_comments(calendar)).group(1)),
         "small_icons": read_small_icons(),
         "weather_icons": read_weather_icons(),
         "wallpaper": read_wallpaper(),

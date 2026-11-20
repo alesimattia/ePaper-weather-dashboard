@@ -27,7 +27,7 @@
 
 // ---------------------------------------------------------------------------
 // Istanza del display (definita nello sketch .ino). Il tipo concreto del
-// pannello (Layout::Panel) e' scelto dal dispatcher Layout.h in base al
+// pannello (Layout::Panel) è scelto dal dispatcher Layout.h in base al
 // #define DISPLAY_VARIANT_* nello sketch.
 // ---------------------------------------------------------------------------
 extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
@@ -52,9 +52,9 @@ extern void drawTestBackground();
  * alimentano la riga precipitazioni dei blocchi, la colonna alba/tramonto e
  * la barra morn/eve.
  *
- * Il WiFi NON è gestito qui: runFetch() presuppone che sia gia' connesso
+ * Il WiFi NON è gestito qui: runFetch() presuppone che sia già connesso
  * (lo sketch .ino si occupa di wifiOn()/wifiOff() immediatamente intorno
- * alla chiamata). Cosi' la radio resta spenta fra un fetch e l'altro.
+ * alla chiamata). Così la radio resta spenta fra un fetch e l'altro.
  *
  * Credenziali WiFi e API key OWM sono in Env.h. Posizione GPS (LAT/LON)
  * pure in Env.h. Il fuso orario è gestito da Clock::begin()
@@ -161,7 +161,7 @@ namespace Weather
 
     /**
      * Esegue una GET HTTPS verso OpenWeatherMap e deserializza la risposta JSON
-     * applicando un DeserializationOption::Filter durante il parsing, cosi' che
+     * applicando un DeserializationOption::Filter durante il parsing, così che
      * dal JSON ricevuto vengano conservati in memoria solo i campi marcati
      * `true` nel documento filter. Utile con One Call 3.0 (payload ampio:
      * current + hourly*48 + daily*8). Ritorna true solo se HTTP 200 e parsing
@@ -232,7 +232,7 @@ namespace Weather
      * `current`, slots[1..3] da hourly[3], hourly[6], hourly[9] (step 3h per
      * mantenere la cadenza della precedente /forecast?cnt=3).
      *
-     * URL: exclude=minutely,alerts (scarta cio' che non serve; daily rimane
+     * URL: exclude=minutely,alerts (scarta ciò che non serve; daily rimane
      * perchè ne leggiamo morn/eve). Il Filter ArduinoJson sotto restringe
      * ulteriormente i campi conservati in memoria.
      *
@@ -245,7 +245,7 @@ namespace Weather
      * barra morn/eve.
      *
      * Ritorna true solo con corrente e previsioni entrambe aggiornate: una
-     * risposta parziale e' un fallimento, cosi' runFetch() non resetta i
+     * risposta parziale è un fallimento, così runFetch() non resetta i
      * timer e il giro successivo ritenta invece di lasciare in pagina dati
      * di epoche diverse.
      */
@@ -317,7 +317,7 @@ namespace Weather
       JsonArrayConst hourly = doc["hourly"].as<JsonArrayConst>();
       if (hourly.isNull())
       {
-        // Fallimento anche con la corrente valida: slots[0] e' gia' stato
+        // Fallimento anche con la corrente valida: slots[0] è già stato
         // sovrascritto ma slots[1..3] contengono ancora le previsioni del
         // fetch precedente, e dichiarare successo resetterebbe i timer
         // lasciando in pagina un misto di corrente fresca e previsioni
@@ -374,7 +374,7 @@ namespace Weather
      * cerchietto disegnato fra numero e "C" perchè i font FreeSans*pt7b
      * sono "7b" (ASCII 0x20..0x7E) e non contengono il glifo 0xB0.
      *
-     * @param numStr     parte numerica gia' formattata (es. "22", "22.5", "-10.5").
+     * @param numStr     parte numerica già formattata (es. "22", "22.5", "-10.5").
      * @param anchorX    se centered=true è il centro orizzontale del blocco
      *                   composito; se centered=false è il bordo sinistro
      *                   del numero.
@@ -440,8 +440,9 @@ namespace Weather
     /**
      * Disegna un blocco meteo del banner centrato sul proprio asse: orario,
      * icona, temperatura percepita e la riga sotto, etichetta o
-     * precipitazioni. Uno slot non valido non ha icona e mostra "--", perchè
-     * l'icona di ripiego sembrerebbe un dato.
+     * precipitazioni. Il blocco corrente salta l'orario, che drawBanner()
+     * scrive accanto al titolo "Meteo". Uno slot non valido non ha icona e
+     * mostra "--", perchè l'icona di ripiego sembrerebbe un dato.
      *
      * @param slotIdx  indice dello slot in `slots[]`: 0 = corrente, 1..3 = previsioni.
      * @param blockX   x (px) del margine sinistro del blocco.
@@ -453,10 +454,13 @@ namespace Weather
       const int16_t descMaxW = blockW - 2 * Layout::WX_DESC_SIDE_PAD;
       const WeatherSlot& s   = slots[slotIdx];
 
-      char hhmm[6];
-      formatHHMM(s.epoch, hhmm);
-      display.setFont(Layout::FONT_BODY);
-      Graphics::drawCentered(hhmm, centerX, Layout::WX_TIME_BASELINE, GxEPD_BLACK);
+      if (slotIdx != 0)
+      {
+        char hhmm[6];
+        formatHHMM(s.epoch, hhmm);
+        display.setFont(Layout::FONT_BODY);
+        Graphics::drawCentered(hhmm, centerX, Layout::WX_TIME_BASELINE, GxEPD_BLACK);
+      }
 
       /**
        * Icona centrata nello spazio ICON_SIZE con il lato delle bitmap
@@ -540,7 +544,7 @@ namespace Weather
     // @widget slider-temp-range
     //
     // Barra orizzontale con indicatore triangolo che mostra dove cade la
-    // temperatura percepita corrente fra morn ed eve (terza riga della
+    // temperatura percepita corrente fra morn ed eve (sotto il grafico della
     // colonna sole), più le due cifre agli estremi coi cerchietti dei gradi.
     //
     // Tutto nero e tutto dentro il paged loop, con le primitive di
@@ -553,7 +557,8 @@ namespace Weather
     /**
      * Disegna la barra temp-range completa: barra orizzontale, indicatore
      * triangolare sulla posizione della temperatura percepita corrente, e le
-     * cifre morn / eve agli estremi coi cerchietti dei gradi. Tutto in nero.
+     * cifre morn / eve agli estremi coi cerchietti dei gradi. Tutto in nero,
+     * con le cifre in FONT_SMALL: la barra prende la larghezza che resta.
      *
      * Va chiamata dentro il loop paged, da renderSunColumn.
      *
@@ -564,8 +569,8 @@ namespace Weather
      * il proprio bearing e il proprio cerchietto con la propria altezza.
      *
      * @param centerX    centro orizzontale (display) del punto medio della
-     *                   barra, allineato col centro della riga sunset sopra.
-     * @param baselineY  baseline delle cifre (= Layout::SUN_ROW3_BASELINE).
+     *                   barra, allineato col centro della colonna sole.
+     * @param baselineY  baseline delle cifre (= Layout::TRB_BASELINE).
      */
     inline void drawTempRangeBar(int16_t centerX, int16_t baselineY)
     {
@@ -575,7 +580,7 @@ namespace Weather
       const float cur  = slots[0].feelsLikeC;
       if (isnan(morn) || isnan(eve)) return;
 
-      display.setFont(Layout::FONT_BODY);
+      display.setFont(Layout::FONT_SMALL);
       char labL[8], labR[8];
       formatRoundedTemp(morn, labL, sizeof(labL));
       formatRoundedTemp(eve,  labR, sizeof(labR));
@@ -640,8 +645,8 @@ namespace Weather
     // =======================================================================
     // @widget storico-temperature
     //
-    // Mini-chart andamento temperatura percepita esterna sotto la slider
-    // temp-range (quarta riga della colonna sole).
+    // Mini-chart andamento temperatura percepita esterna in cima alla
+    // colonna sole, sopra la slider temp-range.
     //
     // Range temporale: da (now - 3h) a slots[3].epoch (~now + 9h).
     // Tratto passato pieno, tratto previsione tratteggiato, pallino "ora",
@@ -670,7 +675,7 @@ namespace Weather
     }
 
     /**
-     * Disegna il mini-chart temperatura sotto la slider temp-range.
+     * Disegna il mini-chart temperatura sopra la slider temp-range.
      * Larghezza Layout::TC_W centrata su `centerX`, altezza Layout::TC_H
      * a partire da `topY`. Curva, asse, tick, ore e pallino stanno a destra
      * della colonna Layout::TC_LABEL_W, dove si allineano a destra le
@@ -683,8 +688,8 @@ namespace Weather
     {
       if (!slots[0].valid || isnan(slots[0].feelsLikeC)) return;
 
-      /** Estremi temporali dell'asse X. e1 dal forecast piu' lontano valido,
-       *  fallback a now+9h se nessuno e' disponibile. */
+      /** Estremi temporali dell'asse X. e1 dal forecast più lontano valido,
+       *  fallback a now+9h se nessuno è disponibile. */
       const time_t now = slots[0].epoch;
       const time_t e0  = now - 3 * 3600;
       time_t e1 = now + 9 * 3600;
@@ -815,7 +820,7 @@ namespace Weather
       display.drawFastHLine(chartL, axisY, chartR - chartL, GxEPD_BLACK);
 
       /** 3 tick: inizio range (e0), mediana temporale (eMid), fine range (e1).
-       *  Il "now" (slots[0]) non e' un tick: e' indicato dal pallino sulla curva. */
+       *  Il "now" (slots[0]) non è un tick: è indicato dal pallino sulla curva. */
       const time_t  eMid = e0 + (e1 - e0) / 2;
       const int16_t xMid = mapX(eMid);
       display.drawFastVLine(chartL,     axisY + 1, Layout::TC_TICK_H, GxEPD_BLACK);
@@ -823,7 +828,7 @@ namespace Weather
       display.drawFastVLine(chartR - 1, axisY + 1, Layout::TC_TICK_H, GxEPD_BLACK);
 
       /** Ora intera sotto ogni tick, con clamp ai bordi del chart: in
-       *  FONT_SMALL "HH:MM" non entrerebbe nei 42 px fra un tick e l'altro. */
+       *  FONT_SMALL "HH:MM" non entrerebbe nello spazio fra un tick e l'altro. */
       display.setFont(Layout::FONT_SMALL);
       display.setTextColor(GxEPD_BLACK);
       const int16_t labY = axisY + Layout::TC_AXIS_PAD_BOT - 1;
@@ -865,10 +870,11 @@ namespace Weather
      * Disegna il contenuto del riquadro Interno, quattro righe con i dati del
      * sensore BME680: temperatura, umidità, qualità dell'aria con il
      * pedice di accuratezza e pressione, tutto in nero perchè i valori cambiano
-     * a ogni ciclo e un testo rosso impedirebbe il refresh parziale. Valori in
-     * FONT_LARGE, l'IAQ in
-     * FONT_BODY perchè "Mediocre 500" in FONT_LARGE non entra, unità e
-     * pedice in FONT_SMALL.
+     * a ogni ciclo e un testo rosso impedirebbe il refresh parziale.
+     * Temperatura e umidità in FONT_LARGE, pressione in FONT_BODY perchè
+     * secondaria, l'IAQ in FONT_BODY perchè "Mediocre 500" in FONT_LARGE non
+     * entra, e in FONT_SMALL quando anche in FONT_BODY sborderebbe dal
+     * riquadro con il suo pedice; unità e pedice in FONT_SMALL.
      */
     inline void renderIndoorBox()
     {
@@ -877,10 +883,14 @@ namespace Weather
       const int16_t textX     = iconX + Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP;
       char buf[24];
 
-      // Temperatura, con il "°" disegnato come cerchietto.
+      // Temperatura, con il "°" disegnato come cerchietto. Le righe in più del
+      // termometro stanno sopra, così il bulbo resta dove starebbe un'icona piccola.
       display.setFont(Layout::FONT_LARGE);
-      display.drawBitmap(iconX, Graphics::smallIconY(Layout::INDOOR_ROW1_BASELINE), INDOOR_ICON_TEMPERATURE,
-                         Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_BLACK);
+      display.drawBitmap(iconX,
+                         Graphics::smallIconY(Layout::INDOOR_ROW1_BASELINE)
+                           - (Layout::TEMPERATURE_ICON_H - Layout::SMALL_ICON_SIZE),
+                         INDOOR_ICON_TEMPERATURE, Layout::SMALL_ICON_SIZE, Layout::TEMPERATURE_ICON_H,
+                         GxEPD_BLACK);
       if (s.valid)
       {
         snprintf(buf, sizeof(buf), "%.1f", Indoor::shownTemperature(s.temperature));
@@ -902,26 +912,33 @@ namespace Weather
       }
 
       // Qualità dell'aria: etichetta e indice, con l'accuratezza come pedice.
+      // Se testo e pedice superano il margine destro del riquadro, il testo
+      // ripiega su FONT_SMALL come le righe dei blocchi meteo.
+      char accStr[4];
+      snprintf(accStr, sizeof(accStr), "%u", (unsigned)s.iaqAccuracy);
+      display.setFont(Layout::FONT_SMALL);
+      const int16_t subscriptW = Layout::INDOOR_UNIT_GAP + Graphics::textWidth(accStr);
       display.setFont(Layout::FONT_BODY);
       if (s.valid)
       {
         // Etichetta e numero dallo stesso valore arrotondato: restano coerenti.
         const uint16_t iaqShown = Indoor::shownIaq(s.iaq);
         snprintf(buf, sizeof(buf), "%s %u", Indoor::iaqLabel(iaqShown), (unsigned)iaqShown);
+        if (textX + Graphics::textWidth(buf) + subscriptW > Layout::INDOOR_X + Layout::INDOOR_W - Layout::BOX_PAD)
+          display.setFont(Layout::FONT_SMALL);
       }
       else strcpy(buf, "--");
       endX = drawIndoorRow(INDOOR_ICON_AIR_QUALITY, buf, iconX, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
       if (s.valid)
       {
-        char accStr[4];
-        snprintf(accStr, sizeof(accStr), "%u", (unsigned)s.iaqAccuracy);
         display.setFont(Layout::FONT_SMALL);
         Graphics::drawLeftAligned(accStr, endX + Layout::INDOOR_UNIT_GAP,
                                   Layout::INDOOR_ROW3_BASELINE + Layout::INDOOR_SUBSCRIPT_DROP, GxEPD_BLACK);
       }
 
-      // Pressione, con "mBar" in FONT_SMALL accanto al valore.
-      display.setFont(Layout::FONT_LARGE);
+      // Pressione in FONT_BODY, secondaria rispetto a temperatura e umidità,
+      // con "mBar" in FONT_SMALL accanto al valore.
+      display.setFont(Layout::FONT_BODY);
       if (s.valid) snprintf(buf, sizeof(buf), "%u", (unsigned)Indoor::shownPressure(s.pressure));
       else         strcpy(buf, "--");
       endX = drawIndoorRow(INDOOR_ICON_PRESSURE, buf, iconX, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
@@ -934,23 +951,43 @@ namespace Weather
 
     /**
      * Disegna la colonna sole nel riquadro Meteo, a destra del blocco
-     * corrente, centrata su Layout::SUN_COL_CENTER_X: alba e tramonto di oggi
-     * con le icone in rosso, la barra mattino/sera (@widget slider-temp-range)
-     * e sotto il grafico della temperatura percepita (@widget storico-temperature).
+     * corrente: in cima il grafico della temperatura percepita
+     * (@widget storico-temperature), sotto la barra mattino/sera
+     * (@widget slider-temp-range) e in fondo alba e tramonto di oggi con le
+     * icone in rosso, centrati su Layout::SUN_COL_CENTER_X.
      */
     inline void renderSunColumn()
     {
-      display.setFont(Layout::FONT_BODY);
+      drawTempChart(Layout::TC_CENTER_X, Layout::TC_TOP_Y);
+      drawTempRangeBar(Layout::SUN_COL_CENTER_X, Layout::TRB_BASELINE);
 
+      display.setFont(Layout::FONT_BODY);
       char hhmm[6];
       formatHHMM(sunriseEpoch, hhmm);
-      drawSunRow(INDOOR_ICON_SUNRISE, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUN_ROW1_BASELINE);
+      drawSunRow(INDOOR_ICON_SUNRISE, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUNRISE_BASELINE);
 
       formatHHMM(sunsetEpoch, hhmm);
-      drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUN_ROW2_BASELINE);
+      drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUNSET_BASELINE);
+    }
 
-      drawTempRangeBar(Layout::SUN_COL_CENTER_X, Layout::SUN_ROW3_BASELINE);
-      drawTempChart(Layout::SUN_COL_CENTER_X, Layout::TC_TOP_Y);
+    /** Titolo del riquadro Meteo, misurato per accodargli l'orario. */
+    inline constexpr const char* WEATHER_TITLE_TEXT = "Meteo";
+
+    /**
+     * Scrive l'orario del meteo corrente accanto al titolo del riquadro Meteo,
+     * sulla sua baseline e in FONT_BODY, allungando la striscia bianca che
+     * interrompe il bordo. Va chiamata con FONT_TITLE ancora impostato.
+     */
+    inline void drawWeatherTitleTime()
+    {
+      const int16_t baselineY = Layout::BANNER_Y + Graphics::capHeight() / 2;
+      const int16_t timeX     = Layout::WEATHER_X + Layout::TITLE_INSET
+                              + Graphics::textWidth(WEATHER_TITLE_TEXT) + Layout::TITLE_TIME_GAP;
+      char hhmm[6];
+      formatHHMM(slots[0].epoch, hhmm);
+      display.setFont(Layout::FONT_BODY);
+      display.fillRect(timeX - 4, Layout::BANNER_Y - 1, Graphics::textWidth(hhmm) + 8, 3, GxEPD_WHITE);
+      Graphics::drawLeftAligned(hhmm, timeX, baselineY, GxEPD_BLACK);
     }
 
     /**
@@ -963,8 +1000,8 @@ namespace Weather
     /**
      * Disegna il badge di guasto della telemetria Tuya in rosso, seduto sul
      * bordo inferiore del riquadro Interno e allineato al suo margine destro.
-     * Sul bordo superiore non entra: "Interno" in FONT_TITLE occupa 80 px e il
-     * badge in FONT_SMALL 100, contro i 168 utili del riquadro.
+     * Sul bordo superiore non entra, perchè accanto al titolo "Interno" in
+     * FONT_TITLE la larghezza utile del riquadro non basta anche per il badge.
      */
     inline void drawIndoorTuyaBadge()
     {
@@ -979,7 +1016,8 @@ namespace Weather
     /**
      * Disegna il banner meteo in fondo allo schermo: i riquadri Interno, Meteo
      * (blocco corrente e colonna sole) e Previsioni (tre blocchi affiancati),
-     * con i titoli sul bordo superiore. Il fondo è già bianco, perchè il
+     * con i titoli sul bordo superiore e l'orario del meteo corrente accanto
+     * al titolo Meteo. Il fondo è già bianco, perchè il
      * template azzera il buffer a ogni pagina e sopra il banner disegna solo il
      * wallpaper, tagliato all'altezza della sua area.
      */
@@ -989,7 +1027,9 @@ namespace Weather
       Graphics::drawFieldsetRect(Layout::INDOOR_X, Layout::BANNER_Y, Layout::INDOOR_W, Layout::BANNER_H,
                                  Layout::BOX_RADIUS, "Interno", Layout::TITLE_INSET, GxEPD_WHITE);
       Graphics::drawFieldsetRect(Layout::WEATHER_X, Layout::BANNER_Y, Layout::WEATHER_W, Layout::BANNER_H,
-                                 Layout::BOX_RADIUS, "Meteo", Layout::TITLE_INSET, GxEPD_WHITE);
+                                 Layout::BOX_RADIUS, WEATHER_TITLE_TEXT, Layout::TITLE_INSET, GxEPD_WHITE);
+      drawWeatherTitleTime();
+      display.setFont(Layout::FONT_TITLE);
       Graphics::drawFieldsetRect(Layout::FORECAST_X, Layout::BANNER_Y, Layout::FORECAST_W, Layout::BANNER_H,
                                  Layout::BOX_RADIUS, "Previsioni", Layout::TITLE_INSET, GxEPD_WHITE);
 
@@ -1242,7 +1282,7 @@ namespace Weather
     dailyFeelsLikeMorn = NAN;
     dailyFeelsLikeEve  = NAN;
 
-    // Reset storico del mini-chart temperatura (igienico: BSS gia' a 0).
+    // Reset storico del mini-chart temperatura (igienico: BSS già a 0).
     tcHistCount     = 0;
     tcHistHead      = 0;
     tcHistLastEpoch = 0;
@@ -1264,14 +1304,14 @@ namespace Weather
   }
 
   /**
-   * Scarica meteo corrente e previsioni. Presuppone il WiFi gia' connesso
-   * (WL_CONNECTED): non accende ne' spegne la radio, e non decide quando
-   * tocca a lui, che e' compito dello scheduler.
+   * Scarica meteo corrente e previsioni. Presuppone il WiFi già connesso
+   * (WL_CONNECTED): non accende nè spegne la radio, e non decide quando
+   * tocca a lui, che è compito dello scheduler.
    *
    * In caso di successo registra il campione corrente nello storico del
    * mini-chart temperatura. Il dato compare nel frame dello stesso ciclo, che
    * lo scheduler disegna dopo i fetch.
-   * @return true se la richiesta e' andata a buon fine.
+   * @return true se la richiesta è andata a buon fine.
    */
   inline bool runFetch()
   {

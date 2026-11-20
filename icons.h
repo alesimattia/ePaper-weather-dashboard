@@ -10,19 +10,21 @@
  * Icone piccole del riquadro Interno, della colonna alba/tramonto e della
  * busta delle mail non lette: bitmap 1bpp 20x20 in PROGMEM, MSB a sinistra,
  * nel formato di display.drawBitmap(). Le righe sono scritte a mano a 3 byte
- * l'una, quindi il lato resta Layout::SMALL_ICON_SIZE = 20. Le icone meteo
+ * l'una, quindi il lato resta Layout::SMALL_ICON_SIZE = 20; solo il
+ * termometro ha una riga in più, Layout::TEMPERATURE_ICON_H. Le icone meteo
  * stanno in icons_weather.h, generato da tools/weather_icons.py.
  *
  * Usato da: Weather.h e Mail.h.
  */
 
 /**
- * Icona temperatura (termometro 20x20, nero solido).
- * Stem verticale + bulbo tondo in basso.
+ * Icona temperatura, termometro nero pieno largo 20 e alto
+ * Layout::TEMPERATURE_ICON_H: stelo con la punta arrotondata e bulbo tondo
+ * in basso, nella stessa posizione delle altre icone piccole.
  */
-static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
-  0x01, 0xE0, 0x00,   // riga  0: .......XXXX......... (stem)
-  0x01, 0xE0, 0x00,   // riga  1
+static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::TEMPERATURE_ICON_H * 3] PROGMEM = {
+  0x00, 0xC0, 0x00,   // riga  0: ........XX.......... (punta)
+  0x01, 0xE0, 0x00,   // riga  1: .......XXXX......... (stelo)
   0x01, 0xE0, 0x00,   // riga  2
   0x01, 0xE0, 0x00,   // riga  3
   0x01, 0xE0, 0x00,   // riga  4
@@ -34,17 +36,18 @@ static const uint8_t INDOOR_ICON_TEMPERATURE[Layout::SMALL_ICON_SIZE * 3] PROGME
   0x01, 0xE0, 0x00,   // riga 10
   0x01, 0xE0, 0x00,   // riga 11
   0x01, 0xE0, 0x00,   // riga 12
-  0x03, 0xF0, 0x00,   // riga 13: ......XXXXXX........
-  0x07, 0xF8, 0x00,   // riga 14: .....XXXXXXXX....... (bulbo)
-  0x07, 0xF8, 0x00,   // riga 15
+  0x01, 0xE0, 0x00,   // riga 13
+  0x03, 0xF0, 0x00,   // riga 14: ......XXXXXX........
+  0x07, 0xF8, 0x00,   // riga 15: .....XXXXXXXX....... (bulbo)
   0x07, 0xF8, 0x00,   // riga 16
   0x07, 0xF8, 0x00,   // riga 17
-  0x03, 0xF0, 0x00,   // riga 18
-  0x00, 0xC0, 0x00    // riga 19: ........XX..........
+  0x07, 0xF8, 0x00,   // riga 18
+  0x03, 0xF0, 0x00,   // riga 19
+  0x00, 0xC0, 0x00    // riga 20: ........XX..........
 };
 
 /**
- * Icona umidita' (goccia d'acqua 20x20, piena nera).
+ * Icona umidità (goccia d'acqua 20x20, piena nera).
  * Forma a teardrop: punta in alto, rotonda in basso.
  */
 static const uint8_t INDOOR_ICON_HUMIDITY[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
@@ -100,8 +103,8 @@ static const uint8_t INDOOR_ICON_PRESSURE[Layout::SMALL_ICON_SIZE * 3] PROGMEM =
 };
 
 /**
- * Icona sunrise 20x20: 10 linee orizzontali progressivamente piu' larghe
- * verso l'alto. La riga piu' larga (20 px) è in cima, la piu' stretta
+ * Icona sunrise 20x20: 10 linee orizzontali progressivamente più larghe
+ * verso l'alto. La riga più larga (20 px) è in cima, la più stretta
  * (2 px) è in basso: rappresenta il sole che sorge emanando raggi
  * crescenti. Spaziatura verticale di 1 riga vuota fra linee.
  */
@@ -131,7 +134,7 @@ static const uint8_t INDOOR_ICON_SUNRISE[Layout::SMALL_ICON_SIZE * 3] PROGMEM = 
 /**
  * Icona sunset 20x20: semicerchio (sole) che "tocca" una linea orizzontale
  * di orizzonte immediatamente sotto la base. Il semicerchio è riempito e
- * copre la meta' superiore, la linea di orizzonte è una singola riga a
+ * copre la metà superiore, la linea di orizzonte è una singola riga a
  * larghezza massima che si appoggia contro la base del sole.
  */
 static const uint8_t INDOOR_ICON_SUNSET[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
@@ -158,7 +161,7 @@ static const uint8_t INDOOR_ICON_SUNSET[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
 };
 
 /**
- * Icona qualita' aria / IAQ (foglia 20x20, nero solido).
+ * Icona qualità aria / IAQ (foglia 20x20, nero solido).
  * Corpo simmetrico a goccia rovesciata (tip in alto) + gambo verticale
  * in basso che termina con una piccola piega.
  */
@@ -189,7 +192,7 @@ static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::SMALL_ICON_SIZE * 3] PROGME
  * Icona mail (busta schiacciata 20w x 14h visibili, contorno nero).
  * La cornice bitmap è 20x20 e il contenuto è un rettangolo 18w x 14h
  * centrato verticalmente (rows 3..16), con una patta a V che converge
- * piu' rapidamente (2 cols/row) all'apex su row 7. Usata da Mail.h come
+ * più rapidamente (2 cols/row) all'apex su row 7. Usata da Mail.h come
  * badge "unread" inline accanto al mittente di ogni mail non letta.
  */
 static const uint8_t INDOOR_ICON_MAIL[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {

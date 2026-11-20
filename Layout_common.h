@@ -59,6 +59,9 @@ namespace Layout
   /** Icone piccole di icons.h (Interno, alba e tramonto, busta). */
   inline constexpr int16_t SMALL_ICON_SIZE = 20;
   inline constexpr int16_t SMALL_ICON_GAP  = 6;
+  /** Il termometro è una riga più alto delle altre icone piccole: lo stelo si
+   *  allunga verso l'alto e il bulbo resta allineato alle icone sotto. */
+  inline constexpr int16_t TEMPERATURE_ICON_H = SMALL_ICON_SIZE + 1;
 
   // Colonne: wallpaper e Posta a sinistra, scheda calendario a destra.
   inline constexpr int16_t SIDEBAR_W = 320;
@@ -71,22 +74,28 @@ namespace Layout
   inline constexpr int16_t BANNER_Y = SCREEN_H - MARGIN - BANNER_H;
 
   inline constexpr int16_t INDOOR_X   = MARGIN;
-  inline constexpr int16_t INDOOR_W   = 200;
+  inline constexpr int16_t INDOOR_W   = 180;
   inline constexpr int16_t WEATHER_X  = INDOOR_X + INDOOR_W + GUTTER;
-  inline constexpr int16_t WEATHER_W  = 280;
+  inline constexpr int16_t WEATHER_W  = 300;
   inline constexpr int16_t FORECAST_X = WEATHER_X + WEATHER_W + GUTTER;
   inline constexpr int16_t FORECAST_W = SCREEN_W - MARGIN - FORECAST_X;
 
   /** Colonna alba/tramonto a destra del blocco meteo corrente, dentro Meteo. */
-  inline constexpr int16_t SUN_COL_W        = 118;
+  inline constexpr int16_t SUN_COL_W        = 140;
   inline constexpr int16_t SUN_COL_CENTER_X = WEATHER_X + WEATHER_W - SUN_COL_W / 2 - 4;
+  /** Il blocco corrente resta largo abbastanza da tenere in FONT_BODY le
+   *  etichette meteo frequenti come "Poco nuvoloso". */
   inline constexpr int16_t CURRENT_BLOCK_X  = WEATHER_X;
   inline constexpr int16_t CURRENT_BLOCK_W  = WEATHER_W - SUN_COL_W;
+  /** Distanza fra il titolo "Meteo" e l'orario del meteo corrente, che gli
+   *  sta accanto sul bordo in FONT_BODY. */
+  inline constexpr int16_t TITLE_TIME_GAP   = 8;
   inline constexpr int16_t FORECAST_BLOCK_W = FORECAST_W / 3;
   /** Margine laterale dell'etichetta di un blocco meteo dai suoi bordi. */
   inline constexpr int16_t WX_DESC_SIDE_PAD = 4;
 
-  /** Righe di un blocco meteo: orario, icona, temperatura, etichetta. */
+  /** Righe di un blocco meteo: orario, icona, temperatura, etichetta. Il
+   *  blocco corrente lascia vuota la riga dell'orario, che sta nel titolo. */
   inline constexpr int16_t WX_TIME_BASELINE = BANNER_Y + 32;
   inline constexpr int16_t WX_ICON_Y        = BANNER_Y + 38;
   inline constexpr int16_t WX_TEMP_BASELINE = BANNER_Y + 158;
@@ -103,21 +112,25 @@ namespace Layout
   /** Abbassamento del pedice di accuratezza IAQ rispetto alla baseline. */
   inline constexpr int16_t INDOOR_SUBSCRIPT_DROP = 5;
 
-  /** Colonna sole: alba, tramonto, barra mattino/sera e grafico. */
-  inline constexpr int16_t SUN_ROW1_BASELINE = BANNER_Y + 32;
-  inline constexpr int16_t SUN_ROW2_BASELINE = BANNER_Y + 58;
-  inline constexpr int16_t SUN_ROW3_BASELINE = BANNER_Y + 96;
+  /** Colonna sole dall'alto: grafico, barra mattino/sera, poi alba e tramonto
+   *  sulle baseline di temperatura ed etichetta dei blocchi meteo. */
+  inline constexpr int16_t TRB_BASELINE     = BANNER_Y + 128;
+  inline constexpr int16_t SUNRISE_BASELINE = WX_TEMP_BASELINE;
+  inline constexpr int16_t SUNSET_BASELINE  = WX_DESC_BASELINE;
 
   // @widget slider-temp-range: la cella della barra parte da baseline + offset.
-  inline constexpr int16_t TRB_W             = 112;
+  inline constexpr int16_t TRB_W             = 134;
   inline constexpr int16_t TRB_CELL_Y_OFFSET = -12;
 
-  // @widget storico-temperature: il grafico sta sotto la barra ed è largo come lei.
-  inline constexpr int16_t TC_W            = TRB_W;
-  inline constexpr int16_t TC_H            = 70;
-  inline constexpr int16_t TC_TOP_Y        = BANNER_Y + 108;
+  // @widget storico-temperature: il grafico sta in cima alla colonna sole.
+  inline constexpr int16_t TC_H            = 92;
+  inline constexpr int16_t TC_TOP_Y        = BANNER_Y + 8;
   /** Colonna delle etichette min/max: "-12" in FONT_SMALL misura 25 px. */
   inline constexpr int16_t TC_LABEL_W      = 28;
+  /** La curva è larga quanto la barra e allineata a lei, mentre la colonna
+   *  delle etichette sporge a sinistra, accanto all'icona del blocco corrente. */
+  inline constexpr int16_t TC_W            = TRB_W + TC_LABEL_W;
+  inline constexpr int16_t TC_CENTER_X     = SUN_COL_CENTER_X - TC_LABEL_W / 2;
   /** Spazio sotto l'asse per le etichette delle ore. */
   inline constexpr int16_t TC_AXIS_PAD_BOT = 16;
   inline constexpr int16_t TC_TICK_H       = 2;
@@ -131,13 +144,15 @@ namespace Layout
   inline constexpr int16_t CAL_Y  = TOP_BOX_Y;
   inline constexpr int16_t CAL_W  = SIDEBAR_W;
   inline constexpr int16_t CAL_H  = BANNER_Y - STACK_GAP - CAL_Y;
-  /** Margine orizzontale della griglia: 308 px divisi in 7 colonne da 44. */
+  /** Margine orizzontale della griglia, che divide in 7 colonne uguali la larghezza restante. */
   inline constexpr int16_t CAL_PAD          = 6;
-  /** Riga dei giorni della settimana, con la baseline misurata dalla sua cima. */
-  inline constexpr int16_t CAL_HDR_H        = 26;
-  inline constexpr int16_t CAL_HDR_BASELINE = 20;
+  /** Riga dei giorni della settimana, con la baseline misurata dalla sua cima.
+   *  Intestazione e numeri del mese sono in FONT_SMALL, così le celle basse
+   *  lasciano più spazio agli eventi. */
+  inline constexpr int16_t CAL_HDR_H        = 22;
+  inline constexpr int16_t CAL_HDR_BASELINE = 16;
   inline constexpr int16_t CAL_GRID_TOP_PAD = 3;
-  inline constexpr int16_t CAL_CELL_H       = 24;
+  inline constexpr int16_t CAL_CELL_H       = 20;
   /** Righe della griglia: un mese di 31 giorni che inizia di sabato occupa 6 settimane. */
   inline constexpr int16_t CAL_ROWS         = 6;
   inline constexpr int16_t CAL_CELL_R       = 4;
@@ -149,9 +164,10 @@ namespace Layout
   inline constexpr int16_t EVT_W = CAL_W - 2 * BOX_PAD;
   inline constexpr int16_t EVT_Y = CAL_DIVIDER_Y + 6;
   inline constexpr int16_t EVT_H = CAL_Y + CAL_H - BOX_BOTTOM_PAD - EVT_Y;
-  /** Baseline dentro una riga evento: orario dall'alto, data dal fondo, titolo dal centro. */
-  inline constexpr int16_t EVT_TIME_BASELINE        = 19;
-  inline constexpr int16_t EVT_DATE_FROM_BOTTOM     = 7;
+  /** Baseline dentro una riga evento: orario dall'alto, data dal fondo, titolo
+   *  dal centro. Orario e data sono in FONT_SMALL e restano staccati dai filetti. */
+  inline constexpr int16_t EVT_TIME_BASELINE        = 16;
+  inline constexpr int16_t EVT_DATE_FROM_BOTTOM     = 6;
   inline constexpr int16_t EVT_TITLE_FROM_MIDDLE    = 6;
   /** Spazio fra il titolo troncato e la colonna orario/data. */
   inline constexpr int16_t EVT_RIGHT_GAP            = 10;

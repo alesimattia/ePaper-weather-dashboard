@@ -252,7 +252,7 @@ ne deriva tutte le coordinate. I moduli applicativi (`Weather.h`, `Calendar.h`,
   `PLANE_SZ`, `PLANES`, `TOTAL_SZ` per il fetch HTTP. L'URL lo compone lo
   sketch da queste costanti.
 - **`Layout::BANNER_*`, `INDOOR_*`, `WEATHER_*`, `FORECAST_*`, `WX_*`, `SUN_*`,
-  `TRB_*`, `TC_*`**: riquadri, blocchi e baseline del banner meteo, espresse
+  `SUNRISE_*`, `SUNSET_*`, `TRB_*`, `TC_*`**: riquadri, blocchi e baseline del banner meteo, espresse
   come `BANNER_Y + offset`, che a sua volta deriva da `SCREEN_H`.
 - **`Layout::CAL_*` / `EVT_*` / `MAIL_*`**: scheda della sidebar, eventi e
   riquadro Posta.
@@ -278,7 +278,7 @@ deriva `Layout_common.h` dalle due manopole e da `SCREEN_H`:
 | `BANNER_Y`         | 466    | 562    | `SCREEN_H - MARGIN - BANNER_H`, banner alto 196 |
 | `MAIL_Y` / `MAIL_H`| 316 / 134 | 351 / 195 | righe da 57 e 58 px                       |
 | `CAL_H`            | 436    | 532    | scheda della sidebar fino a `BANNER_Y - STACK_GAP` |
-| `EVT_H`            | 231    | 327    | 5 righe da 46 px sul 097c, 7 sul 122c       |
+| `EVT_H`            | 259    | 355    | 6 righe da 43 px sul 097c, 7 da 50 sul 122c |
 | `CINEMA_PLANE_SZ`  | 22 330 | 25 025 | ceil(W/8)·H per ogni piano, con W = 610     |
 | `CINEMA_PLANES`    | 2      | 2      | black e red: nessuno dei due pannelli ha il giallo |
 | `CINEMA_TOTAL_SZ`  | 44 660 | 50 050 | piano × piani, ~44 KB / ~49 KB              |
@@ -293,9 +293,9 @@ Adafruit_GFX (`<Fonts/*.h>`).
 
 | Alias semantico        | Font GFX             | Dimensione  | Dove viene usato |
 |------------------------|----------------------|-------------|------------------|
-| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Oggetto delle mail; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; badge `TUYA ERR`; righe meteo che non entrano in 12 pt |
-| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Giorni del mese; righe eventi; mittente, orario e data delle mail; orario, etichetta e riga precipitazioni dei blocchi meteo; IAQ; cifre della barra temp-range; alba e tramonto |
-| `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Valori del riquadro Interno (temperatura, umidità, pressione) |
+| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Intestazione e numeri della griglia del mese; orario e data degli eventi; oggetto, orario e data delle mail; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; cifre della barra temp-range; badge `TUYA ERR`; righe meteo e IAQ che non entrano in 12 pt |
+| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Titolo degli eventi; mittente delle mail; orario, etichetta e riga precipitazioni dei blocchi meteo; orario del meteo corrente accanto al titolo Meteo; IAQ e pressione del riquadro Interno; alba e tramonto |
+| `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Temperatura e umidità del riquadro Interno |
 | `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo, in rosso |
 | `FONT_TITLE`           | `FreeSansBold12pt7b` | 12 pt bold  | Titoli dei riquadri sul bordo superiore, compreso il mese |
 
@@ -505,7 +505,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 - `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()`, `Mail::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia, eventi e posta e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
-  - [renderSunColumn()](Weather.h) per alba, tramonto, barra temp-range e mini-grafico;
+  - [renderSunColumn()](Weather.h) per mini-grafico, barra temp-range, alba e tramonto;
   - il badge `TUYA ERR` quando la telemetria è in errore.
 
 Gli stati intermedi dei fetch (`isWeatherIncomplete()`, `tuyaReady()`) servono solo a decidere se un task può partire.
@@ -538,13 +538,14 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
 - Il WiFi non è gestito qui: `runFetch()` presuppone STA già connessa
   (`wifiOn()`/`wifiOff()` sono dello scheduler).
 - **Banner**: 3 riquadri fieldset alti 196 px in fondo allo schermo (raggio
-  12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 200w
-  (T/RH/IAQ/pressione, badge `TUYA ERR` sul bordo inferiore), **Meteo** 280w (a
-  sinistra il blocco corrente con orario, icona 88w × 88h, temperatura percepita
-  in rosso ed etichetta; a destra la colonna sole con alba e tramonto, la
-  **barra temp-range** morn↔eve in nero con indicatore triangolare sulla
-  percepita corrente, e il mini-grafico della temperatura percepita da 3 ore fa
-  a ~9 ore avanti, tutto in nero: passato pieno e previsione tratteggiata), **Previsioni** 440w
+  12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 180w
+  (T/RH/IAQ/pressione, badge `TUYA ERR` sul bordo inferiore), **Meteo** 300w
+  (orario del meteo corrente accanto al titolo; a sinistra il blocco corrente
+  con icona 88w × 88h, temperatura percepita in rosso ed etichetta; a destra la
+  colonna sole con in cima il mini-grafico della temperatura percepita da 3 ore
+  fa a ~9 ore avanti, tutto in nero, passato pieno e previsione tratteggiata,
+  sotto la **barra temp-range** morn↔eve in nero con indicatore triangolare
+  sulla percepita corrente, e in fondo alba e tramonto), **Previsioni** 440w
   (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
 - **Gate del frame**: è dello scheduler, uguale per i due proprietari della
   radio. Il frame del ciclo parte solo a passo di rete concluso, cioè quando ogni
@@ -576,7 +577,7 @@ Widget del mese e lista eventi Outlook + Google.
 - **Scheda**: un fieldset 320w alto quanto la colonna destra, con il nome del
   mese in italiano sul bordo superiore. Griglia 7×6 **Lunedì-first**, cella
   odierna riempita di rosso con numero in bianco, poi un filetto e gli eventi.
-- **Lista eventi**: 5 righe sul 9.7", 7 sul 12.2". Cache separate per sorgente
+- **Lista eventi**: 6 righe sul 9.7", 7 sul 12.2". Cache separate per sorgente
   (`outlookEvents[5]` + `googleEvents[5]`); al rendering le due cache sono fuse,
   ordinate per `startUtc` e ritagliate agli eventi più vicini all'orario attuale.
   Gli eventi già terminati (`endUtc` passato) si saltano.
@@ -1071,9 +1072,9 @@ affiancate, 16 px fra zone impilate:
 |-------------------|---------------------------|---------------------------------------------------------|
 | Wallpaper         | `x=10..620, y=10..300`    | Background cinema scaricato via HTTP (610w × 290h BWR)  |
 | Posta             | `x=10..620, y=316..450`   | Riquadro con 2×2 = 4 mail su righe da 57 px. Per cella: email mittente + busta se non letta / oggetto / orario HH:MM / data dd/MM |
-| Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=207, poi 5 eventi da 46 px (Outlook + Google merged) |
-| Banner Interno    | `x=10..210,  y=466..662`  | 200w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
-| Banner Meteo      | `x=220..500, y=466..662`  | 280w × 196h, blocco corrente 162w + colonna sole 118w   |
+| Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=179, poi 6 eventi da 43 px (Outlook + Google merged) |
+| Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
+| Banner Meteo      | `x=200..500, y=466..662`  | 300w × 196h, blocco corrente 160w + colonna sole 140w, orario del corrente accanto al titolo |
 | Banner Previsioni | `x=510..950, y=466..662`  | 440w × 196h, 3 blocchi da 146w                          |
 
 Sul pannello SOLUM 12.2" (960w × 768h) X e larghezze sono identici. Il

@@ -69,15 +69,15 @@ namespace Calendar
 {
   /**
    * Numero di eventi mostrati: il massimo fra 7, 6 e 5 che lascia ogni riga
-   * alta almeno MIN_EVT_ROW_H. Sotto i 45 px l'orario in alto e la data in
-   * basso si avvicinano al titolo fino a toccarlo. Con la geometria attuale
-   * il 9.7" mostra 5 righe da 46 px e il 12.2" 7 righe da 46 px.
+   * alta almeno MIN_EVT_ROW_H. Sotto questa altezza l'orario in alto e la
+   * data in basso, in FONT_SMALL, si avvicinano fino a toccarsi quando
+   * l'orario è "tutto gg", che ha i discendenti.
    *
    * Le sorgenti (Outlook, Google) alimentano ciascuna una propria cache
-   * da MAX_EVENTS=5; la lista mostrata e' il merge ordinato dei piu'
+   * da MAX_EVENTS=5; la lista mostrata è il merge ordinato dei più
    * vicini all'orario corrente, ritagliato a MAX_EVENTS_DISPLAYED.
    */
-  static constexpr int16_t MIN_EVT_ROW_H = 45;
+  static constexpr int16_t MIN_EVT_ROW_H = 40;
   static constexpr uint8_t MAX_EVENTS_DISPLAYED =
       (Layout::EVT_H / 7 >= MIN_EVT_ROW_H) ? 7 :
       (Layout::EVT_H / 6 >= MIN_EVT_ROW_H) ? 6 : 5;
@@ -617,8 +617,8 @@ namespace Calendar
     /**
      * Disegna la griglia del mese corrente dentro la scheda: intestazione dei
      * giorni, filetto, sei righe di settimane da lunedì e cella odierna in
-     * rosso. Sei righe bastano sempre: un mese di 31 giorni che inizia di
-     * sabato occupa sei settimane.
+     * rosso, tutto in FONT_SMALL. Sei righe bastano sempre: un mese di 31
+     * giorni che inizia di sabato occupa sei settimane.
      */
     inline void drawMonthGrid(const struct tm& today)
     {
@@ -638,7 +638,7 @@ namespace Calendar
       const int16_t cellW = gridW / 7;
       const int16_t cellH = Layout::CAL_CELL_H;
 
-      display.setFont(Layout::FONT_BODY);
+      display.setFont(Layout::FONT_SMALL);
       if (Graphics::intersectsPage(Layout::CAL_GRID_Y, Layout::CAL_HDR_H))
       {
         for (int i = 0; i < 7; i++)
@@ -693,7 +693,8 @@ namespace Calendar
     // =======================================================================
 
     /**
-     * Disegna una singola riga di evento (o placeholder se `e.valid==false`).
+     * Disegna una singola riga di evento (o placeholder se `e.valid==false`):
+     * titolo in FONT_BODY, orario e data in FONT_SMALL nella colonna destra.
      * Colore: rosso se l'evento cade nella data odierna locale, nero altrimenti;
      * con todayY a 0, cioè senza ora valida, nessun evento risulta di oggi.
      */
@@ -738,20 +739,22 @@ namespace Calendar
       if (e.allDay) snprintf(timeBuf, sizeof(timeBuf), "tutto gg");
       else          strftime(timeBuf, sizeof(timeBuf), "%H:%M", &tmL);
 
+      // Orario in alto e data in basso nella colonna destra della riga,
+      // misurati nel loro font per lasciare al titolo tutto lo spazio restante.
+      display.setFont(Layout::FONT_SMALL);
       const int16_t dateW     = Graphics::textWidth(dateBuf);
       const int16_t timeW     = Graphics::textWidth(timeBuf);
       const int16_t rightColW = dateW > timeW ? dateW : timeW;
       const int16_t rightX    = Layout::EVT_X + Layout::EVT_W;
+      Graphics::drawRightAligned(timeBuf, rightX, rowTop + Layout::EVT_TIME_BASELINE, color);
+      Graphics::drawRightAligned(dateBuf, rightX, rowTop + EVT_ROW_H - Layout::EVT_DATE_FROM_BOTTOM, color);
 
       char titleBuf[sizeof(e.title)];
       strncpy(titleBuf, e.title, sizeof(titleBuf) - 1);
       titleBuf[sizeof(titleBuf) - 1] = 0;
+      display.setFont(Layout::FONT_BODY);
       Graphics::truncateToWidth(titleBuf, Layout::EVT_W - rightColW - Layout::EVT_RIGHT_GAP);
       Graphics::drawLeftAligned(titleBuf, Layout::EVT_X, titleBaseline, color);
-
-      // Orario in alto e data in basso nella colonna destra della riga.
-      Graphics::drawRightAligned(timeBuf, rightX, rowTop + Layout::EVT_TIME_BASELINE, color);
-      Graphics::drawRightAligned(dateBuf, rightX, rowTop + EVT_ROW_H - Layout::EVT_DATE_FROM_BOTTOM, color);
     }
 
     /** Vero se l'evento è già terminato. Senza ora valida nessun evento lo è:

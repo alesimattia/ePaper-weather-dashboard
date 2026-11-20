@@ -13,21 +13,27 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 **Colonne (uguali sui due pannelli, larghezza 960):**
 - sinistra x=10..620: wallpaper (`CINEMA_X/Y` = 10, `CINEMA_W` 610) e Posta (`MAIL_W` 610, due colonne da 305);
 - destra x=630..950: scheda calendario (`SIDEBAR_W` 320);
-- banner: Interno 200 + 10 + Meteo 280 + 10 + Previsioni 440 = 940 = 960 - 2 × 10. Meteo = blocco corrente 162 + colonna sole 118; Previsioni = 3 blocchi da 146.
+- banner: Interno 180 + 10 + Meteo 300 + 10 + Previsioni 440 = 940 = 960 - 2 × 10. Meteo = blocco corrente 160 + colonna sole 140; Previsioni = 3 blocchi da 146.
+
+**Riquadro Meteo.** L'orario del meteo corrente (`slots[0].epoch` = `current.dt`) sta sul bordo superiore accanto al titolo, in `FONT_BODY` sulla baseline del titolo, a `TITLE_TIME_GAP` da "Meteo" e dentro la striscia bianca allungata (`drawWeatherTitleTime()`); il blocco corrente lascia vuota la riga `WX_TIME_BASELINE`, che le Previsioni usano. Colonna sole dall'alto: grafico (`TC_TOP_Y` = `BANNER_Y` + 8, `TC_H` 92), barra temp-range (`TRB_BASELINE`), alba e tramonto su `SUNRISE_BASELINE` = `WX_TEMP_BASELINE` e `SUNSET_BASELINE` = `WX_DESC_BASELINE`. Il grafico è largo `TC_W` = `TRB_W` + `TC_LABEL_W` e centrato su `TC_CENTER_X` = `SUN_COL_CENTER_X` - `TC_LABEL_W` / 2: la curva coincide in x con la barra e la colonna delle etichette min/max sporge a sinistra nella zona libera accanto all'icona del blocco corrente (con "-12" restano 7 px dal riquadro dell'icona). `TC_W` va dichiarato dopo `TC_LABEL_W`.
+
+**Termometro dell'Interno.** È alto `TEMPERATURE_ICON_H` = `SMALL_ICON_SIZE` + 1 (stelo con punta arrotondata) e si disegna 1 px sopra `smallIconY()`, così il bulbo resta allineato alle altre icone; è l'unica icona di `icons.h` non quadrata.
 
 **Altezze (097c / 122c):**
 - banner alto 196, `BANNER_Y` = `SCREEN_H - MARGIN - 196` = 466 / 562; i suoi titoli sporgono di circa 10 px sopra il bordo;
 - wallpaper y=10..300 / 10..335;
 - Posta da `CINEMA_Y + CINEMA_H + 16` a `BANNER_Y - 16`: 316..450 / 351..546, righe da 57 / 58 px (contenuto da +14 a -6 del riquadro);
-- scheda calendario y=14..450 / 14..546: griglia del mese 6 righe da 24, filetto a y=207 su entrambi, eventi da y=213 alti 231 / 327.
+- scheda calendario y=14..450 / 14..546: intestazione dei giorni alta 22 e griglia del mese 6 righe da 20, filetto a y=179 su entrambi, eventi da y=185 alti 259 / 355.
 
 **Culling per pagina.** Il loop paged ha 8 pagine (fasce da 84 px sul 097c, 96 sul 122c; con `ROTATION 0` la pagina k è [k·PH, (k+1)·PH)). `Weather::renderFrame()` chiama `Calendar::draw()`, `Mail::draw()` e `drawBanner()` solo se il loro riquadro, allargato in alto di `STACK_GAP` per il titolo, tocca la fascia; dentro, intestazione e celle della griglia, righe evento (`EVT_ROW_H`) e celle posta (`MAIL_ROW_H`) si saltano fuori fascia. Il criterio regge perchè ogni testo, filetto, badge e icona sta dentro la propria riga o il proprio riquadro, discendenti compresi (misurato sui font): un elemento nuovo che sporge oltre il suo riquadro verrebbe tagliato. Non ci sono sbiancamenti: il buffer di ogni pagina lo azzera il template, e prima dei riquadri disegna solo il wallpaper, tagliato all'altezza `CINEMA_H`. `GxEPD2_3C` non ridefinisce `fillRect`, quindi Adafruit_GFX la esegue pixel per pixel attraverso `drawPixel` virtuale, e il clip sulla pagina avviene solo lì dentro: uno sbiancamento di un'area grande costa centinaia di migliaia di chiamate per pagina, e non se ne aggiungono. Il log `render` (LOGV) misura i ms di solo disegno per frame.
 
-**Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 45 px (`MIN_EVT_ROW_H` in `Calendar.h`): 5 righe da 46 sul 097c, 7 da 46 sul 122c. Una riga di Posta deve contenere i 41 px di mittente più oggetto. Entrambi i limiti, e le aree non positive, fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
+**Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 40 px (`MIN_EVT_ROW_H` in `Calendar.h`, che `tools/layout_preview.py` legge dal sorgente): 6 righe da 43 sul 097c, 7 da 50 sul 122c. La soglia viene da orario e data in 9pt: con `EVT_TIME_BASELINE` 16 e `EVT_DATE_FROM_BOTTOM` 6, sotto i 40 px i discendenti di "tutto gg" toccano la data sotto. Con un solo calendario configurato la cache di una sorgente ha 5 eventi, quindi la sesta riga del 097c resta "--" (vedi [[calendar_module]]). Una riga di Posta deve contenere i 41 px di mittente più oggetto. Entrambi i limiti, e le aree non positive, fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
+
+**Font per elemento, oltre ai ruoli di `Layout_common.h`.** Intestazione e numeri del mese, orario e data di eventi e mail, cifre della barra temp-range sono in `FONT_SMALL`; titolo degli eventi e mittente delle mail in `FONT_BODY`. Nell'Interno temperatura e umidità sono in `FONT_LARGE`, qualità dell'aria e pressione in `FONT_BODY`, per scelta dell'utente.
 
 **Font e larghezze che vincolano le zone** (misurate dalle glyph table GFX):
-- "Mediocre 500" (caso peggiore di `Indoor::iaqLabel`) misura 139 px in 12pt e 107 in 9pt: il riquadro Interno largo 200 lo tiene in 12pt con il pedice;
-- le etichette meteo di `icons_weather.h` e la riga "100% 12.5mm" entrano nei blocchi (154 px utili nel corrente, 138 nelle previsioni) in 12pt o in 9pt, quindi non vengono mai troncate;
+- "Mediocre 200" (caso peggiore reale di `Indoor::iaqLabel`) misura 139 px in 12pt e 107 in 9pt. Nell'Interno largo 180 la riga IAQ ripiega su `FONT_SMALL` quando testo + `INDOOR_UNIT_GAP` + pedice supera `INDOOR_X + INDOOR_W - BOX_PAD`: ripiegano "Discreta", "Pessima" e "Mediocre", le altre restano in 12pt. Senza ripiego l'Interno non scende sotto 200. Dopo il ripiego la riga più larga è la stessa IAQ in 9pt con il pedice, che fissa l'Interno ad almeno ~170; la pressione ("1014" in 12pt più "mBar" in 9pt) è più corta;
+- le etichette meteo di `icons_weather.h` e la riga "100% 12.5mm" entrano nei blocchi (152 px utili nel corrente, 138 nelle previsioni) in 12pt o in 9pt, quindi non vengono mai troncate. Il blocco corrente non scende sotto 160 perchè "Poco nuvoloso" (151 px) e le altre etichette frequenti fino a 151 px restino in 12pt; la più larga in 9pt è "Temporale forte" (125 px);
 - "-12" in 9pt misura 25 px: la colonna delle etichette del mini-grafico (`TC_LABEL_W`) è 28.
 
 **Cadenze accoppiate non documentate:**

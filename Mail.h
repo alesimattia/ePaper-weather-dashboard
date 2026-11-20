@@ -471,11 +471,12 @@ namespace Mail
   namespace detail
   {
     /**
-     * Disegna una mail nella sua cella: mittente e oggetto a sinistra, orario
-     * e data a destra, e la busta nera accanto al mittente quando la mail non
-     * è letta (nera e non rossa, perchè le non lette cambiano spesso e il rosso
-     * impedirebbe il refresh parziale). Le celle si riempiono per colonna, dall'alto in basso, così la
-     * lettura resta cronologica: la cache tiene in testa la mail più recente.
+     * Disegna una mail nella sua cella: mittente in FONT_BODY e oggetto in
+     * FONT_SMALL a sinistra, orario e data in FONT_SMALL a destra, e la busta
+     * nera accanto al mittente quando la mail non è letta (nera e non rossa,
+     * perchè le non lette cambiano spesso e il rosso impedirebbe il refresh
+     * parziale). Le celle si riempiono per colonna, dall'alto in basso, così
+     * la lettura resta cronologica: la cache tiene in testa la mail più recente.
      */
     inline void drawMailCell(int idx, const MailMessage& m)
     {
@@ -517,11 +518,13 @@ namespace Mail
         strcpy(timeBuf, "--");
         strcpy(dateBuf, "--");
       }
+      display.setFont(Layout::FONT_SMALL);
       const int16_t timeW     = Graphics::textWidth(timeBuf);
       const int16_t dateW     = Graphics::textWidth(dateBuf);
       const int16_t rightColW = timeW > dateW ? timeW : dateW;
       Graphics::drawRightAligned(timeBuf, right, line1, GxEPD_BLACK);
       Graphics::drawRightAligned(dateBuf, right, line2, GxEPD_BLACK);
+      display.setFont(Layout::FONT_BODY);
 
       const int16_t textMaxW    = right - left - rightColW - Layout::MAIL_RIGHT_GAP;
       const int16_t iconReserve = m.unread ? (Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP) : 0;
