@@ -22,10 +22,19 @@
  * esegue tre passi, sempre in quest'ordine:
  *
  *   1. sensore: l'interrogazione, così ciò che segue usa il campione nuovo;
- *   2. rete: una sola accensione della radio per i task dovuti in questo
- *      ciclo, nell'ordine della tabella, con gli onRoundStart() prima dei run();
+ *   2. rete: il passo di rete, vedi sotto, con i task dovuti in questo ciclo
+ *      nell'ordine della tabella e gli onRoundStart() prima dei run();
  *   3. frame: il ridisegno del pannello, che quindi mostra sempre i dati
  *      appena prodotti.
+ *
+ * Il passo di rete ha quattro fasi: Idle (decide se serve), Acquiring (radio
+ * connessa e ora assestata), Running (i task) e Done. Il frame parte solo a
+ * passo concluso: la regola è una sola per entrambi i proprietari della radio,
+ * e nessun budget è ancorato al boot ma all'evento che limita (l'inizio del
+ * passo, la STA vista). "Radio acquisita" vuol dire connessa e con l'ora valida
+ * oppure con il budget dell'ora scaduto, così l'insieme dei task dovuti si
+ * calcola con l'ora già nota e i task che la richiedono non restano fuori per
+ * aver gareggiato con SNTP.
  *
  * Le cadenze dei task sono multipli del ciclo e si contano in cicli dallo slot
  * precedente, mai in millisecondi, quindi non accumulano deriva: un task da 10
@@ -39,14 +48,14 @@
  *
  * Non possiede la radio nè il sensore nè il pannello: li usa attraverso gli
  * hook passati a begin(). Durante la finestra di manutenzione non accende nè
- * spegne la radio, la usa se la STA è connessa.
+ * spegne la radio: attende la STA e l'ora, poi la usa.
  */
 namespace Scheduler
 {
   /**
    * Esito di un task nel giro corrente.
    *
-   *   OK            eseguito, con dati nuovi da mostrare.
+   *   OK            eseguito con successo.
    *   FAILED        guasto imputabile al task: consuma un tentativo.
    *   SKIPPED       niente da fare, o guasto a monte (radio giù): lo stato
    *                 resta intatto e il tentativo non viene speso.
@@ -103,7 +112,9 @@ namespace Scheduler
       uint32_t slotCycle         = 0;      // ciclo in cui si è aperto l'ultimo slot chiuso
       uint32_t openCycle         = 0;      // ciclo in cui si è aperto lo slot in corso
       bool     attempted         = false;  // vero se attemptCycle è significativo
-      uint32_t attemptCycle      = 0;      // ciclo dell'ultimo tentativo: uno per ciclo
+      uint32_t attemptCycle      = 0;      // ciclo dell'ultimo tentativo
+      uint32_t attemptMs         = 0;      // millis() alla fine dell'ultimo tentativo
+      uint32_t lastDurationMs    = 0;      // durata dell'ultimo tentativo, per i fallimenti rapidi
       bool     retrying          = false;
       uint8_t  failedAttempts    = 0;      // falliti consecutivi dentro lo slot corrente
       int16_t  lastSlotDayOfYear = -1;     // tm_yday dell'ultimo slot giornaliero
@@ -133,7 +144,6 @@ namespace Scheduler
     inline uint8_t  taskCount = 0;
     inline Hooks    hooks     = {};
 
-    inline uint32_t bootMs           = 0;
     inline uint32_t cycle            = 0;      // numero del ciclo corrente, dal primo dopo il boot
     inline bool     cycleStarted     = false;
     inline uint32_t cycleStartMs     = 0;
@@ -141,6 +151,29 @@ namespace Scheduler
     inline int16_t  lastActiveDay    = -1;     // tm_yday dell'ultimo ciclo dentro la fascia
     inline bool     ranTaskThisRound = false;
     inline uint32_t radioRounds      = 0;
+
+    /** Fasi del passo di rete di un ciclo. */
+    enum class NetPhase : uint8_t { IDLE, ACQUIRING, RUNNING, DONE };
+
+    inline NetPhase netPhase       = NetPhase::IDLE;
+    inline bool     frameGate      = false;  // un passo di rete è concluso e il frame può partire
+    inline uint32_t acquireStartMs = 0;      // inizio dell'acquisizione della radio nel passo corrente
+    inline bool     staSeen        = false;  // la STA è stata vista connessa in questo passo
+    inline uint32_t staSeenMs      = 0;
+    inline bool     runStarted     = false;  // gli onRoundStart() del passo sono già partiti
+    inline uint8_t  passesDone     = 0;      // passate in cui almeno un task ha eseguito
+    inline bool     retryAnyFailure = false; // primo passo dopo il boot in manutenzione: ritenta ogni fallimento
+    inline bool     retryWaited    = false;  // la radio dello scheduler ha già atteso fra le due passate
+    inline bool     bootPhase      = true;   // finchè non si conclude il primo passo di rete
+
+    /** Passate massime di un passo di rete: la seconda ritenta i task falliti. */
+    inline constexpr uint8_t MAX_PASSES = 2;
+
+    // Diagnostica del primo frame: istanti assoluti di millis(), -1 se non ancora avvenuti.
+    inline int32_t     diagStaMs        = -1;
+    inline int32_t     diagClockMs      = -1;
+    inline const char* stepOutcome      = "in corso";
+    inline bool        firstFrameLogged = false;
 
     // Ultimo giro valutato durante la finestra di manutenzione, vedi runRound().
     inline bool     maintenanceRoundDone   = false;
@@ -173,6 +206,14 @@ namespace Scheduler
     }
 
     inline bool sensorIsActive() { return hooks.sensorActive && hooks.sensorActive(); }
+
+    /** Vero se il tentativo fallito di `s` si ritenta nella stessa accensione
+     *  della radio: è stato rapido, oppure è il primo passo dopo il boot in
+     *  manutenzione, dove il primo frame aspetta e si ritenta ogni fallimento. */
+    inline bool retryEligible(const Task::State& s)
+    {
+      return retryAnyFailure || s.lastDurationMs < FAST_FAILURE_MAX_MS;
+    }
 
     /** Numero di cicli fra due slot di un task periodico, almeno uno. */
     inline uint32_t cyclesPerSlot(const Task& t)
@@ -238,7 +279,8 @@ namespace Scheduler
 
   /**
    * Vero se il task va eseguito nel ciclo corrente: precondizioni vere, al più
-   * un tentativo per ciclo, e per un periodico i cicli della cadenza trascorsi
+   * un tentativo per ciclo (due se il primo è fallito in modo rapido, nella
+   * stessa accensione della radio), e per un periodico i cicli della cadenza trascorsi
    * dallo slot precedente. Un giornaliero chiede l'orologio, l'ora raggiunta,
    * un giorno diverso dall'ultimo slot e la distanza minima dal precedente,
    * contata in millisecondi perchè senza sensore di notte i cicli si fermano.
@@ -247,7 +289,14 @@ namespace Scheduler
   {
     const Task::State& s = t.state;
     if (t.preconditionsMet && !t.preconditionsMet()) return false;
-    if (s.attempted && s.attemptCycle == detail::cycle) return false;
+    if (s.attempted && s.attemptCycle == detail::cycle)
+    {
+      // Nello stesso ciclo solo il secondo tentativo di un task fallito in modo
+      // rapido, dopo SESSION_RETRY_MS e con la radio ancora accesa: gli altri
+      // aspettano il ciclo successivo.
+      return s.retrying && detail::passesDone < detail::MAX_PASSES && detail::retryEligible(s) &&
+             detail::hasElapsed(millis(), s.attemptMs, SESSION_RETRY_MS);
+    }
     if (s.retrying) return true;
     if (t.cadence == Cadence::PERIODIC)
       return s.neverRun || detail::cycle - s.slotCycle >= detail::cyclesPerSlot(t);
@@ -301,6 +350,8 @@ namespace Scheduler
       ++cycle;
       cycleStarted = true;
       cycleStartMs = millis();
+      netPhase = NetPhase::IDLE;
+      frameGate = false;
       if (sensorIsActive() && hooks.pollSensor) hooks.pollSensor();
       if (isInsideRadioHours())
       {
@@ -362,6 +413,8 @@ namespace Scheduler
     if (!t.state.retrying) t.state.openCycle = detail::cycle;
     t.state.attempted = true;
     t.state.attemptCycle = detail::cycle;
+    t.state.attemptMs = millis();
+    t.state.lastDurationMs = durationMs;
     t.state.outcomeCount++;
 
     const bool incomplete = (outcome != Outcome::FAILED) && t.hasIncompleteData && t.hasIncompleteData();
@@ -374,9 +427,11 @@ namespace Scheduler
     {
       t.state.failedAttempts++;
       t.state.retrying = true;
-      LOG("sched", "%s: %s in %lu ms (tentativo %u/%u), ritento al prossimo ciclo",
+      const bool inSession = detail::passesDone + 1 < detail::MAX_PASSES && detail::retryEligible(t.state);
+      LOG("sched", "%s: %s in %lu ms (tentativo %u/%u), ritento %s",
           t.tag, incomplete ? "dati incompleti" : "fallito",
-          (unsigned long)durationMs, (unsigned)t.state.failedAttempts, (unsigned)t.maxAttempts);
+          (unsigned long)durationMs, (unsigned)t.state.failedAttempts, (unsigned)t.maxAttempts,
+          inSession ? "nella stessa accensione" : "al prossimo ciclo");
       return;
     }
 
@@ -393,17 +448,23 @@ namespace Scheduler
 
   namespace detail
   {
-    /**
-     * Esegue i task dovuti con la radio già connessa: prima tutti gli
-     * onRoundStart(), poi i run() nell'ordine della tabella. Fra un task e
-     * l'altro serve la scadenza del sensore, che una fase di rete lunga
-     * potrebbe superare.
-     */
-    inline void runDueTasks(const struct tm* today)
+    /** Esegue gli onRoundStart() dei task dovuti, tutti prima di qualunque
+     *  run(): chi deve avviare qualcosa lo lascia maturare mentre gli altri girano. */
+    inline void startDueTasks(const struct tm* today)
     {
       for (uint8_t i = 0; i < taskCount; ++i)
         if (isDue(tasks[i], today) && tasks[i].onRoundStart) tasks[i].onRoundStart();
+    }
 
+    /**
+     * Esegue i run() dei task dovuti nell'ordine della tabella, con la radio già
+     * connessa. Fra un task e l'altro serve la scadenza del sensore, che una
+     * fase di rete lunga potrebbe superare.
+     * @return true se almeno un task ha eseguito davvero, cioè non è stato saltato.
+     */
+    inline bool runDueTasks(const struct tm* today)
+    {
+      bool ranAny = false;
       for (uint8_t i = 0; i < taskCount; ++i)
       {
         serviceSensorDeadline();
@@ -422,67 +483,216 @@ namespace Scheduler
         const uint32_t startMs = millis();
         const Outcome outcome = t.run();
         recordOutcome(t, outcome, millis() - startMs, today);
+        if (outcome != Outcome::SKIPPED) ranAny = true;
       }
+      return ranAny;
     }
 
     /**
-     * Passo di rete del giro. Con la radio dello scheduler la accende solo se
-     * un task è dovuto, rilegge l'ora dopo l'accensione (la prima sincronizzazione
-     * SNTP avviene dentro radioOn()) e rinuncia se l'ora vera cade fuori fascia.
-     * Nella finestra di manutenzione usa la STA se c'è, e al boot aspetta l'ora
-     * valida per al più PRIMO_FRAME_ATTESA_MS, così un boot notturno non fa
-     * fetch prima di sapere che è notte.
+     * Vero se un task ha fallito in questo ciclo in modo da meritare un secondo
+     * tentativo e il passo ha ancora una passata a disposizione per farlo con la
+     * radio già su. Con la STA caduta non c'è niente da ritentare: il passo si
+     * chiude.
      */
-    inline void runNetworkStep(RadioMode mode)
+    inline bool hasPendingRetry()
     {
-      struct tm buffer;
-      const struct tm* today = localNow(buffer);
-      if (!isInsideRadioHours() || !anyTaskDue(today)) return;
+      if (passesDone >= MAX_PASSES || WiFi.status() != WL_CONNECTED) return false;
+      for (uint8_t i = 0; i < taskCount; ++i)
+      {
+        const Task& t = tasks[i];
+        const Task::State& s = t.state;
+        if (s.retrying && s.attempted && s.attemptCycle == cycle && retryEligible(s) &&
+            (!t.preconditionsMet || t.preconditionsMet()))
+          return true;
+      }
+      return false;
+    }
 
-      if (mode == RadioMode::MANAGED_BY_MAINTENANCE)
-      {
-        if (WiFi.status() != WL_CONNECTED) return;
-        if (!Clock::valido() && !hasElapsed(millis(), bootMs, PRIMO_FRAME_ATTESA_MS)) return;
-        runDueTasks(localNow(buffer));
-        return;
-      }
+    /** Registra gli istanti in cui STA e ora diventano disponibili per la
+     *  riga diagnostica del primo frame. */
+    inline void noteBootDiagnostics(uint32_t nowMs)
+    {
+      if (diagStaMs < 0 && WiFi.status() == WL_CONNECTED) diagStaMs = (int32_t)nowMs;
+      if (diagClockMs < 0 && Clock::valido()) diagClockMs = (int32_t)nowMs;
+    }
 
-      ++radioRounds;
-      if (hooks.radioOn && hooks.radioOn())
-      {
-        // L'ora si rilegge qui: la prima sincronizzazione SNTP avviene dentro
-        // radioOn(), e senza un'ora valida un giornaliero non registrerebbe il
-        // giorno del proprio slot.
-        today = localNow(buffer);
-        if (isInsideRadioHours()) runDueTasks(today);
-        else LOG("sched", "l'ora sincronizzata cade fuori dalla fascia WiFi: nessun fetch");
-      }
-      else
-      {
-        LOG("sched", "connessione fallita: i task di rete riprovano al prossimo ciclo");
-      }
-      if (hooks.radioOff) hooks.radioOff();
+    /** Conclude il passo di rete: da qui il frame in sospeso può partire. */
+    inline void finishNetworkStep(const char* outcome)
+    {
+      netPhase = NetPhase::DONE;
+      frameGate = true;
+      stepOutcome = outcome;
+      bootPhase = false;
+      noteBootDiagnostics(millis());
+    }
+
+    /** Spegne la radio se è dello scheduler; nella finestra di manutenzione non si tocca. */
+    inline void releaseRadio(RadioMode mode)
+    {
+      if (mode == RadioMode::MANAGED_BY_SCHEDULER && hooks.radioOff) hooks.radioOff();
     }
 
     /**
-     * Vero quando il frame del ciclo può partire. Con la radio dello scheduler
-     * subito dopo il passo di rete, riuscito o no. Nella finestra di
-     * manutenzione i task possono aspettare la STA o l'ora: il frame li attende
-     * per al più PRIMO_FRAME_ATTESA_MS dall'inizio del ciclo, poi si disegna con
-     * quello che c'è, placeholder compresi.
+     * Fa avanzare il passo di rete del ciclo, a fasi, e conclude con
+     * finishNetworkStep(). Con la radio dello scheduler il passo si chiude
+     * dentro la stessa chiamata; nella finestra di manutenzione, dove la radio
+     * non si possiede e il loop deve servire il web server, ogni chiamata
+     * avanza quanto può e ritorna.
+     *
+     *   Idle       serve un passo solo dentro la fascia e se un task è dovuto.
+     *              Con l'ora non valida i task che non la richiedono, meteo e
+     *              mail, bastano ad accendere la radio dove SNTP si sincronizza.
+     *   Acquiring  radio dello scheduler: radioOn(), già bloccante su
+     *              connessione e SNTP. Manutenzione: la STA entro
+     *              RADIO_STA_ATTESA_MS dall'inizio, poi l'ora entro
+     *              TIME_SYNC_TIMEOUT_MS dalla STA vista.
+     *   Running    l'ora si rilegge qui, così i task che la richiedono non
+     *              restano fuori per aver gareggiato con SNTP, e se cade fuori
+     *              fascia un boot notturno non fa fetch. Poi i task, e una
+     *              seconda passata per i falliti rapidi, o per tutti i falliti
+     *              nel primo passo dopo il boot in manutenzione.
      */
-    inline bool frameReady(RadioMode mode)
+    inline void advanceNetworkStep(RadioMode mode)
     {
-      if (mode == RadioMode::MANAGED_BY_SCHEDULER) return true;
       struct tm buffer;
-      if (!anyTaskDue(localNow(buffer))) return true;
-      return hasElapsed(millis(), cycleStartMs, PRIMO_FRAME_ATTESA_MS);
+      for (;;)
+      {
+        const uint32_t nowMs = millis();
+        noteBootDiagnostics(nowMs);
+
+        switch (netPhase)
+        {
+          case NetPhase::IDLE:
+          {
+            if (!isInsideRadioHours())
+            {
+              finishNetworkStep("fuori fascia");
+              return;
+            }
+            if (!anyTaskDue(localNow(buffer)))
+            {
+              finishNetworkStep("nessun task dovuto");
+              return;
+            }
+            netPhase = NetPhase::ACQUIRING;
+            acquireStartMs = nowMs;
+            staSeen = false;
+            runStarted = false;
+            passesDone = 0;
+            retryWaited = false;
+            retryAnyFailure = (mode == RadioMode::MANAGED_BY_MAINTENANCE && bootPhase);
+            continue;
+          }
+
+          case NetPhase::ACQUIRING:
+          {
+            if (mode == RadioMode::MANAGED_BY_SCHEDULER)
+            {
+              ++radioRounds;
+              if (hooks.radioOn && hooks.radioOn())
+              {
+                netPhase = NetPhase::RUNNING;
+                continue;
+              }
+              LOG("sched", "connessione fallita: i task di rete riprovano al prossimo ciclo");
+              releaseRadio(mode);
+              finishNetworkStep("radio non connessa");
+              return;
+            }
+
+            if (WiFi.status() != WL_CONNECTED)
+            {
+              if (hasElapsed(nowMs, acquireStartMs, RADIO_STA_ATTESA_MS))
+              {
+                LOG("sched", "STA non connessa entro %lu s: frame senza dati di rete, i task riprovano al ciclo successivo",
+                    (unsigned long)(RADIO_STA_ATTESA_MS / 1000UL));
+                finishNetworkStep("STA non connessa");
+              }
+              return;
+            }
+            if (!staSeen)
+            {
+              staSeen = true;
+              staSeenMs = nowMs;
+            }
+            if (!Clock::valido())
+            {
+              if (!hasElapsed(nowMs, staSeenMs, TIME_SYNC_TIMEOUT_MS)) return;
+              LOG("sched", "ora non valida dopo %lu s dalla STA: i task che la richiedono restano al ciclo successivo",
+                  (unsigned long)(TIME_SYNC_TIMEOUT_MS / 1000UL));
+            }
+            netPhase = NetPhase::RUNNING;
+            continue;
+          }
+
+          case NetPhase::RUNNING:
+          {
+            const struct tm* today = localNow(buffer);
+            const uint32_t cycleAtStart = cycle;
+            if (!runStarted)
+            {
+              runStarted = true;
+              if (!isInsideRadioHours())
+              {
+                LOG("sched", "l'ora sincronizzata cade fuori dalla fascia WiFi: nessun fetch");
+                releaseRadio(mode);
+                finishNetworkStep("fuori fascia");
+                return;
+              }
+              startDueTasks(today);
+            }
+            if (runDueTasks(today)) ++passesDone;
+
+            // Un fetch lungo ha attraversato la scadenza del sensore: il ciclo
+            // nuovo riparte da Idle, e questo passo serve comunque il frame in
+            // sospeso, come prima del passo a fasi.
+            if (cycle != cycleAtStart)
+            {
+              releaseRadio(mode);
+              frameGate = true;
+              stepOutcome = "completo, ciclo attraversato";
+              bootPhase = false;
+              return;
+            }
+            if (hasPendingRetry())
+            {
+              // Nella finestra di manutenzione il giro riprende dopo
+              // SESSION_RETRY_MS senza bloccare il web server. Con la radio dello
+              // scheduler non si può uscire a metà passo, perchè il loop la
+              // spegnerebbe prima del light sleep: si attende qui, una volta sola.
+              if (mode == RadioMode::MANAGED_BY_MAINTENANCE) return;
+              if (!retryWaited)
+              {
+                retryWaited = true;
+                delay(SESSION_RETRY_MS);
+                continue;
+              }
+            }
+            releaseRadio(mode);
+            finishNetworkStep(passesDone > 0 ? "completo" : "nessun task eseguito");
+            return;
+          }
+
+          case NetPhase::DONE:
+            return;
+        }
+      }
+    }
+
+    /** Una riga con i tempi del primo frame dopo il boot: la prova, al boot
+     *  successivo, di dove sono finiti i secondi fra STA, ora e task. */
+    inline void logFirstFrame()
+    {
+      if (firstFrameLogged) return;
+      firstFrameLogged = true;
+      LOG("sched", "primo frame a %lu ms dal boot: STA vista a %ld ms, ora valida a %ld ms (-1 = mai), passo di rete %s, passate %u",
+          (unsigned long)millis(), (long)diagStaMs, (long)diagClockMs, stepOutcome, (unsigned)passesDone);
     }
   }
 
   /**
-   * Un giro: apre il ciclo se è scaduto, esegue il passo di rete e disegna il
-   * frame del ciclo quando è pronto.
+   * Un giro: apre il ciclo se è scaduto, fa avanzare il passo di rete e disegna
+   * il frame del ciclo quando il passo è concluso.
    *
    * Nella finestra di manutenzione il loop chiama questa funzione ogni pochi
    * millisecondi per servire il web server, e il giro si valuta al più ogni
@@ -504,7 +714,7 @@ namespace Scheduler
     }
 
     serviceSensorDeadline();
-    runNetworkStep(mode);
+    advanceNetworkStep(mode);
 
     if (!framePending) return;
     if (!isInsideRadioHours())
@@ -512,10 +722,12 @@ namespace Scheduler
       framePending = false;
       return;
     }
-    if (!frameReady(mode)) return;
+    if (!frameGate) return;
     serviceSensorDeadline();
     framePending = false;
+    frameGate = false;
     ranTaskThisRound = true;
+    logFirstFrame();
     if (hooks.drawFrame) hooks.drawFrame();
   }
 
@@ -593,12 +805,12 @@ namespace Scheduler
     detail::tasks = table;
     detail::taskCount = count;
     detail::hooks = hooks;
-    detail::bootMs = millis();
     detail::cycle = 0;
     detail::cycleStarted = false;
     detail::framePending = false;
     detail::lastActiveDay = -1;
     detail::maintenanceRoundDone = false;
+    detail::bootPhase = true;
     LOG("sched", "%u task di rete, ciclo di %u s, sensore %s", (unsigned)count, (unsigned)CYCLE_S,
         detail::sensorIsActive() ? "attivo" : "assente (ciclo interno)");
   }
@@ -618,10 +830,11 @@ namespace Scheduler
     out.printf("ciclo: %lu  prossimo evento: %s fra %lu s  giri radio: %lu\n",
                (unsigned long)detail::cycle, who, (unsigned long)(next / 1000UL),
                (unsigned long)detail::radioRounds);
-    out.printf("orologio: %s  fascia: %s  sensore: %s\n",
+    out.printf("orologio: %s  fascia: %s  sensore: %s  passo di rete: %s\n",
                Clock::valido() ? "sincronizzato" : "non sincronizzato",
                isInsideRadioHours() ? "aperta" : "chiusa",
-               detail::sensorIsActive() ? "attivo" : "assente");
+               detail::sensorIsActive() ? "attivo" : "assente",
+               detail::stepOutcome);
     // Separa le righe generali dalla tabella dei task, larga quanto la tabella.
     out.printf("-----------------------------------------------------------\n");
     out.printf("%-8s %-11s %-10s %7s %7s %7s\n", "task", "cadenza", "prossimo", "esiti", "ok", "falliti");

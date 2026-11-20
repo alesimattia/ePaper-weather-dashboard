@@ -897,10 +897,9 @@ void setup()
 /**
  * Ciclo principale a due rami.
  *
- * Durante la finestra OTA (OTA_WINDOW_MIN dal boot) la radio resta accesa in
- * AP_STA: il web server processa eventuali upload firmware,
- * e in parallelo non appena la STA è WL_CONNECTED,
- * Weather::runFetch() scarica il meteo.
+ * Durante la finestra di manutenzione la radio è della finestra, in STA o in
+ * AP_STA: il web server processa gli upload e lo scheduler, a STA connessa e
+ * ora assestata, esegue i task dovuti e disegna il primo frame.
  * Niente light sleep qui, altrimenti il WebServer non risponderebbe.
  *
  * Scaduta la finestra, Maintenance::chiudi() spegne AP e WiFi e il ciclo torna al

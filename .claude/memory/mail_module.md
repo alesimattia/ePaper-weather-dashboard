@@ -53,8 +53,9 @@ disegna in una griglia sotto al wallpaper cinema con `Mail::draw()`. API:
 
 7. **Cadenza, ritenti e backoff non sono di Mail.** Il modulo espone solo
    `runFetch()`, che presuppone la radio già connessa. Il freno all'hammering
-   del token endpoint nella finestra di manutenzione è `FETCH_RITENTO_MS` dello
-   scheduler (vedi [[fetch_flag_ordering]]). Con credenziali al placeholder il
+   del token endpoint nella finestra di manutenzione è la regola dello scheduler: un
+   tentativo per ciclo, più un secondo nella stessa accensione solo per un
+   fallimento rapido (vedi [[fetch_flag_ordering]]). Con credenziali al placeholder il
    task è sospeso dal suo `preconditionsMet()` (vedi [[scheduler_task_table]]).
 
 8. **Testo.** Mittente e oggetto passano da `Graphics::foldToFontCharset()`

@@ -1159,6 +1159,21 @@ namespace Weather
       dailyFeelsLikeEve  = NAN;
       LOG("OWM", "meteo vecchio di %ld min: mostro i placeholder", (long)(age / 60));
     }
+
+    /**
+     * Una riga al primo frame dopo il boot con la validità dei quattro slot e
+     * l'età della corrente, per sapere cosa mostrava quel frame.
+     */
+    inline void logFirstFrameSlots()
+    {
+      static bool logged = false;
+      if (logged) return;
+      logged = true;
+      const long ageS = (slots[0].valid && Clock::valido()) ? (long)(time(nullptr) - slots[0].epoch) : -1L;
+      LOG("OWM", "primo frame: slot validi %u%u%u%u, età della corrente %ld s (-1 = non disponibile)",
+          (unsigned)slots[0].valid, (unsigned)slots[1].valid, (unsigned)slots[2].valid,
+          (unsigned)slots[3].valid, ageS);
+    }
   } // namespace detail
 
   /**
@@ -1249,6 +1264,7 @@ namespace Weather
   {
     using namespace detail;
     expireIfStale();
+    logFirstFrameSlots();
     renderFrame();
   }
 }

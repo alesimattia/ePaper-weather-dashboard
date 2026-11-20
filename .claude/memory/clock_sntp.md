@@ -67,7 +67,10 @@ appartiene a nessuno dei due.
   chiama `Clock::sincronizza(0)`, **non bloccante**, nei due punti in cui
   constata di avere la rete di casa con un indirizzo: `apri(Stato::ServerSta)`
   e la risalita della STA nel ramo `ServerAp`. Bloccare lì congelerebbe web
-  server e access point durante un possibile upload.
+  server e access point durante un possibile upload. L'attesa dell'ora la fa il
+  passo di rete dello scheduler, a ogni giro: dalla STA vista aspetta l'ora al
+  più `TIME_SYNC_TIMEOUT_MS`, lo stesso budget del ramo bloccante, poi esegue
+  anche senza ora i soli task che non la richiedono.
 
 ## Perchè proprio così
 
@@ -76,11 +79,13 @@ appartiene a nessuno dei due.
   Europe/Rome e rompendo tutti i `localtime_r()` di Weather, Calendar e Mail.
   Passando `CLOCK_POSIX_TZ` a `configTzTime` si riapplica in modo idempotente
   lo stesso fuso di `begin()`.
-- **Timeout mai sotto i 10 s** (default 12000): il core è compilato con
-  `CONFIG_LWIP_SNTP_STARTUP_DELAY=y` e `MAXIMUM_STARTUP_DELAY=5000`, quindi la
-  prima richiesta parte con un ritardo casuale fra 0 e 5 s. Un timeout di 5 s
-  scade prima che il pacchetto sia uscito, dando un fallimento sistematico e
-  inspiegabile.
+- **Budget mai sotto i 10 s** (`TIME_SYNC_TIMEOUT_MS` 20000, l'unico per i due
+  agganci): il core è compilato con `CONFIG_LWIP_SNTP_STARTUP_DELAY=y` e
+  `MAXIMUM_STARTUP_DELAY=5000`, quindi la prima richiesta parte con un ritardo
+  casuale fra 0 e 5 s, e se il primo pacchetto si perde il ritento di lwIP cade
+  dopo circa 15 s. Un budget di 5 s scade prima che il pacchetto sia uscito,
+  dando un fallimento sistematico e inspiegabile; 20 s coprono il ritardo e un
+  ritento.
 - **`sincronizza()` si paga una volta per boot**: `millis()` è
   `esp_timer_get_time()/1000` e `time()` poggia sulla stessa base più l'offset
   di `settimeofday`; quella base avanza in light sleep. La deriva la correggono
@@ -103,7 +108,7 @@ appartiene a nessuno dei due.
 
 - `Scheduler::isInsideRadioHours()` e la cadenza `DAILY` del cinema: senza orologio
   la fascia è **fail-open** e la giornaliera resta sospesa, perchè
-  `closeSlot()` non registra `tm_yday` con un'ora finta; nel ciclo normale `runRound()` rilegge l'ora dopo `wifiOn()`, così il giro in cui avviene la prima sincronizzazione registra già il giorno.
+  `closeSlot()` non registra `tm_yday` con un'ora finta; il passo di rete rilegge l'ora quando entra in Running, dopo l'acquisizione della radio, così il giro in cui avviene la prima sincronizzazione registra già il giorno.
 - **I due task calendario**, che lo dichiarano con `preconditionsMet` = `isClockValidForCalendars()`,
   cioè `Clock::valido()`. `Calendar::detail::nowUtcEpoch()` ritorna 0 a
   orologio non valido e le query filtrerebbero da `1970-01-01T00:00:00Z`:
@@ -122,10 +127,12 @@ ad aprire la finestra radio, dove la sincronizzazione avviene. È la stessa
 ragione per cui `isInsideRadioHours()` è fail-open.
 
 **Modo di fallire su una rete che blocca NTP**: l'orologio non diventa mai
-valido, i due calendari non girano affatto e la lista eventi resta ai
-placeholder. È voluto: è meglio di appuntamenti vecchi presentati come
-prossimi. Meteo, mail e cinema restano operativi, perchè `wifiOn()` ignora il
-ritorno della sincronizzazione e la connessione riesce lo stesso.
+valido, i due calendari, Tuya, il percorso e il cinema giornaliero non girano
+affatto e la lista eventi resta ai placeholder. È voluto: è meglio di
+appuntamenti vecchi presentati come prossimi. Meteo e mail restano operativi,
+perchè `wifiOn()` ignora il ritorno della sincronizzazione e la connessione
+riesce lo stesso. Il costo è il budget `TIME_SYNC_TIMEOUT_MS` speso a ogni
+passo di rete, perchè il backoff `TIME_SYNC_RETRY_MS` (60 s) è minore del ciclo.
 
 ## Perchè il salto d'ora non rompe niente
 

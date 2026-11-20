@@ -12,7 +12,7 @@
 
 extern uint32_t g_msFinto;
 inline uint32_t millis() { return g_msFinto; }
-inline void delay(uint32_t) {}
+inline void delay(uint32_t ms) { g_msFinto += ms; }
 
 /**
  * API del core ESP32 che Clock.h usa e che su host non esiste. Non fa niente:

@@ -85,12 +85,20 @@ sensore, radio, task, radio giù, frame; cadenza da 10 minuti un ciclo sì e uno
 no per venti cicli con fetch di durata variabile; sleep fino alla scadenza
 esatta del sensore, senza pavimento; fase di rete più lunga del ciclo con il
 sensore interrogato fra un task e l'altro entro il 6,25%; ritento al ciclo
-successivo con lo slot ancorato e soglia dopo due fallimenti; connessione
+successivo di un fallimento lento, con lo slot ancorato e soglia dopo due
+fallimenti; ritento nella stessa accensione di un fallimento rapido, con la radio
+dello scheduler (attesa unica, due fallimenti, `maxAttempts` a 0, radio caduta, un
+rapido e un lento nello stesso passo); connessione
 fallita senza tentativi spesi; notte con il solo sensore, e senza sensore sonno
 fino all'apertura della fascia anche attraverso l'ora legale; primo ciclo del
 mattino che rende dovuti i periodici ma non il giornaliero; giornaliero che
 aspetta l'ora valida senza doppioni; finestra di manutenzione con STA in
-ritardo, STA mai salita, ora da sincronizzare e client attivo; ciclo interno
+ritardo, STA mai salita o caduta, ora da sincronizzare e client attivo; primo
+frame dopo l'accensione, con l'ora che arriva dopo i 15 s dal boot, mai, o in
+piena notte, e con i task che dipendono dall'ora nello stesso passo prima del
+frame; ritento nella finestra di manutenzione dopo `SESSION_RETRY_MS`, con doppio
+fallimento, `maxAttempts` a 0, STA caduta, e nel primo passo dopo il boot anche per
+un timeout mentre dai passi successivi solo per un fallimento rapido; ciclo interno
 senza sensore; rollover di `millis()` a 49,7 giorni; fascia fail-open con
 orologio non sincronizzato; cambio dell'ora legale.
 

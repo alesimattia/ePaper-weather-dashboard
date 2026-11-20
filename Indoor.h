@@ -16,9 +16,9 @@
  * Lo stato del calibratore viene salvato su NVS (namespace "bme680") ogni 6 ore 
  * e ripristinato all'avvio, azzerando il warm-up dopo un power cycle.
  *
- * Lo scheduler chiama refresh() alla scadenza di msUntilNextPoll() e, quando
- * la funzione ritorna true (nuovo campione o campione scaduto), il .ino chiede
- * il ridisegno del display, solo dentro la fascia WiFi.
+ * Lo scheduler chiama refresh() alla scadenza di msUntilNextPoll(), come primo
+ * passo di ogni ciclo. Il frame del ciclo legge poi da sè il campione, solo
+ * dentro la fascia WiFi.
  */
 #define BME680_I2C_ADDR   0x77
 #define BME680_SDA_PIN    21
@@ -482,8 +482,8 @@ namespace Indoor
    * Interroga il sensore. Lo scheduler la chiama alla scadenza data da
    * msUntilNextPoll().
    * @return true quando il dato da mostrare è cambiato: un nuovo campione,
-   *         oppure il campione precedente appena scaduto. Il chiamante usa il
-   *         valore per chiedere il ridisegno.
+   *         oppure il campione precedente appena scaduto. Lo scheduler non lo
+   *         usa: il frame si disegna a ogni ciclo e legge da sè il campione.
    */
   inline bool refresh()
   {

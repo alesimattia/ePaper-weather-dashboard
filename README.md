@@ -537,10 +537,13 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   percepita corrente, e il mini-grafico della temperatura percepita da 3 ore fa
   a ~9 ore avanti, tutto in nero: passato pieno e previsione tratteggiata), **Previsioni** 440w
   (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
-- **Gate del frame nella finestra di manutenzione**: è dello scheduler. Il frame
-  del ciclo aspetta i fetch dovuti, che attendono la STA e l'ora valida, per al
-  più `PRIMO_FRAME_ATTESA_MS` dall'inizio del ciclo. Il primo frame arriva
-  sempre, con i dati veri se ci sono e con i placeholder `--` altrimenti.
+- **Gate del frame**: è dello scheduler, uguale per i due proprietari della
+  radio. Il frame del ciclo parte solo a passo di rete concluso, cioè quando ogni
+  task dovuto ha avuto il suo esito; nella finestra di manutenzione il passo
+  attende la STA (al più `RADIO_STA_ATTESA_MS` dall'inizio) e l'ora valida (al più
+  `TIME_SYNC_TIMEOUT_MS` dalla STA vista), nessun timer è ancorato al boot. Il
+  primo frame arriva sempre, con i dati veri se ci sono e con i placeholder `--`
+  altrimenti.
 
 ### Calendar (`Calendar.h`)
 
@@ -983,8 +986,11 @@ sempre in quest'ordine:
 
 Le cadenze sono multipli del ciclo e si contano in cicli dallo slot precedente, mai in
 millisecondi, quindi non scivolano: meteo, mail e calendari a 10 minuti cadono un frame
-sì e uno no, percorso e Tuya a ogni frame. Un fetch fallito ritenta al ciclo
-successivo; lo slot resta ancorato al ciclo in cui si è aperto. Il primo ciclo di ogni
+sì e uno no, percorso e Tuya a ogni frame. Un fetch fallito in modo rapido (meno di
+`FAST_FAILURE_MAX_MS`) ritenta una volta nella stessa accensione della radio, dopo
+`SESSION_RETRY_MS` e prima del frame; uno lento, un timeout, ritenta al ciclo successivo
+(nel primo passo dopo il boot ritentano entrambi); lo slot resta ancorato al ciclo in
+cui si è aperto. Il primo ciclo di ogni
 giornata dentro la fascia rende dovuti tutti i periodici, così il primo frame del
 mattino ha dati nuovi.
 
@@ -1131,9 +1137,12 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | Costante | Valore | Effetto |
 |---|---|---|
 | `CYCLE_S` / `CYCLE_MIN` | `300` s / `5` min | Ciclo dello scheduler, pari al periodo ULP di BSEC: sensore, fetch dovuti, frame. Passo delle cadenze dei task. |
-| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena; un tentativo per ciclo, quindi il ritento cade al ciclo successivo. `0` in tabella significa politica pessimista: lo slot è speso prima ancora di eseguire. |
+| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena; il secondo tentativo si fa nella stessa accensione della radio, dopo `SESSION_RETRY_MS`, se il primo è fallito in meno di `FAST_FAILURE_MAX_MS`; un fallimento lento, cioè un timeout, ritenta al ciclo successivo. `0` in tabella significa un solo tentativo per slot, comunque vada. |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` ms | Attesa massima di `WL_CONNECTED` in `wifiOn()`. Una connessione fallita riprova al ciclo successivo. |
-| `PRIMO_FRAME_ATTESA_MS` | `15000` ms | Nella finestra di manutenzione: attesa massima dei fetch (STA e ora valida) prima che il frame del ciclo parta comunque, con i placeholder `--`, e prima che i fetch partano senza l'ora. |
+| `RADIO_STA_ATTESA_MS` | `15000` ms | Nella finestra di manutenzione: attesa massima della STA dall'inizio del passo di rete, poi il frame parte con i placeholder `--` e i task restano al ciclo successivo. Deriva da `MAINT_STA_TIMEOUT_S`, così scade insieme al ripiego sull'AP. |
+| `TIME_SYNC_TIMEOUT_MS` | `20000` ms | Unico budget dell'ora, per entrambi i proprietari della radio: `wifiOn()` lo spende dopo la connessione, lo scheduler lo aspetta dalla STA vista nella finestra di manutenzione. Poi partono i task che non richiedono l'ora. Non sotto i 10 s: lwIP ritarda la prima richiesta SNTP fino a 5 s. |
+| `SESSION_RETRY_MS` | `5000` ms | Distanza fra un tentativo fallito e il secondo nella stessa accensione della radio e nello stesso ciclo, prima del frame. Con la radio dello scheduler l'attesa è un `delay()` unico; nella finestra di manutenzione il giro riprende senza bloccare il web server. |
+| `FAST_FAILURE_MAX_MS` | `10000` ms | Durata massima di un tentativo fallito perchè lo si ritenti nella stessa accensione: sotto è un guasto di connessione o di protocollo (il tetto della connessione TCP è 5 s), sopra è un timeout che, ripetuto subito, raddoppierebbe il tempo di radio e di norma fallirebbe uguale. Nel primo passo dopo il boot, nella finestra di manutenzione, la soglia non vale e si ritenta ogni fallimento. |
 | `RENDER_SPINDOWN_MS` | 15 min | Inattività dopo la quale render.com spegne un servizio free: il ping di sveglia parte solo se l'ultima risposta del server è più vecchia. |
 | `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
 | `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. |
@@ -1169,21 +1178,34 @@ valida, cioè dopo un riavvio software di notte, la finestra non si apre.
 
 ```
 t=0       setup(): Timings da NVS, moduli, STA in risalita (non bloccante)
-t<=15s    STA connessa      -> server sulla rete di casa + mDNS
+t<=15s    STA connessa      -> server sulla rete di casa + mDNS + SNTP avviato (non bloccante)
           oppure timeout    -> access point di emergenza (la STA continua a tentare)
 ogni giro Maintenance::servi()                 // macchina a stati + handleClient()
           Scheduler::runRound(MANAGED_BY_MAINTENANCE), al più uno al secondo
             sensore (al primo giro: ciclo 1)
-            rete, se la STA è su e l'ora è valida (o dopo 15 s): meteo -> mail -> google -> outlook -> tuya -> cinema
-            frame, appena i fetch sono fatti (o dopo 15 s)
+            passo di rete, a fasi:
+              Idle        serve solo se un task è dovuto, dentro la fascia WiFi
+              Acquiring   STA connessa (al più RADIO_STA_ATTESA_MS dall'inizio del passo),
+                          poi ora valida (al più TIME_SYNC_TIMEOUT_MS dalla STA vista)
+              Running     meteo -> mail -> google -> outlook -> tuya -> route -> cinema,
+                          con l'ora già nota; un task fallito ritenta una volta dopo
+                          SESSION_RETRY_MS nella stessa accensione, se il fallimento è
+                          stato rapido (in questo primo passo, qualunque fallimento)
+              Done        concluso: il frame può partire
+            frame, solo a passo concluso
 ```
 
-Il **primo frame** non aspetta che i dati siano validi: parte appena i fetch del primo
-ciclo sono fatti, anche falliti, oppure dopo `PRIMO_FRAME_ATTESA_MS`. Con la rete a
-posto arriva in pochi secondi con i dati veri; senza rete arriva comunque entro 15 s
-con i placeholder `--` e il wallpaper PROGMEM. Un boot di notte con l'ora da
-sincronizzare apre la finestra, aspetta l'ora e, scoperta la notte, non fa nè fetch nè
-frame.
+Il **primo frame** non parte per un timer dal boot: aspetta che il passo di rete sia
+concluso, cioè che ogni task dovuto abbia avuto il suo esito. Dopo un'interruzione di
+alimentazione l'ora è persa e va riottenuta via SNTP, e i task che la richiedono
+(calendari, Tuya, percorso, cinema giornaliero) devono girare prima del frame, non dopo.
+Con la rete a posto arriva con i dati veri; senza STA entro `RADIO_STA_ATTESA_MS` arriva
+con i placeholder `--` e il wallpaper PROGMEM e i task restano al ciclo successivo; se
+l'ora non arriva entro `TIME_SYNC_TIMEOUT_MS` dalla STA vista partono i task che non la
+richiedono. Un boot di notte con l'ora da sincronizzare apre la finestra, aspetta l'ora
+e, scoperta la notte, non fa nè fetch nè frame. Il log scrive al primo frame i tempi di
+STA e ora, l'esito del passo e la validità degli slot meteo (con `LOG_LEVEL` 3 anche
+heap e stack dopo ogni giro con lavoro).
 
 ### Flusso a regime — finestra chiusa
 
@@ -1214,7 +1236,7 @@ Ogni esito è loggato con durata e prossimo slot:
 
 ```
 [sched] meteo: ok in 1240 ms, prossimo fra 2 cicli
-[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento al prossimo ciclo
+[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento nella stessa accensione
 [sched] outlook: saltato, radio non connessa (slot intatto)
 [sched] cinema: ok in 4230 ms, prossimo domani dalle 07
 [sched] sleep 276030 ms (prossimo: sensore)
@@ -1224,7 +1246,8 @@ Ogni esito è loggato con durata e prossimo slot:
 
 | Tipo di fallimento | Comportamento | Quando si riprova |
 |---|---|---|
-| Qualunque fetch, 1° fallimento | Cache del modulo invariata, log con durata e tentativo | Al ciclo successivo |
+| Qualunque fetch, 1° fallimento rapido (meno di `FAST_FAILURE_MAX_MS`) | Cache del modulo invariata, log con durata e tentativo | Dopo `SESSION_RETRY_MS`, nella stessa accensione della radio e prima del frame, se la STA è ancora su |
+| Qualunque fetch, 1° fallimento lento (un timeout) | Cache del modulo invariata, log con durata e tentativo | Al ciclo successivo |
 | Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task, contata dal ciclo in cui lo slot si era aperto |
 | Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame del ciclo lo mostra | Al ciclo successivo |
 | Radio caduta a giro iniziato | Esito `saltato`: **lo slot resta intatto e il tentativo non viene speso**, perchè è un guasto a monte | Al primo giro con la radio su |
@@ -1250,8 +1273,8 @@ cinema).
 
 Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 
-- **Boot → primo refresh con WiFi e tutti i fetch OK**: i fetch HTTP in sequenza più un refresh pieno.
-- **Boot → primo refresh senza WiFi**: `PRIMO_FRAME_ATTESA_MS` (15 s) + un refresh pieno, ~39 s.
+- **Boot → primo refresh con WiFi e tutti i fetch OK**: l'attesa di STA e ora (dopo un'interruzione di alimentazione l'ora va riottenuta via SNTP, fino a `TIME_SYNC_TIMEOUT_MS`), i fetch HTTP in sequenza e un refresh pieno. Un fetch fallito si ritenta dopo `SESSION_RETRY_MS`, prima del frame: nel primo passo sempre, a regime solo se è stato rapido.
+- **Boot → primo refresh senza WiFi**: `RADIO_STA_ATTESA_MS` (15 s) + un refresh pieno, ~39 s.
 - **Boot → primo refresh con cinema in cold start di render.com**: fino a `CINEMA_HTTP_TIMEOUT_MS` (45 s) + un refresh pieno se il pre-warm non è bastato. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
 - **Refresh successivo a regime**: un partial da ~1,3 s (639 ms più rampe e power off) quando il piano rosso è invariato, altrimenti un refresh pieno da ~24 s; uno per ciclo. La quota di partial dipende da quanto spesso cambia il rosso (temperature e icone meteo, eventi di oggi, percorso al mattino): una simulazione dà il 65-77%, ma è un modello e non una misura. Il log riporta a ogni frame l'esito e i contatori del giorno.
 - **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo della fascia percorso, sorgente cambiata da `/route`, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo.

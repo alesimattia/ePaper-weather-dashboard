@@ -17,7 +17,7 @@ Tutti i tempi stanno in `Timings.h`; il **quando** lo decide `Scheduler.h`, mai 
 | Display | 24 s (refresh pieno) o ~0,64 s più rampe (partial, solo se il rosso è invariato, vedi [[differential_refresh]]); un frame per ciclo in fascia | hard fisico |
 | Radio | 2-15 s per accensione | costo |
 
-**Sleep:** `Scheduler::sleepUntilNextEvent()` dorme esattamente fino alla scadenza del sensore (~301 s dall'ultimo poll), senza pavimento, perchè BSEC tollera solo il 6,25% di scarto; senza sensore fino al ciclo interno successivo o, di notte, all'apertura della fascia. `SLEEP_MAX_S` (24 h) è solo una guardia. Un pavimento di 30 s con tetto a 300 s portava il poll a ~330 s, il 10% di ritardo, con due risvegli per ciclo.
+**Sleep:** `Scheduler::sleepUntilNextEvent()` dorme esattamente fino alla scadenza del sensore (~301 s dall'ultimo poll), senza pavimento, perchè BSEC tollera solo il 6,25% di scarto; senza sensore fino al ciclo interno successivo o, di notte, all'apertura della fascia. `SLEEP_MAX_S` (24 h) è solo una guardia. Un pavimento di 30 s con tetto a 300 s porterebbe il poll a ~330 s, il 10% di ritardo, con due risvegli per ciclo.
 
 ## Tetti di tempo delle connessioni
 

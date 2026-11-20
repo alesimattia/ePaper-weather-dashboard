@@ -1002,8 +1002,8 @@ namespace Tuya
    * due casi c'è un guasto da mostrare. Una radio caduta non lo alza: in quel
    * caso lo scheduler non chiama nemmeno runPublish().
    *
-   * Usato da: Weather.h (drawBanner) per il titolo del riquadro Indoor, e dal
-   * onOutcome() del task nel .ino per decidere se serve un ridisegno.
+   * Usato da: Weather.h (drawBanner) per il titolo del riquadro Indoor; il
+   * frame del ciclo legge da sè lo stato, nessun task chiede un ridisegno.
    */
   inline bool hasFailed()
   {

@@ -4,8 +4,8 @@ description: regole esplicite dell'utente sul modulo Mail.h (best-effort, orderi
 type: feedback
 ---
 
-Vincoli di design dichiarati dall'utente durante l'implementazione di
-`Mail.h` (2026-05). Da rispettare se si refactora o si estende il modulo.
+Vincoli di design dichiarati dall'utente per `Mail.h`. Da rispettare se si
+refactora o si estende il modulo.
 
 **1. `Mail::runFetch()` deve essere best-effort, MAI bloccante per gli altri fetch.**
 
@@ -15,8 +15,9 @@ senza interruzioni". Le mail sono utili ma secondarie rispetto a
 meteo/calendario.
 
 **How to apply:** il return value di `Mail::runFetch()` serve SOLO allo
-scheduler per decidere il ridisegno (`onOutcome` = `markDirtyOnOk`) e per contare il
-tentativo. NON propagare l'errore al flusso: il runner non interrompe mai
+scheduler, attraverso l'adattatore del `.ino` (`OK` o `FAILED`), per contare il
+tentativo e decidere il ritento; il frame si disegna a ogni ciclo e non dipende
+dall'esito. NON propagare l'errore al flusso: il runner non interrompe mai
 il ciclo, quindi la garanzia è strutturale e non va reintrodotta a mano.
 `Mail::runFetch()` può fallire silenziosamente: la cache resta com'era e i
 task successivi partono comunque.
@@ -28,8 +29,8 @@ filetti fra le righe, font come gli eventi calendario, testo nero e busta
 dell'utente: le non lette cambiano spesso e una busta rossa che si sposta impedirebbe il refresh
 parziale ([[differential_refresh]]). **How to apply:** non rimettere il rosso sulla busta senza
 riconsiderare il partial; la forma della busta basta a segnalare la mail non letta. `Mail::draw()` viene chiamato dentro
-`Weather::renderFrame()` paged loop e lo scheduler chiede il ridisegno dopo
-un `Mail::runFetch()` riuscito.
+`Weather::renderFrame()` paged loop e legge da sè la cache: nessun task chiede
+il ridisegno.
 
 **2. Mail va eseguito SUBITO PRIMA di Outlook + Google Calendar.**
 
@@ -61,8 +62,8 @@ di refresh del calendario". Anche se i due default coincidono (10), il knob deve
 **How to apply:** sono due campi distinti di `Timings::Valori`
 (`mail_min` e `goog_min`), entrambi regolabili da `/config`. Non
 collassarli in un alias, anche se sembra DRY: l'indipendenza concettuale è
-un requisito, e con lo sleep dinamico è anche realizzabile davvero (prima
-il tick fisso da 5 min rendeva impossibile una cadenza di 3).
+un requisito. Entrambi sono multipli del ciclo da 5 min, con pavimento
+`CYCLE_MIN` (vedi [[timings_nvs_config]]).
 
 **5. Numero minimo di secret in `Env_template.h`.**
 

@@ -161,10 +161,12 @@ namespace Clock
    * avvia lo stesso, senza attendere: senza la prima risposta everSynced resta
    * falso e resyncIfStale() non correggerebbe più la deriva fino a un power cycle.
    *
-   * @param timeout_ms attesa massima della prima sincronizzazione. A 0 avvia
-   *        SNTP e ritorna subito, lasciando che il polling di lwIP allinei
-   *        l'ora entro pochi secondi: serve alla finestra di manutenzione,
-   *        dove bloccare congelerebbe web server e access point.
+   * @param timeout_ms attesa massima della prima sincronizzazione, di norma
+   *        TIME_SYNC_TIMEOUT_MS, che è l'unico budget dell'ora. A 0 avvia SNTP
+   *        e ritorna subito, lasciando che il polling di lwIP allinei l'ora
+   *        entro pochi secondi: serve alla finestra di manutenzione, dove
+   *        bloccare congelerebbe web server e access point, e lì l'attesa
+   *        dello stesso budget la fa lo scheduler a ogni giro.
    * @return true se l'ora è valida al ritorno.
    */
   inline bool sincronizza(uint32_t timeout_ms = TIME_SYNC_TIMEOUT_MS)

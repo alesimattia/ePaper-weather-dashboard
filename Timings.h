@@ -151,9 +151,10 @@
 // ---------------------------------------------------------------------------
 
 /** Tentativi consecutivi falliti oltre i quali un task consuma lo slot e
- *  attende la cadenza piena; un tentativo per ciclo, quindi il ritento cade
- *  al ciclo successivo. 0 significa politica pessimista: lo slot è speso
- *  prima ancora di eseguire. */
+ *  attende la cadenza piena. Il secondo tentativo si fa nella stessa accensione
+ *  della radio dopo SESSION_RETRY_MS se il primo è fallito in meno di
+ *  FAST_FAILURE_MAX_MS, altrimenti al ciclo successivo. 0 significa politica
+ *  pessimista: lo slot si chiude dopo l'esecuzione, comunque vada. */
 #define FETCH_MAX_TENTATIVI 2
 
 /** Timeout di un singolo tentativo di connessione della STA e passo del
@@ -172,11 +173,27 @@
  *  gli altri. A 80 MHz un handshake reale costa da 1 a 4 s. */
 #define TLS_HANDSHAKE_TIMEOUT_S 15
 
-/** Tempo massimo dal boot entro cui il primo frame viene comunque disegnato,
- *  con i placeholder "--" al posto dei dati non ancora arrivati. Nella
- *  finestra di manutenzione è anche l'attesa massima dell'ora valida prima
- *  che i fetch partano comunque. */
-#define PRIMO_FRAME_ATTESA_MS 15000UL
+/** Attesa massima della connessione STA, dall'inizio del passo di rete, prima
+ *  che il frame del ciclo venga disegnato con i placeholder "--" e i task
+ *  restino al ciclo successivo. Coincide con il tempo dopo cui la finestra di
+ *  manutenzione ripiega sull'access point, così le due attese scadono insieme. */
+#define RADIO_STA_ATTESA_MS ((uint32_t)MAINT_STA_TIMEOUT_S * 1000UL)
+
+/** Distanza fra il fallimento di un task e il suo secondo tentativo nella stessa
+ *  accensione della radio, così un guasto transitorio non lascia il frame senza
+ *  quel dato per un ciclo intero. */
+#define SESSION_RETRY_MS 5000UL
+
+/** Durata massima di un tentativo fallito perchè lo si ritenti nella stessa
+ *  accensione. Sotto questa soglia il guasto è di connessione o di protocollo
+ *  (il tetto della connessione TCP è 5 s) e un secondo tentativo ha buone
+ *  probabilità di riuscire; sopra è un timeout, che ripetuto subito
+ *  raddoppierebbe il tempo di radio e di solito fallirebbe uguale, quindi il
+ *  ritento resta al ciclo successivo. Nel primo passo dopo il boot, nella
+ *  finestra di manutenzione, la soglia non vale: il primo frame aspetta e il
+ *  secondo tentativo, per esempio a un cold start di render.com ormai finito,
+ *  si fa comunque. */
+#define FAST_FAILURE_MAX_MS 10000UL
 
 /** Timeout HTTP del download dell'immagine cinema: margine per il cold start
  *  del free tier render.com, misurato in una ventina di secondi. */
@@ -302,13 +319,16 @@
  * sincronizzato: prima di SNTP restituisce l'uptime contato dal 1970, che
  * dopo 27,7 h di accensione diventa indistinguibile da un'ora reale.
  *
- * TIME_SYNC_TIMEOUT_MS non va abbassato sotto i 10 s: lwIP ritarda la prima
- * richiesta SNTP di alcuni secondi. TIME_SYNC_RETRY_MS distanzia i tentativi
- * falliti, cosi' la finestra di manutenzione, che gira ogni ~10 ms, non
- * riavvia SNTP a ogni giro.
+ * TIME_SYNC_TIMEOUT_MS e' l'unico budget dell'ora, per entrambi i proprietari
+ * della radio: wifiOn() lo spende in modo bloccante dopo la connessione, lo
+ * scheduler lo aspetta a pollare dalla STA vista nella finestra di
+ * manutenzione. Non va abbassato sotto i 10 s: lwIP ritarda la prima richiesta
+ * SNTP fino a 5 s, e se il primo pacchetto va perso il ritento arriva dopo
+ * circa 15 s. TIME_SYNC_RETRY_MS distanzia i tentativi falliti, cosi' la
+ * finestra di manutenzione, che gira ogni ~10 ms, non riavvia SNTP a ogni giro.
  */
 #define TIME_VALID_EPOCH_MIN 1700000000L
-#define TIME_SYNC_TIMEOUT_MS 12000UL
+#define TIME_SYNC_TIMEOUT_MS 20000UL
 #define TIME_SYNC_RETRY_MS 60000UL
 #define NTP_SERVER_1 "pool.ntp.org"
 #define NTP_SERVER_2 "time.google.com"
@@ -364,8 +384,8 @@ static_assert(PARTIAL_MIN_TEMP_C > 0.0f && PARTIAL_MIN_TEMP_C < 40.0f && PARTIAL
 static_assert(PARTIAL_MAX_GAP_MS > CYCLE_S * 1000UL + BSEC_MARGINE_POLL_MS,
               "il gap massimo del partial deve superare un ciclo più il margine del poll: "
               "CYCLE_S è in secondi e BSEC_MARGINE_POLL_MS in millisecondi, vanno convertiti");
-static_assert(PRIMO_FRAME_ATTESA_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 1000UL,
-              "l'attesa del primo frame deve scadere dentro la finestra di manutenzione, "
+static_assert(RADIO_STA_ATTESA_MS + TIME_SYNC_TIMEOUT_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 1000UL,
+              "l'attesa della STA più quella dell'ora devono scadere dentro la finestra di manutenzione, "
               "che e' l'unico momento in cui il loop gira senza dormire");
 
 // ---------------------------------------------------------------------------
