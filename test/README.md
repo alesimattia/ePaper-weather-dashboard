@@ -6,8 +6,11 @@ scadenze; il protocollo di [`Tuya.h`](../Tuya.h), contro un broker finto; e il
 refresh differenziale, cioè la politica di [`PartialRefresh.h`](../PartialRefresh.h)
 e la macchina a stati del driver
 ([`GxEPD2_SOLUM_Differential.h`](../GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_Differential.h)),
-che non ha I/O proprio perchè si possa provare qui. `test_partial` gira due
-volte, con l'interruttore `DISPLAY_PARTIAL_REFRESH` spento e acceso.
+che non ha I/O proprio perchè si possa provare qui, e il confronto del frame con
+quello sul vetro
+([`GxEPD2_SOLUM_FrameCrc.h`](../GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_FrameCrc.h)).
+`test_partial` gira due volte, con l'interruttore `DISPLAY_PARTIAL_REFRESH` spento
+e acceso.
 Sono su host perché sul dispositivo la stessa verifica richiederebbe
 di aspettare ore (cadenze giornaliere, rollover di `millis()`, cambio dell'ora
 legale) e di provocare a mano condizioni scomode come una NVS corrotta.
@@ -128,6 +131,20 @@ handshake fallito, campione non valido; letture di un byte alla volta con
 `TUYA_REQUEST_ACK` a 1 e a 0, perchè i due rami hanno sequenze diverse. Il test
 dichiara da sè le guardie di `Env.h`, `Indoor.h` e `Net.h`, che veri
 tirerebbero dentro credenziali, BSEC e `WiFiClientSecure`.
+
+**`test_framecrc`** — il confronto del frame con quello già sul vetro
+([`GxEPD2_SOLUM_FrameCrc.h`](../GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_FrameCrc.h)), con
+una CRC software che ha la stessa semantica di `esp_rom_crc32_le`. Copre il primo
+frame (niente di mostrato, quindi non invariato), l'uguaglianza a frame uguali, un
+solo bit diverso in una pagina qualunque del piano nero o colore, due pagine
+scambiate di posto, i frame non confrontabili (ultima o prima pagina mancante,
+pagina fuori ordine, piano colore mancante, scrittura estranea), la validità del
+frame mostrato (buttato da un refresh esterno, rimesso solo dal commit di un frame
+completo, invalido dopo il commit di un frame incompleto), l'accumulo chiuso dopo il
+commit, il confronto spento e l'altezza coperta.
+`test_partial` copre anche l'esito `Unchanged`: contatori a parte, ultimo frame
+aggiornato, partial ancora ammesso a un ciclo di distanza, e il trait del salto
+con driver finti (con o senza differenziale, con l'API completa o a metà).
 
 ## Cosa NON coprono
 

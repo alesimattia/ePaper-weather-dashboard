@@ -883,7 +883,7 @@ namespace Weather
                          Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_BLACK);
       if (s.valid)
       {
-        snprintf(buf, sizeof(buf), "%.1f", s.temperature);
+        snprintf(buf, sizeof(buf), "%.1f", Indoor::shownTemperature(s.temperature));
         drawTempWithDegree(buf, textX, Layout::INDOOR_ROW1_BASELINE, GxEPD_BLACK, 2, 16, false);
       }
       else
@@ -903,8 +903,13 @@ namespace Weather
 
       // Qualità dell'aria: etichetta e indice, con l'accuratezza come pedice.
       display.setFont(Layout::FONT_BODY);
-      if (s.valid) snprintf(buf, sizeof(buf), "%s %u", Indoor::iaqLabel(s.iaq), (unsigned)s.iaq);
-      else         strcpy(buf, "--");
+      if (s.valid)
+      {
+        // Etichetta e numero dallo stesso valore arrotondato: restano coerenti.
+        const uint16_t iaqShown = Indoor::shownIaq(s.iaq);
+        snprintf(buf, sizeof(buf), "%s %u", Indoor::iaqLabel(iaqShown), (unsigned)iaqShown);
+      }
+      else strcpy(buf, "--");
       endX = drawIndoorRow(INDOOR_ICON_AIR_QUALITY, buf, iconX, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
       if (s.valid)
       {
@@ -917,7 +922,7 @@ namespace Weather
 
       // Pressione, con "mBar" in FONT_SMALL accanto al valore.
       display.setFont(Layout::FONT_LARGE);
-      if (s.valid) snprintf(buf, sizeof(buf), "%u", (unsigned)s.pressure);
+      if (s.valid) snprintf(buf, sizeof(buf), "%u", (unsigned)Indoor::shownPressure(s.pressure));
       else         strcpy(buf, "--");
       endX = drawIndoorRow(INDOOR_ICON_PRESSURE, buf, iconX, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
       if (s.valid)
@@ -1064,6 +1069,13 @@ namespace Weather
      * riferimento) il primo disegno è già pieno e non se ne fa un secondo. Con
      * DISPLAY_PARTIAL_REFRESH a 0 o con un pannello senza differenziale è
      * sempre un solo disegno pieno.
+     *
+     * In ogni caso il driver, a fine disegno, confronta i due piani con quelli
+     * dell'ultimo frame mandato al vetro e, se coincidono, non lancia nessun
+     * refresh (setSkipUnchanged() in initDisplay()). Il confronto sta nello
+     * stesso passaggio paged, quindi non costa un disegno in più, e vale per
+     * ogni driver che lo dichiara, con o senza differenziale. Un frame saltato
+     * conta come frame valutato.
      */
     inline void renderFrame()
     {
@@ -1106,15 +1118,27 @@ namespace Weather
         }
       }
 
-      // Se il partial non è partito serve un disegno pieno: dopo un rifiuto è il
-      // secondo, negli altri casi (politica contraria, nessun riferimento, driver
-      // senza differenziale) è l'unico, perchè un frame non armato non si disegna
-      // prima.
-      if (!partialDone) renderPages(calEpoch);
+      // Se la passata armata è già stata saltata dal driver perchè il frame è
+      // identico a quello sul vetro, il frame è finito. L'esito del driver si
+      // legge solo dopo un disegno di questo frame: resta alto fino al prossimo
+      // firstPage(), quindi prima varrebbe quello del frame precedente.
+      bool skipped = armed && PartialRefresh::wasSkipped(display.epd2);
 
-      if constexpr (PartialRefresh::isAvailable<Epd>())
+      // Se il partial non è partito e il frame non è stato saltato serve un
+      // disegno pieno: dopo un rifiuto è il secondo, negli altri casi (politica
+      // contraria, nessun riferimento, driver senza differenziale) è l'unico,
+      // perchè un frame non armato non si disegna prima. Anche questo può essere
+      // saltato dal driver, se il frame è identico a quello sul vetro.
+      if (!partialDone && !skipped)
       {
-        if (partialDone) outcome = PartialRefresh::Reason::Partial;
+        renderPages(calEpoch);
+        skipped = PartialRefresh::wasSkipped(display.epd2);
+      }
+
+      if constexpr (PartialRefresh::isAvailable<Epd>() || PartialRefresh::SupportsSkip<Epd>::value)
+      {
+        if (skipped) outcome = PartialRefresh::Reason::Unchanged;
+        else if (partialDone) outcome = PartialRefresh::Reason::Partial;
         else if (decision == PartialRefresh::Reason::Partial)
           outcome = (armed && refusedMask != 0) ? PartialRefresh::Reason::RedChanged
                                                 : PartialRefresh::Reason::NoReference;
@@ -1123,20 +1147,24 @@ namespace Weather
         const uint32_t endMs = millis();
         PartialRefresh::onFrameDone(partialState, endMs, decision, outcome, localDayKey());
         const PartialRefresh::DayCounters& day = partialState.day;
-        if (partialDone)
-          LOG("display", "partial %u/%u in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+        if (skipped)
+          LOG("display", "invariato: nessun refresh in %lu ms (oggi: %u partial, %u pieni, %u per rosso, %u invariati)",
+              (unsigned long)(endMs - startMs), (unsigned)day.partial, (unsigned)day.full,
+              (unsigned)day.redRefused, (unsigned)day.skipped);
+        else if (partialDone)
+          LOG("display", "partial %u/%u in %lu ms (oggi: %u partial, %u pieni, %u per rosso, %u invariati)",
               (unsigned)PartialRefresh::chain(display.epd2), (unsigned)PARTIAL_CHAIN_MAX,
               (unsigned long)(endMs - startMs), (unsigned)day.partial, (unsigned)day.full,
-              (unsigned)day.redRefused);
+              (unsigned)day.redRefused, (unsigned)day.skipped);
         else if (outcome == PartialRefresh::Reason::RedChanged)
-          LOG("display", "pieno: %s (pagine 0x%02X) in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+          LOG("display", "pieno: %s (pagine 0x%02X) in %lu ms (oggi: %u partial, %u pieni, %u per rosso, %u invariati)",
               PartialRefresh::reasonText(outcome), (unsigned)refusedMask,
               (unsigned long)(endMs - startMs), (unsigned)day.partial, (unsigned)day.full,
-              (unsigned)day.redRefused);
+              (unsigned)day.redRefused, (unsigned)day.skipped);
         else
-          LOG("display", "pieno: %s in %lu ms (oggi: %u partial, %u pieni, %u per rosso)",
+          LOG("display", "pieno: %s in %lu ms (oggi: %u partial, %u pieni, %u per rosso, %u invariati)",
               PartialRefresh::reasonText(outcome), (unsigned long)(endMs - startMs),
-              (unsigned)day.partial, (unsigned)day.full, (unsigned)day.redRefused);
+              (unsigned)day.partial, (unsigned)day.full, (unsigned)day.redRefused, (unsigned)day.skipped);
       }
     }
 

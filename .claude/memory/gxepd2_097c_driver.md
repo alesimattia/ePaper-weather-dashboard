@@ -402,6 +402,12 @@ Dal datasheet ufficiale F6, dati non presenti nelle pagine di catalogo:
   in full-window), azzerato in `setPaged()` e `_Update_Full()`. Regge il row-skip di `showImage`
   senza modificare GxEPD2.
 
+- **Salto del refresh a frame invariato**: `refresh(false)` lo controlla per primo, prima di
+  partial e pieno, con un CRC concatenato dei due piani accumulato in `writeImage(black, color)`
+  nella forma del template; `_Update_Full()` e `_Update_Part()` invalidano il frame mostrato.
+  Indipendente dal differenziale e condiviso con il 12.2"; stato dopo il salto, invarianti e
+  lato firmware in [[frame_skip_unchanged]].
+
 - **API pubblica usata dallo sketch**: solo `GxEPDImage::showImage(display, *desc)` dentro un loop
   `firstPage/nextPage`. Il resto (API single-channel, partial) è compositing avanzato.
 

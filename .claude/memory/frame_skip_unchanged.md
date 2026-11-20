@@ -1,0 +1,30 @@
+---
+name: Salto del refresh a frame invariato
+description: Il driver non lancia nè partial nè pieno quando i due piani nero e colore del frame sono identici a quelli dell'ultimo frame mandato al vetro; CRC concatenato nello stesso passaggio paged, helper GxEPD2_SOLUM_FrameCrc.h condiviso da 9.7" e 12.2", perchè sull'uscita e non sui dati, invarianti, stato dopo un frame saltato, lettura dell'esito nel firmware, riduzioni del display che lo rendono frequente e cosa lo impedisce
+type: project
+---
+
+Obiettivo: reattività del pannello e meno refresh inutili, non il consumo. Un frame invariato non occupa il pannello (0,8 s di partial a vuoto, 24 s se era un pieno), non fa crescere la catena di partial e non fa lampeggiare il vetro con un pieno senza motivo.
+
+**Dove sta.** Helper puro `GxEPD2_SOLUM_FrameCrc.h` nel submodule, con la CRC iniettata come funzione e provato su host (`test/test_framecrc.cpp`); lo usano i driver 9.7" e 12.2". Nel driver: `setPaged()` riparte l'accumulo; `writeImage(black, color)` nella forma del template (x = 0, larghezza piena, senza inversione, specchio o pgm) accumula due CRC32 concatenati, uno per piano, e qualunque altra forma di scrittura rende il frame non confrontabile; `refresh(false)` come **primo** controllo, se il frame è completo, uguale al mostrato e il mostrato è valido non lancia niente, alza `frameSkipped()`, disarma il frame armato e azzera il page hint.
+
+**Perchè sull'uscita del disegno e non sui dati.** Una firma dei dati è una seconda lista degli ingressi del disegno, e nessun errore di compilazione la segnala quando diverge. Gli ingressi nascosti esistono: `Tuya::hasFailed()` dentro `drawBanner()`, fascia e freschezza del percorso riletti a ogni pagina in `drawTestBackground()`, `hasEnded` e `time(nullptr)` nel calendario, `expireIfStale()` che azzera gli slot prima del disegno. Sui piani nessun ingresso si può dimenticare. Una separazione modello e vista avrebbe salvato il rendering (stime 0,1-0,3 s) riscrivendo cinque moduli, e in C++ header-only il vincolo sarebbe una convenzione. Anche una passata a vuoto con un decoratore del driver è stata scartata: costerebbe un rendering in più nei frame cambiati. La decisione sta a fine passaggio, quando i piani sono già disegnati e, nel frame armato, scritti nella RAM libera.
+
+**Invarianti.**
+- Ogni cambio del vetro passa da `_Update_Full()` o `_Update_Part()`, le sole due sequenze 0x22/0x20 che aggiornano il display (0xC0 e 0xC3 sono power): lì il frame mostrato si invalida, e `refresh(false)` lo rimette solo dopo un refresh del frame finito con BUSY basso. Sul 12.2" non c'è un controllo di BUSY, quindi un refresh fallito non è rilevato.
+- Il frame mostrato resta valido attraverso light sleep e deep sleep, perchè il vetro conserva l'immagine; si perde solo con un reboot.
+- Dopo un commit o un salto l'accumulo si chiude: un refresh senza pagine nuove non confronta CRC vecchi.
+
+**Stato dopo un frame saltato.**
+- 9.7" armato: le pagine sono già nella RAM libera e i ruoli delle RAM non si scambiano senza refresh, quindi le due RAM hanno lo stesso B/N, il riferimento resta valido e la catena non cresce.
+- 9.7" non armato, cioè pieno per politica (`TooCold`, `SensorInvalid`, `ChainLimit`, `LongGap`, `NoLastFrame`): reset, init e riscrittura dei piani sono già avvenuti; il riferimento è già spento perchè solo `commitFull()` lo rimette; `hibernate()` va in deep sleep come dopo un pieno; il frame dopo, se cambia, è pieno. A `ChainLimit` equivale a rimandare il pieno fino a quando serve.
+- 12.2": ogni frame riscrive tutto, niente da riparare.
+- Indipendente da `DISPLAY_PARTIAL_REFRESH`: vale con il differenziale spento e per un driver che non lo ha.
+
+**Lato firmware.** `DISPLAY_SKIP_UNCHANGED` (default 1) nel `.ino`, applicato in `initDisplay()`. `PartialRefresh::setSkipUnchanged(epd, on)` e `wasSkipped(epd)` passano dal trait `SupportsSkip`, che chiede sia `setSkipUnchanged(bool)` sia `frameSkipped()`; un driver senza l'API non fa niente. `Reason::Unchanged` e `DayCounters.skipped` stanno a parte da partial e pieni. In `Weather::renderFrame()` l'esito `frameSkipped()` resta alto fino al prossimo `firstPage()`: si legge solo dopo un disegno di questo frame, dopo la passata armata o dopo il disegno pieno, altrimenti un frame cambiato dopo uno saltato verrebbe scartato. Una passata armata saltata non ha secondo rendering. Un frame saltato aggiorna `lastFrameMs`, quindi il gap per `LongGap` misura i frame valutati e non i refresh; senza, con contenuto fermo scatterebbe un pieno ogni tre cicli.
+
+**Riduzioni al display.** Si applicano solo al disegno, con `Indoor::shownTemperature()`, `shownPressure()` e `shownIaq()` (replicate in `tools/layout_preview.py`): temperatura 0,5 °C, umidità intera senza riduzione, pressione 2 mBar, IAQ 10 con l'etichetta calcolata sul valore arrotondato (le soglie sono multiple di 10). Il campione resta ai tipi minimi, vedi [[bme680_precisione_e_tipi]]. Sono ciò che rende frequenti i frame invariati: IAQ e temperatura a 0,1 °C cambiano quasi a ogni campione.
+
+**Cosa impedisce il salto.** Il fetch meteo con un `dt` nuovo (ora del blocco corrente, grafico e cursore della barra cambiano: il salto si decide nei cicli senza fetch), il percorso in fascia 7-9 (l'immagine porta "agg. HH:MM" scritto dal server a ogni download), il badge Tuya rosso, la fine di un evento del calendario, le scadenze del meteo e del campione. L'ora del blocco meteo resta esatta per scelta dell'utente, quindi grafico, cursore, pioggia e mm non si riducono. La quota reale dei frame saltati si legge dai contatori del giorno nel log di ogni frame.
+
+Vedi [[differential_refresh]] per il partial che il salto precede, [[gxepd2_solum_esl_library]] per l'API opzionale dei driver, [[layout_invariants]] per il frame a ogni ciclo.

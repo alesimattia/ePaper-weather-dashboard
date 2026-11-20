@@ -1,6 +1,6 @@
 ---
 name: BME680 - precisione delle grandezze e tipi in cui si rappresentano
-description: BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet per T/RH/P/IAQ, quali decimali sono informazione e quali rumore, e i tipi di Indoor::Sample che ne discendono
+description: BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet per T/RH/P/IAQ, quali decimali sono informazione e quali rumore, i tipi di Indoor::Sample che ne discendono e perchè sono i minimi, e le riduzioni che si applicano solo al display
 type: reference
 ---
 
@@ -66,7 +66,9 @@ uint8_t  iaqAccuracy;   // 0-3
 
 La struct misura **20 byte** (verificato con `static_assert`), contro i 28 che
 occuperebbe con quattro float. Il guadagno di memoria è simbolico, perchè
-l'istanza è una sola: la ragione dei tipi interi è che descrivono il dato.
+l'istanza è una sola. I tipi interi fissano la risoluzione che serve (1 %RH, 1 mBar,
+1 punto IAQ), non quella che il sensore supporta: per umidità e pressione scartano
+cifre che sarebbero misura.
 
 Due conseguenze pratiche:
 
@@ -77,6 +79,23 @@ Due conseguenze pratiche:
   misura vera, mentre in un float resterebbe riconoscibile;
 - **1 hPa = 1 mBar**, quindi la conversione da Pa è una sola divisione e
   l'unità mostrata è una scelta di etichetta, non di calcolo.
+
+**Perchè questi tipi sono i minimi.** La pressione sta in 16 bit perchè il campo di
+misura del BME680 è 300-1100 hPa, cioè 800 valori a passo di 1 mBar, che non entrano in 8
+bit; un `uint8_t` con offset coprirebbe solo 256 mBar attorno a un valore fisso e
+dipenderebbe da altitudine e meteo. L'IAQ sta in 16 bit perchè 500 non entra in 8 (a 8 bit
+darebbe passi da 2). L'umidità 0-100 e l'accuratezza 0-3 stanno in 8.
+
+## Cosa si mostra sul display
+
+Il campione resta ai tipi sopra, e il display lo arrotonda ulteriormente, solo nel disegno
+(`Indoor::shownTemperature()`, `shownPressure()`, `shownIaq()`): temperatura 0,5 °C,
+umidità intera senza riduzione, pressione 2 mBar, IAQ 10 con l'etichetta calcolata sul
+valore arrotondato, perchè le soglie 50, 100, 150, 200, 250 e 350 sono multiple di 10. Lo
+scopo è che le oscillazioni sotto la risoluzione utile non cambino il frame, vedi
+[[frame_skip_unchanged]]. Il README ha la tabella con risoluzione massima, accuratezza,
+tipo memorizzato, risoluzione memorizzata e valore mostrato per le grandezze del BME680 e
+per quelle di OpenWeather.
 
 Correlate: [[bsec_modi_campionamento]] per come BSEC viene pilotato nel tempo,
 [[tuya_module]] per la mappatura di questi tipi sul device model Tuya.

@@ -438,6 +438,15 @@ di GxEPD2 aggiunge:
    sezione REFRESH DIFFERENZIALE del driver). Con un riferimento valido il
    controller resta in Sleep e non va in deep sleep, perchè il deep sleep perde
    la RAM.
+5. **Salto del refresh a frame invariato** (`DISPLAY_SKIP_UNCHANGED` nel `.ino`):
+   in `refresh(false)` il driver confronta un CRC32 concatenato dei due piani,
+   nero e colore, con quello dell'ultimo frame mandato al vetro e, se coincidono,
+   non lancia nessun refresh, né partial né pieno. Il confronto è sull'uscita del
+   disegno, nello stesso passaggio paged: non costa un disegno in più e nessun
+   ingresso del disegno si può dimenticare. Lo condividono i driver 9.7" e 12.2"
+   (helper `GxEPD2_SOLUM_FrameCrc.h`) e funziona anche senza il differenziale.
+   Ogni refresh che cambia il vetro, anche fuori dal loop paged, butta il frame
+   mostrato, e solo un frame completo andato a buon fine lo rimette.
 
 La documentazione completa (motivazione, API, esempi d'uso, ottimizzazioni
 rispetto al driver stock) sta in:
@@ -545,6 +554,21 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   primo frame arriva sempre, con i dati veri se ci sono e con i placeholder `--`
   altrimenti.
 
+**Dati di OpenWeather, come si memorizzano e come si mostrano.** Il repository non
+contiene una risposta reale dell'API: la risoluzione è quella che descrive la
+documentazione di OpenWeather (valori decimali), e OpenWeather non dichiara
+un'accuratezza numerica, perchè previsioni e osservazioni sono uscite di modello.
+
+| Dato | Risoluzione massima | Accuratezza | Tipo memorizzato | Risoluzione memorizzata | Mostrato sul display |
+|---|---|---|---|---|---|
+| Temperatura percepita (corrente e 3 previsioni) | decimale | non dichiarata | `float` | quella dell'API | 1 °C (intero) |
+| Temperatura percepita mattina e sera (`daily[0]`) | decimale | non dichiarata | `float` | quella dell'API | 1 °C (intero) |
+| Probabilità di pioggia `pop` | decimale, scala 0-1 | non dichiarata | `float` | quella dell'API | 1 % (intero) |
+| Volume pioggia e neve `1h` | decimale, mm/h | non dichiarata | `float` | quella dell'API | 0,1 mm |
+| Ora dell'osservazione e delle previsioni `dt` | 1 s (Unix) | non applicabile | `time_t` | 1 s | HH:MM |
+| Alba e tramonto | 1 s (Unix) | non applicabile | `time_t` | 1 s | HH:MM |
+| Codice condizione `weather[0].id` | intero | non applicabile | `uint16_t` | intero | icona ed etichetta breve |
+
 ### Calendar (`Calendar.h`)
 
 Widget del mese e lista eventi Outlook + Google.
@@ -638,6 +662,22 @@ Lettura del sensore **Bosch BME680** via I2C con fusione IAQ della libreria
 è sottoscritto e non un intervallo configurabile. Il modulo espone una cache
 (`Indoor::sample()`) con temperatura e umidità heat-compensated, pressione (hPa),
 indice IAQ (0-500) e livello di calibrazione (0-3), mostrata nel riquadro Interno.
+
+**Sensore BME680 (BSEC)**: `begin()` sottoscrive `IAQ`, `STABILIZATION_STATUS`,
+temperatura e umidità compensate dal calore e pressione grezza, a campionamento ULP.
+Risoluzione e accuratezza sono quelle del datasheet Bosch. Il campione si memorizza
+nei tipi minimi che bastano alla risoluzione utile (`Indoor::Sample` pesa 20 byte), e
+il display lo arrotonda ulteriormente (`Indoor::shownTemperature()`, `shownPressure()`
+e `shownIaq()`), così le oscillazioni sotto quella risoluzione non cambiano il frame e
+il driver può saltare il refresh.
+
+| Grandezza | Risoluzione massima | Accuratezza | Tipo memorizzato | Risoluzione memorizzata | Mostrato sul display |
+|---|---|---|---|---|---|
+| Temperatura | 0,01 °C | ±0,5 °C a 25 °C; ±1,0 °C su 0-65 °C | `float` | quella di BSEC | 0,5 °C |
+| Umidità | 0,008 %RH (rumore 0,01 %RH) | ±3 %RH fra 20 e 80 %RH a 25 °C | `uint8_t` | 1 %RH | 1 %RH (intero) |
+| Pressione | 0,18 Pa, cioè 0,0018 hPa | relativa ±0,12 hPa; l'assoluta non è nel datasheet consultato (fonti terze ±1 hPa, da prendere con cautela) | `uint16_t` | 1 mBar (= 1 hPa) | 2 mBar |
+| IAQ | 1 punto su scala 0-500 | nessuna tolleranza numerica: la dichiara l'accuratezza IAQ (0-3) | `uint16_t` | 1 punto | 10 punti, con l'etichetta sul valore arrotondato (soglie 50, 100, 150, 200, 250, 350: multiple di 10) |
+| Accuratezza IAQ | 4 livelli (0-3) | non applicabile | `uint8_t` | 1 livello | 1 livello (pedice) |
 
 `Indoor::refresh()` è il primo passo di ogni ciclo dello scheduler, e la sua scadenza
 (`Indoor::msUntilNextPoll()`, 300 s più 1 s di margine dall'ultima chiamata) è
@@ -1076,7 +1116,12 @@ I `#define` in testa allo sketch sono:
   quando il piano rosso non è cambiato, altrimenti un refresh pieno. A 0 ogni
   frame è un refresh pieno e il driver non calcola nessun CRC. Catena massima di
   partial, soglia di temperatura e distanza massima dall'ultimo frame sono in
-  `Timings.h` (`PARTIAL_CHAIN_MAX`, `PARTIAL_MIN_TEMP_C`, `PARTIAL_MAX_GAP_MS`).
+  `Timings.h` (`PARTIAL_CHAIN_MAX`, `PARTIAL_MIN_TEMP_C`, `PARTIAL_MAX_GAP_MS`);
+- `DISPLAY_SKIP_UNCHANGED 1` → un frame identico a quello già sul vetro non lancia
+  nessun refresh, né partial né pieno. Indipendente da `DISPLAY_PARTIAL_REFRESH`:
+  vale anche per un driver senza il differenziale. A 0 ogni frame va al pannello
+  e il driver non calcola nessun CRC. Il log di ogni frame riporta il contatore dei
+  frame invariati del giorno accanto a partial e pieni.
 
 Le cadenze vivono in [`Timings.h`](Timings.h), insieme al **pavimento** di ciascuna, e
 sono modificabili a runtime dalla pagina `/config` della finestra di manutenzione
@@ -1204,8 +1249,8 @@ con i placeholder `--` e il wallpaper PROGMEM e i task restano al ciclo successi
 l'ora non arriva entro `TIME_SYNC_TIMEOUT_MS` dalla STA vista partono i task che non la
 richiedono. Un boot di notte con l'ora da sincronizzare apre la finestra, aspetta l'ora
 e, scoperta la notte, non fa nè fetch nè frame. Il log scrive al primo frame i tempi di
-STA e ora, l'esito del passo e la validità degli slot meteo (con `LOG_LEVEL` 3 anche
-heap e stack dopo ogni giro con lavoro).
+STA e ora, l'esito del passo e la validità degli slot meteo; a `LOG_LEVEL` 2, il
+valore del `.ino`, anche heap e stack dopo ogni giro con lavoro.
 
 ### Flusso a regime — finestra chiusa
 
@@ -1278,7 +1323,7 @@ Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 - **Boot → primo refresh con cinema in cold start di render.com**: fino a `CINEMA_HTTP_TIMEOUT_MS` (45 s) + un refresh pieno se il pre-warm non è bastato. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
 - **Refresh successivo a regime**: un partial da ~1,3 s (639 ms più rampe e power off) quando il piano rosso è invariato, altrimenti un refresh pieno da ~24 s; uno per ciclo. La quota di partial dipende da quanto spesso cambia il rosso (temperature e icone meteo, eventi di oggi, percorso al mattino): una simulazione dà il 65-77%, ma è un modello e non una misura. Il log riporta a ogni frame l'esito e i contatori del giorno.
 - **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo della fascia percorso, sorgente cambiata da `/route`, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo.
-- **Usura del pannello**: con la fascia 7-23 sono 192 frame al giorno, che senza il refresh differenziale sono 192 refresh pieni (con il differenziale solo quelli in cui il rosso cambia o la catena di partial è al tetto). L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
+- **Usura del pannello**: con la fascia 7-23 sono 192 frame al giorno, che senza il refresh differenziale sono 192 refresh pieni (con il differenziale solo quelli in cui il rosso cambia o la catena di partial è al tetto; il salto a frame invariato toglie in più quelli in cui non cambia niente di ciò che si vede). L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
 
 ---
 

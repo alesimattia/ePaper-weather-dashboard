@@ -7,7 +7,7 @@ metadata:
 
 `Scheduler.h` possiede **tutto** il timing. I moduli espongono solo un `runFetch()` che fa I/O e dice com'è andata; sensore, radio e pannello li usa attraverso lo struct `Scheduler::Hooks` passato a `begin(table, count, hooks)`: `radioOn`, `radioOff`, `sensorActive`, `msUntilSensorPoll`, `pollSensor`, `drawFrame`.
 
-**Il ciclo.** Un solo orologio: la scadenza del sensore (`Indoor::msUntilNextPoll()`, ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`), perchè BSEC tollera solo il 6,25% di scarto e non si lascia anticipare (vedi [[bsec_modi_campionamento]]). Senza sensore il ciclo è interno, `CYCLE_S` dall'inizio del precedente. Ogni ciclo, in quest'ordine: 1) `pollSensor`; 2) passo di rete; 3) frame, sempre, a ogni ciclo dentro la fascia WiFi e solo a passo di rete concluso. Nessun flag di dati nuovi: il frame legge da sè i dati, badge Tuya compreso.
+**Il ciclo.** Un solo orologio: la scadenza del sensore (`Indoor::msUntilNextPoll()`, ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`), perchè BSEC tollera solo il 6,25% di scarto e non si lascia anticipare (vedi [[bsec_modi_campionamento]]). Senza sensore il ciclo è interno, `CYCLE_S` dall'inizio del precedente. Ogni ciclo, in quest'ordine: 1) `pollSensor`; 2) passo di rete; 3) frame, sempre, a ogni ciclo dentro la fascia WiFi e solo a passo di rete concluso (il driver non lancia il refresh se il frame è identico a quello sul vetro, vedi [[frame_skip_unchanged]]). Nessun flag di dati nuovi: il frame legge da sè i dati, badge Tuya compreso.
 
 **Passo di rete a fasi**, uguale per i due proprietari della radio, con budget ancorati a eventi (inizio del passo, STA vista) e mai al boot:
 - *Idle*: serve solo dentro la fascia WiFi e se un task è dovuto, altrimenti il passo è subito concluso.

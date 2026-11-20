@@ -561,6 +561,32 @@ namespace Indoor
    * Usato da: Weather.h (renderIndoorBox) per mostrare la
    * condizione accanto al valore numerico IAQ.
    */
+  /**
+   * Valori del riquadro Interno come si mostrano sul display. Il campione resta
+   * alla risoluzione dei suoi tipi: queste tre funzioni applicano solo il crop di
+   * visualizzazione, così le oscillazioni sotto la risoluzione utile non cambiano
+   * il frame e il driver può saltare il refresh. L'umidità si mostra com'è.
+   * Le replica tools/layout_preview.py per l'anteprima.
+   */
+
+  /** Temperatura arrotondata a 0,5 °C. */
+  inline float shownTemperature(float celsius)
+  {
+    return roundf(celsius * 2.0f) / 2.0f;
+  }
+
+  /** Pressione in mBar arrotondata a 2 mBar. */
+  inline uint16_t shownPressure(uint16_t mbar)
+  {
+    return (uint16_t)(((uint32_t)mbar + 1) / 2 * 2);
+  }
+
+  /** Indice IAQ arrotondato a 10 punti. Le soglie dell'etichetta sono multiple di 10, quindi l'etichetta si calcola sul valore arrotondato. */
+  inline uint16_t shownIaq(uint16_t iaq)
+  {
+    return (uint16_t)(((uint32_t)iaq + 5) / 10 * 10);
+  }
+
   inline const char* iaqLabel(uint16_t iaq)
   {
     if (iaq <=  50) return "Ottima";

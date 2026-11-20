@@ -70,6 +70,24 @@
 #define DISPLAY_PARTIAL_REFRESH 1
 
 /**
+ * SALTO DEL REFRESH A FRAME INVARIATO. 1 = se il frame è identico a quello
+ * già sul vetro il driver non lancia nessun refresh, né partial né pieno; 0 = ogni
+ * frame va al pannello, come prima.
+ *
+ * Il confronto sta nel driver, nello stesso passaggio paged che manda i piani
+ * al controller: un CRC32 concatenato per piano, nero e colore, contro quello
+ * dell'ultimo frame effettivamente mandato al vetro. Confronta l'uscita del
+ * disegno e non i dati che l'hanno prodotta, quindi nessun ingresso del disegno
+ * si può dimenticare, e non costa un disegno in più. Vale per ogni driver che
+ * lo dichiara, con o senza il differenziale, e per questo è indipendente da
+ * DISPLAY_PARTIAL_REFRESH. Ogni frame saltato non occupa il pannello e non fa
+ * crescere la catena dei partial. I valori del riquadro Interno si mostrano
+ * arrotondati (Indoor::shown*()) proprio perchè le oscillazioni sotto la
+ * risoluzione utile non cambino il frame.
+ */
+#define DISPLAY_SKIP_UNCHANGED 1
+
+/**
  * Verbosita' dei log seriali (Log.h). 0 = nessun log, 1 = operativi,
  * 2 = 1 + dettaglio per elemento. Va dichiarata qui, prima degli include
  * dei moduli, cosi' che il fallback #ifndef di Log.h la raccolga.
@@ -258,6 +276,8 @@ void initDisplay()
 	display.setFullWindow();
 	// Un driver senza il differenziale ignora la chiamata: resta sul refresh pieno.
 	PartialRefresh::setEnabled(display.epd2, DISPLAY_PARTIAL_REFRESH != 0);
+	// Indipendente dal differenziale; un driver senza l'API ignora la chiamata.
+	PartialRefresh::setSkipUnchanged(display.epd2, DISPLAY_SKIP_UNCHANGED != 0);
 }
 
 // ===========================================================================

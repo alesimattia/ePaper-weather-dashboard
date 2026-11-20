@@ -285,7 +285,9 @@
  *
  * PARTIAL_MAX_GAP_MS: oltre questa distanza dall'ultimo frame il riferimento non
  * si usa (notte, riavvio, finestra di manutenzione). Sono due cicli più il margine
- * del poll, in millisecondi: un frame saltato non fa perdere il riferimento.
+ * del poll, in millisecondi: un frame saltato non fa perdere il riferimento. Un
+ * frame saltato perchè identico a quello sul vetro (DISPLAY_SKIP_UNCHANGED) conta
+ * come frame valutato: il gap misura i frame, non i refresh.
  */
 #define PARTIAL_CHAIN_MAX 6
 #define PARTIAL_MIN_TEMP_C 18.0f

@@ -14,6 +14,7 @@ N: quello che segue è il meccanismo, non un dettaglio di uno dei due.
 src/GxEPD2_SOLUM.h                  ombrello di selezione, unico header che gli sketch includono
 src/GxEPD2_SOLUM_Pins.h             struct di pinout uniforme fra i driver
 src/GxEPDImage.h                    namespace GxEPDImage + template showImage(), condiviso
+src/GxEPD2_SOLUM_FrameCrc.h         confronto del frame con quello sul vetro, puro e condiviso
 src/GxEPD2_SOLUM_097c_960x672.h     driver 9.7" SSD1677, vedi [[gxepd2_097c_driver]]
 src/GxEPD2_SOLUM_122c_960x768.h     driver 12.2" SSD16xx, vedi [[gxepd2_122c_driver]]
 examples/097c/panel_diagnostic/     suite del 9.7", sketch multi-file: .ino + Config/Report/
@@ -66,6 +67,13 @@ Il template è indipendente dal silicio e pretende due soli metodi pubblici da o
 eventuale terzo piano; le primitive del giallo (`writeImageYellow`, `preserveYellow`,
 `isYellowPreserved`) sono API opzionali del singolo driver: il 12.2" le dichiara senza corpo per
 compatibilità di API, il 9.7" non le dichiara.
+
+**API opzionale del salto del refresh.** Non è parte del contratto: un driver che riceve i piani a
+pagine dal template può usare `GxEPD2_SOLUM_FrameCrc.h` ed esporre `setSkipUnchanged(bool)` e
+`frameSkipped()`. Il firmware le rileva con un trait che le chiede entrambe (come
+`hasDifferentialRefresh` per il differenziale) e un driver senza l'API ignora le chiamate. Il
+confronto è sulla forma `writeImage(black, color)` del template; ogni cambio del vetro deve
+invalidare il frame mostrato. Vedi [[frame_skip_unchanged]].
 
 **Salto delle righe in `showImage()`.** La page k del template copre le righe fisiche da
 `_pw_y + k * pageH`, e `_pw_y` è privato di `GxEPD2_3C`: il driver lo vede solo dopo la prima page.

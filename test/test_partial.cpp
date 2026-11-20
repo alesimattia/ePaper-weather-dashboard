@@ -72,9 +72,31 @@ struct PanelWith
 struct PanelWithout {};
 struct PanelNegated { static const bool hasDifferentialRefresh = false; };
 
+// Driver che sa saltare il refresh di un frame invariato, con o senza differenziale.
+struct PanelSkip
+{
+  bool skipOn = false;
+  bool skipped = false;
+  void setSkipUnchanged(bool on) { skipOn = on; }
+  bool frameSkipped() const { return skipped; }
+};
+struct PanelSkipAndDiff : PanelWith
+{
+  bool skipOn = false;
+  bool skipped = false;
+  void setSkipUnchanged(bool on) { skipOn = on; }
+  bool frameSkipped() const { return skipped; }
+};
+struct PanelHalfSkip { void setSkipUnchanged(bool) {} };   // senza frameSkipped(): non vale
+
 static_assert(PartialRefresh::SupportsDifferential<PanelWith>::value, "PanelWith deve essere riconosciuto");
 static_assert(!PartialRefresh::SupportsDifferential<PanelWithout>::value, "PanelWithout non ha l'API");
 static_assert(!PartialRefresh::SupportsDifferential<PanelNegated>::value, "hasDifferentialRefresh = false vale come assente");
+static_assert(PartialRefresh::SupportsSkip<PanelSkip>::value, "PanelSkip ha l'API del salto");
+static_assert(PartialRefresh::SupportsSkip<PanelSkipAndDiff>::value, "il salto è indipendente dal differenziale");
+static_assert(!PartialRefresh::SupportsSkip<PanelWithout>::value, "PanelWithout non ha l'API del salto");
+static_assert(!PartialRefresh::SupportsSkip<PanelWith>::value, "il solo differenziale non basta al salto");
+static_assert(!PartialRefresh::SupportsSkip<PanelHalfSkip>::value, "il salto richiede sia setSkipUnchanged() sia frameSkipped()");
 
 int main()
 {
@@ -330,7 +352,27 @@ int main()
     ok(!s.coldLatched, "una decisione diversa da TooCold la disarma");
   }
 
+  {
+    // Un frame saltato perchè invariato non è nè partial nè pieno, ma è un frame valutato.
+    State s;
+    onFrameDone(s, 1000, Reason::Partial, Reason::Partial, 5);
+    onFrameDone(s, 2000, Reason::Partial, Reason::Unchanged, 5);
+    onFrameDone(s, 3000, Reason::ChainLimit, Reason::Unchanged, 5);
+    onFrameDone(s, 4000, Reason::Partial, Reason::ChainLimit, 5);
+    ok(s.day.partial == 1 && s.day.full == 1 && s.day.skipped == 2 && s.day.redRefused == 0,
+       "contatori: i frame invariati stanno a parte, non contano come pieni");
+    onFrameDone(s, 5000, Reason::Partial, Reason::Unchanged, 5);
+    ok(s.hasLastFrame && s.lastFrameMs == 5000,
+       "un frame invariato aggiorna l'ultimo frame: il gap per LongGap misura i frame valutati");
+    Inputs in = makeInputs(s, 5000 + (uint32_t)(CYCLE_S * 1000UL), true, 2, true, true, 22.0f);
+    ok(decide(DEFAULT_PARAMS, in) == Reason::Partial,
+       "dopo un frame invariato, a un ciclo di distanza il partial resta ammesso");
+    onFrameDone(s, 6000, Reason::Partial, Reason::Partial, 6);
+    ok(s.day.dayKey == 6 && s.day.skipped == 0, "il cambio di giorno azzera anche i frame invariati");
+  }
+
   ok(std::strcmp(reasonText(Reason::RedChanged), "rosso cambiato") == 0, "testo del motivo per il log");
+  ok(std::strcmp(reasonText(Reason::Unchanged), "frame invariato") == 0, "testo di Unchanged per il log");
 
   // -----------------------------------------------------------------------
   // Aggancio al driver
@@ -355,6 +397,28 @@ int main()
 #else
     ok(!isAvailable<PanelWith>(), "interruttore spento: mai disponibile");
 #endif
+  }
+
+  {
+    // Aggancio del salto: indipendente dal differenziale.
+    PanelSkip skip;
+    PanelSkipAndDiff both;
+    PanelWith diffOnly;
+    PanelWithout none;
+    PanelHalfSkip half;
+    setSkipUnchanged(skip, true);
+    ok(skip.skipOn, "con l'API setSkipUnchanged() arriva al driver");
+    skip.skipped = true;
+    ok(wasSkipped(skip), "wasSkipped() legge l'esito del driver");
+    setSkipUnchanged(both, true);
+    both.skipped = true;
+    ok(both.skipOn && wasSkipped(both), "un driver con differenziale e salto li usa entrambi");
+    ok(!wasSkipped(diffOnly) && !wasSkipped(none) && !wasSkipped(half),
+       "un driver senza l'API completa non salta mai");
+    setSkipUnchanged(diffOnly, true);
+    setSkipUnchanged(none, true);
+    setSkipUnchanged(half, true);
+    ok(true, "setSkipUnchanged() su un driver senza l'API non fa niente");
   }
 
   if (falliti) { std::printf("\n%d test FALLITI\n", falliti); return 1; }

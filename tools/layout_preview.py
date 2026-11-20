@@ -25,6 +25,7 @@ Dipendenza: Pillow.
 import argparse
 import base64
 import io
+import math
 import os
 import re
 import sys
@@ -443,7 +444,31 @@ SAMPLE_SUN = (datetime(2026, 10, 30, 6, 55), datetime(2026, 10, 30, 17, 4))
 SAMPLE_MORN_EVE = (11.0, 18.0)
 # Storico della percepita a passi di mezz'ora prima dell'ora corrente.
 SAMPLE_HISTORY = [(-3.0, 12.6), (-2.5, 13.1), (-2.0, 13.9), (-1.5, 14.6), (-1.0, 15.3), (-0.5, 15.9)]
-SAMPLE_INDOOR = {"temp": 22.5, "hum": 45, "iaq": 74, "acc": 3, "press": 1013, "iaq_label": "Buona"}
+SAMPLE_INDOOR = {"temp": 22.5, "hum": 45, "iaq": 74, "acc": 3, "press": 1013}
+
+
+def shown_temperature(celsius):
+    """Indoor::shownTemperature(): arrotonda a 0,5 °C, con i mezzi punti lontano dallo zero come roundf."""
+    scaled = celsius * 2.0
+    return math.copysign(math.floor(abs(scaled) + 0.5), scaled) / 2.0
+
+
+def shown_pressure(mbar):
+    """Indoor::shownPressure(): arrotonda a 2 mBar."""
+    return (mbar + 1) // 2 * 2
+
+
+def shown_iaq(iaq):
+    """Indoor::shownIaq(): arrotonda a 10 punti."""
+    return (iaq + 5) // 10 * 10
+
+
+def iaq_label(iaq):
+    """Indoor::iaqLabel(): le soglie sono multiple di 10, quindi si calcola sul valore arrotondato."""
+    for limit, label in ((50, "Ottima"), (100, "Buona"), (150, "Discreta"), (200, "Mediocre"), (250, "Cattiva"), (350, "Pessima")):
+        if iaq <= limit:
+            return label
+    return "Nociva"
 SAMPLE_TUYA_FAILED = True
 SAMPLE_EVENTS = [
     ("Riunione progetto ePaper", datetime(2026, 10, 30, 15, 0), False),
@@ -679,17 +704,18 @@ class Frame:
 
         self.font("LARGE")
         c.bitmap(icon_x, self.small_icon_y(L["INDOOR_ROW1_BASELINE"]), icons["TEMPERATURE"], size, size, BLACK)
-        self.temp_with_degree(f"{SAMPLE_INDOOR['temp']:.1f}", text_x, L["INDOOR_ROW1_BASELINE"], BLACK, 2, 16, False)
+        self.temp_with_degree(f"{shown_temperature(SAMPLE_INDOOR['temp']):.1f}", text_x, L["INDOOR_ROW1_BASELINE"], BLACK, 2, 16, False)
         end = row("HUMIDITY", str(SAMPLE_INDOOR["hum"]), L["INDOOR_ROW2_BASELINE"])
         self.font("SMALL")
         self.draw_left("%", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW2_BASELINE"], BLACK)
         self.font("BODY")
-        end = row("AIR_QUALITY", f"{SAMPLE_INDOOR['iaq_label']} {SAMPLE_INDOOR['iaq']}", L["INDOOR_ROW3_BASELINE"])
+        iaq = shown_iaq(SAMPLE_INDOOR["iaq"])
+        end = row("AIR_QUALITY", f"{iaq_label(iaq)} {iaq}", L["INDOOR_ROW3_BASELINE"])
         self.font("SMALL")
         self.draw_left(str(SAMPLE_INDOOR["acc"]), end + L["INDOOR_UNIT_GAP"],
                        L["INDOOR_ROW3_BASELINE"] + L["INDOOR_SUBSCRIPT_DROP"], BLACK)
         self.font("LARGE")
-        end = row("PRESSURE", str(SAMPLE_INDOOR["press"]), L["INDOOR_ROW4_BASELINE"])
+        end = row("PRESSURE", str(shown_pressure(SAMPLE_INDOOR["press"])), L["INDOOR_ROW4_BASELINE"])
         self.font("SMALL")
         self.draw_left("mBar", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW4_BASELINE"], BLACK)
 

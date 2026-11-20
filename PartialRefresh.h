@@ -41,7 +41,8 @@ namespace PartialRefresh
     SensorInvalid,  // sensore collegato ma senza temperatura: non si sa se la LUT è adatta
     TooCold,        // sotto la soglia di temperatura
     NoReference,    // il driver non ha un riferimento valido
-    RedChanged      // il rosso è cambiato: il frame è stato rifatto in pieno
+    RedChanged,     // il rosso è cambiato: il frame è stato rifatto in pieno
+    Unchanged       // il frame è identico a quello sul vetro: nessun refresh
   };
 
   /** Valori della politica; i default vengono da Timings.h. */
@@ -106,6 +107,7 @@ namespace PartialRefresh
       case Reason::TooCold:       return "temperatura sotto soglia";
       case Reason::NoReference:   return "nessun riferimento";
       case Reason::RedChanged:    return "rosso cambiato";
+      case Reason::Unchanged:     return "frame invariato";
     }
     return "?";
   }
@@ -117,6 +119,7 @@ namespace PartialRefresh
     uint16_t partial;      // frame chiusi con un partial
     uint16_t full;         // frame chiusi con un refresh pieno, rifiutati compresi
     uint16_t redRefused;   // sottoinsieme di full: provati e rifiutati per il rosso
+    uint16_t skipped;      // frame saltati perchè identici a quello sul vetro, nessun refresh
   };
 
   /** Stato della politica fra un frame e l'altro. */
@@ -125,7 +128,7 @@ namespace PartialRefresh
     bool        hasLastFrame = false;
     uint32_t    lastFrameMs = 0;
     bool        coldLatched = false;
-    DayCounters day = { -1, 0, 0, 0 };
+    DayCounters day = { -1, 0, 0, 0, 0 };
   };
 
   /**
@@ -150,10 +153,13 @@ namespace PartialRefresh
 
   /**
    * Registra un frame concluso. `decision` è l'esito di decide(); `finalReason`
-   * è come è finito il frame: Partial se il partial è partito, altrimenti il
-   * motivo per cui è stato pieno (la decisione, oppure NoReference o RedChanged
-   * dal driver). `dayKey` è il giorno locale, -1 senza ora valida: i contatori
-   * si azzerano solo con un'ora valida che cambia giorno.
+   * è come è finito il frame: Partial se il partial è partito, Unchanged se il
+   * driver ha saltato il refresh perchè il frame era identico a quello sul
+   * vetro, altrimenti il motivo per cui è stato pieno (la decisione, oppure
+   * NoReference o RedChanged dal driver). Anche un frame saltato aggiorna
+   * l'ultimo frame: il gap per LongGap misura i frame valutati, non i refresh.
+   * `dayKey` è il giorno locale, -1 senza ora valida: i contatori si azzerano
+   * solo con un'ora valida che cambia giorno.
    */
   inline void onFrameDone(State& s, uint32_t nowMs, Reason decision, Reason finalReason, int32_t dayKey)
   {
@@ -162,9 +168,13 @@ namespace PartialRefresh
     s.coldLatched = (decision == Reason::TooCold);
     if (dayKey >= 0 && dayKey != s.day.dayKey)
     {
-      s.day = { dayKey, 0, 0, 0 };
+      s.day = { dayKey, 0, 0, 0, 0 };
     }
-    if (finalReason == Reason::Partial)
+    if (finalReason == Reason::Unchanged)
+    {
+      if (s.day.skipped < 65535) ++s.day.skipped;
+    }
+    else if (finalReason == Reason::Partial)
     {
       if (s.day.partial < 65535) ++s.day.partial;
     }
@@ -236,6 +246,35 @@ namespace PartialRefresh
   {
     if constexpr (SupportsDifferential<Epd>::value) return epd.differentialRefusedPages();
     else { (void)epd; return 0; }
+  }
+
+  /**
+   * Vero se il driver Panel sa saltare il refresh di un frame identico a quello
+   * sul vetro: ha setSkipUnchanged(bool) e frameSkipped(). Indipendente dal
+   * differenziale, perchè il salto vale anche per un driver che non lo ha.
+   */
+  template <class Panel, class = void>
+  struct SupportsSkip : std::false_type {};
+
+  template <class Panel>
+  struct SupportsSkip<Panel, std::void_t<decltype(std::declval<Panel&>().setSkipUnchanged(true)),
+                                         decltype(std::declval<const Panel&>().frameSkipped())>>
+      : std::true_type {};
+
+  /** Accende o spegne il salto nel driver; un driver senza l'API non fa niente. */
+  template <class Epd>
+  inline void setSkipUnchanged(Epd& epd, bool on)
+  {
+    if constexpr (SupportsSkip<Epd>::value) epd.setSkipUnchanged(on);
+    else { (void)epd; (void)on; }
+  }
+
+  /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
+  template <class Epd>
+  inline bool wasSkipped(Epd& epd)
+  {
+    if constexpr (SupportsSkip<Epd>::value) return epd.frameSkipped();
+    else { (void)epd; return false; }
   }
 }
 

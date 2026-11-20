@@ -151,6 +151,7 @@ Driver del **SOLUM 12.2"**, esemplare `EL122R2CRN` R2 su RTL8762ESL (768w × 960
 | `_Update_Full` | pulizia 0x26 se frame precedente, 0x3C=01 broadcast, `_using_partial_mode=false`, gancio, 0xF7 |
 | `hibernate` | 0x10=0x03, riarma `_initial_write`, azzera i flag |
 | gancio avanzamento | in `_Update_Full` e `_Update_Part` |
+| salto frame invariato | `writeImage(black, color)` nella forma del template accumula un CRC concatenato dei due piani, `refresh(false)` non lancia `_Update_Full` se coincide con l'ultimo frame refreshato, `_Update_Full` invalida il frame mostrato; nessun controllo di BUSY, un refresh fallito non è rilevato; niente differenziale, ma ogni frame riscrive tutto, quindi nessuno stato da riparare ([[frame_skip_unchanged]]) |
 | clock | 10 MHz dai costruttori, `selectSPI()` dello sketch lo sostituisce |
 
 Il template chiama `writeImageToPrevious` solo in `nextPageBW()` (non usato): override sicuro.

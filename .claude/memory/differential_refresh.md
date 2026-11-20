@@ -44,6 +44,10 @@ con il nuovo in 0x26 le righe VS di LUT1 e LUT2 si mandano scambiate, mentre TP,
 per gruppo e restano uguali. Un pixel rosso ha il bit B/N a 1 in entrambe le RAM (lo garantisce
 `drawPixel` del template) e cade su LUT3 a zero.
 
+## Il salto del frame invariato viene prima
+
+In `refresh(false)` il controllo del frame invariato ([[frame_skip_unchanged]]) precede il partial: se i due piani nero e colore sono identici a quelli dell'ultimo frame mandato al vetro non parte nè il partial nè il pieno, la catena non cresce e i ruoli delle RAM non si scambiano. Vale anche per un frame non armato, dove il riferimento resta spento. L'esito è `Reason::Unchanged`, contato a parte da partial e pieni, e il frame saltato aggiorna comunque `lastFrameMs`.
+
 ## Invarianti
 
 - **Un partial non segue mai un reset senza un 0xF7 in mezzo.** Un SWRESET riporta VCOM e VGH ai POR e
