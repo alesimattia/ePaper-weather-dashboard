@@ -324,12 +324,21 @@
 #define NTP_SERVER_1 "pool.ntp.org"
 #define NTP_SERVER_2 "time.google.com"
 
+/** Cicli fra due passi di rete aperti dallo scheduler solo per riprendere
+ *  l'ora quando non è valida e nessun task è dovuto: i task che chiedono l'ora
+ *  non accendono mai la radio da soli, e SNTP senza radio non si sincronizza.
+ *  Due cicli sono la cadenza di default del meteo, quindi il consumo con la
+ *  rete assente resta quello di una configurazione completa. */
+#define CLOCK_RECOVERY_CYCLES 2
+
 // ---------------------------------------------------------------------------
 // Validazione dei default a compile-time
 // ---------------------------------------------------------------------------
 
 static_assert(CYCLE_S % 60 == 0 && CYCLE_MIN > 0,
               "il ciclo deve essere un numero intero di minuti: le cadenze ne sono multipli");
+static_assert(CLOCK_RECOVERY_CYCLES >= 1,
+              "senza ora valida lo scheduler deve riaprire la radio almeno ogni ciclo indicato");
 static_assert(CYCLE_S >= DISPLAY_REFRESH_PIENO_S,
               "a ogni ciclo si disegna un frame: il ciclo non può durare meno di un refresh");
 static_assert(WEATHER_FORECAST_FETCH_MIN >= WEATHER_FORECAST_FETCH_MIN_FLOOR &&

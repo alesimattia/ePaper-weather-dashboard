@@ -497,16 +497,73 @@ int main()
     Scheduler::Hooks h = hooksFinti();
     h.radioOn = []() { evento('R'); impostaOra(2026, 9, 10, 12, 0); return true; };
     Scheduler::begin(tab, 1, h);
+    ok(!Scheduler::isDue(tab[0], nullptr), "orologio non valido: il giornaliero non è dovuto");
     Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
-    ok(g_runD == 0, "orologio non valido: il giornaliero non è dovuto, la radio non si accende per lui");
-    impostaOra(2026, 9, 10, 12, 0);
-    alProssimoPoll();
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(std::strchr(g_eventi, 'R') != nullptr, "  la radio si accende per riprendere l'ora");
     ok(g_runD == 1 && tab[0].state.lastSlotDayOfYear == oggiLocale()->tm_yday,
-       "  con l'ora valida gira e registra il giorno");
+       "  con l'ora sincronizzata il giornaliero gira nello stesso giro e registra il giorno");
     alProssimoPoll();
     Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
     ok(g_runD == 1, "  al ciclo dopo non riparte");
+  }
+
+  // ---- ora non valida senza task dovuti: lo scheduler riprende l'ora ------
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("b", &Timings::Valori::routeMin, runB);   // richiede l'ora, come i calendari
+    tab[0].preconditionsMet = []() { return Clock::valido(); };
+    const auto accensioni = []() {
+      int n = 0;
+      for (const char* p = g_eventi; *p; ++p) n += (*p == 'R');
+      return n;
+    };
+    const auto giro = []() { Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER); };
+
+    // SNTP che non risponde: la radio si riaccende ogni CLOCK_RECOVERY_CYCLES, il frame a ogni ciclo.
+    g_epochFinta = 1000;
+    g_msFinto = 31000000;
+    boot(tab, 1);
+    giro();
+    ok(accensioni() == 1 && g_runB == 0 && g_frame == 1,
+       "ora non valida, nessun task dovuto: radio accesa per l'ora, poi il frame");
+    for (int i = 1; i < CLOCK_RECOVERY_CYCLES; ++i) { alProssimoPoll(); giro(); }
+    ok(accensioni() == 1 && g_frame == CLOCK_RECOVERY_CYCLES,
+       "  nei cicli successivi niente radio, il frame sì");
+    alProssimoPoll();
+    giro();
+    ok(accensioni() == 2 && g_frame == CLOCK_RECOVERY_CYCLES + 1,
+       "  dopo CLOCK_RECOVERY_CYCLES cicli la radio riprova");
+    ok(g_runB == 0, "  il task che chiede l'ora resta sospeso");
+
+    // SNTP che risponde: il task che chiede l'ora gira nello stesso giro.
+    g_epochFinta = 1000;
+    boot(tab, 1);
+    Scheduler::Hooks h = hooksFinti();
+    h.radioOn = []() { evento('R'); impostaOra(2026, 9, 10, 12, 0); return true; };
+    Scheduler::begin(tab, 1, h);
+    giro();
+    ok(accensioni() == 1 && g_runB == 1 && g_frame == 1,
+       "ora ripresa dalla radio: il task che la chiede gira nello stesso giro, poi il frame");
+
+    // Ora valida e nessun task dovuto: nessuna accensione.
+    impostaOra(2026, 9, 10, 12, 0);
+    tab[0].preconditionsMet = []() { return false; };
+    boot(tab, 1);
+    giro();
+    ok(accensioni() == 0 && g_frame == 1, "ora valida senza task dovuti: niente radio, solo il frame");
+
+    // Finestra di manutenzione al boot: il primo frame aspetta l'ora al più TIME_SYNC_TIMEOUT_MS
+    // dalla STA vista, poi parte comunque.
+    tab[0].preconditionsMet = []() { return Clock::valido(); };
+    g_epochFinta = 1000;
+    boot(tab, 1);
+    const auto giroManutenzione = []() { Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE); };
+    giroManutenzione();
+    ok(g_frame == 0, "manutenzione, ora non valida e nessun task dovuto: il primo frame aspetta l'ora");
+    g_msFinto += TIME_SYNC_TIMEOUT_MS;
+    giroManutenzione();
+    ok(g_frame == 1 && g_runB == 0 && accensioni() == 0,
+       "  allo scadere del budget il frame parte senza ora, e la radio della manutenzione non si tocca");
   }
 
   // ---- finestra di manutenzione al boot ------------------------------------

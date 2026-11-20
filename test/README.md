@@ -96,7 +96,9 @@ fallita senza tentativi spesi; notte con il solo sensore, e senza sensore sonno
 fino all'apertura della fascia anche attraverso l'ora legale; primo ciclo del
 mattino che rende dovuti i periodici ma non il giornaliero; giornaliero che
 aspetta l'ora valida senza doppioni; finestra di manutenzione con STA in
-ritardo, STA mai salita o caduta, ora da sincronizzare e client attivo; primo
+ritardo, STA mai salita o caduta, ora da sincronizzare e client attivo; ora non
+valida senza task dovuti, con la radio riaccesa ogni `CLOCK_RECOVERY_CYCLES`, il
+frame a ogni ciclo e i task che chiedono l'ora nello stesso giro del recupero; primo
 frame dopo l'accensione, con l'ora che arriva dopo i 15 s dal boot, mai, o in
 piena notte, e con i task che dipendono dall'ora nello stesso passo prima del
 frame; ritento nella finestra di manutenzione dopo `SESSION_RETRY_MS`, con doppio

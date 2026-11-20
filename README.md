@@ -1117,6 +1117,7 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `INDOOR_SAMPLE_MAX_AGE_MS` | 2 × 300 s + 1 s | Età oltre la quale il campione del sensore non si mostra nè si pubblica: tollera un campione perso. |
 | `WEATHER_MAX_AGE_S` | `3600` s | Età oltre la quale il meteo in cache diventa `--`. |
 | `CLOCK_RESYNC_INTERVAL_MS` | 1 h | Distanza minima fra due risincronizzazioni SNTP forzate all'apertura della radio. |
+| `CLOCK_RECOVERY_CYCLES` | `2` cicli | Con l'ora non valida e nessun task dovuto, cicli fra due accensioni della radio fatte dallo scheduler solo per riprendere l'ora. |
 | `DISPLAY_BUSY_SLEEP_SLICE_MS` | `5000` ms | Timer di sicurezza del light sleep durante l'attesa del BUSY del refresh; il risveglio vero è il fronte del BUSY. |
 | `PARTIAL_CHAIN_MAX` | `6` | Partial consecutivi al massimo, poi un refresh pieno che azzera il grigio che il partial lascia dove toglie il nero (la letteratura dice uno ogni 5-10). |
 | `PARTIAL_MIN_TEMP_C`, `PARTIAL_TEMP_HYSTERESIS_C` | `18` °C, `2` °C | Sotto la soglia il frame è pieno, perchè la LUT del partial ha frame fissi e non compensa il freddo; dopo un pieno per freddo il partial riparte sopra soglia più isteresi. Valore prudente, non misurato. Senza BME680 collegato la soglia non si applica e il partial si prova comunque; con il sensore collegato un campione non valido tiene il frame pieno. |
@@ -1149,7 +1150,8 @@ ogni giro Maintenance::servi()                 // macchina a stati + handleClien
           Scheduler::runRound(MANAGED_BY_MAINTENANCE), al più uno al secondo
             sensore (al primo giro: ciclo 1)
             passo di rete, a fasi:
-              Idle        serve solo se un task è dovuto, dentro la fascia WiFi
+              Idle        serve solo dentro la fascia WiFi, se un task è dovuto o se
+                          l'ora non è valida (al più ogni CLOCK_RECOVERY_CYCLES)
               Acquiring   STA connessa (al più RADIO_STA_ATTESA_MS dall'inizio del passo),
                           poi ora valida (al più TIME_SYNC_TIMEOUT_MS dalla STA vista)
               Running     meteo -> google -> outlook -> tuya -> route -> cinema,
@@ -1223,7 +1225,7 @@ Ogni esito è loggato con durata e prossimo slot:
 | Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Al ciclo successivo, poi alla cadenza `route_min` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
 | BME680 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
-| Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
+| Orologio mai sincronizzato (SNTP irraggiungibile) | I task che chiedono l'ora (calendari, Tuya, percorso, cinema giornaliero) restano **sospesi** e la lista eventi mostra i placeholder `--`; il frame si disegna comunque a ogni ciclo. Anche senza task dovuti lo scheduler riaccende la radio ogni `CLOCK_RECOVERY_CYCLES` cicli per riprendere l'ora | Al primo SNTP riuscito i task sospesi girano nello stesso giro, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.
 Un fallimento di Calendar non blocca Weather; un fallimento di Weather non blocca Indoor. L'ordine

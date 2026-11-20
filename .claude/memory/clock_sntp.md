@@ -120,9 +120,16 @@ appartiene a nessuno dei due.
 - `Tuya::readyToPublish()` e `Tuya::runPublish()`: TuyaLink firma un timestamp
   Unix, quindi senza ora vera il publish non parte (vedi [[tuya_module]]).
 
-**Non può andare in stallo**: il meteo non dipende dall'ora e continua ad aprire
-la finestra radio, dove la sincronizzazione avviene, come il cinema al boot. È la stessa
-ragione per cui `isInsideRadioHours()` è fail-open.
+**Non può andare in stallo**: senza ora l'unico task che può diventare dovuto è il
+meteo, perchè i giornalieri chiedono l'orologio in `isDue()` e gli altri nelle
+precondizioni. Per non dipendere dalla configurazione, nella fase Idle lo
+scheduler apre il passo di rete anche senza task dovuti quando l'ora non è valida
+e da `CLOCK_RECOVERY_CYCLES` (2) cicli nessun passo ha acceso la radio
+(`isClockRecoveryDue()`); Running rilegge l'ora, quindi a sincronizzazione
+riuscita i task che la chiedono girano nello stesso giro. È la stessa ragione per
+cui `isInsideRadioHours()` è fail-open. In manutenzione al boot il primo frame
+aspetta quindi l'ora fino a `TIME_SYNC_TIMEOUT_MS` dalla STA vista anche senza
+task configurati.
 
 **Modo di fallire su una rete che blocca NTP**: l'orologio non diventa mai
 valido, i due calendari, Tuya, il percorso e il cinema giornaliero non girano

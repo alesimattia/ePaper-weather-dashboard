@@ -165,6 +165,8 @@ namespace Scheduler
     inline bool     retryAnyFailure = false; // primo passo dopo il boot in manutenzione: ritenta ogni fallimento
     inline bool     retryWaited    = false;  // la radio dello scheduler ha già atteso fra le due passate
     inline bool     bootPhase      = true;   // finchè non si conclude il primo passo di rete
+    inline bool     clockAttempted = false;  // un passo di rete ha già acceso la radio con l'ora non valida
+    inline uint32_t clockAttemptCycle = 0;   // ciclo di quel passo
 
     /** Passate massime di un passo di rete: la seconda ritenta i task falliti. */
     inline constexpr uint8_t MAX_PASSES = 2;
@@ -213,6 +215,15 @@ namespace Scheduler
     inline bool retryEligible(const Task::State& s)
     {
       return retryAnyFailure || s.lastDurationMs < FAST_FAILURE_MAX_MS;
+    }
+
+    /** Vero se l'ora non è valida e da CLOCK_RECOVERY_CYCLES cicli nessun passo
+     *  ha acceso la radio: SNTP si sincronizza solo con la radio accesa, e i
+     *  task che chiedono l'ora non diventerebbero mai dovuti. */
+    inline bool isClockRecoveryDue()
+    {
+      return !Clock::valido() &&
+             (!clockAttempted || cycle - clockAttemptCycle >= (uint32_t)CLOCK_RECOVERY_CYCLES);
     }
 
     /** Numero di cicli fra due slot di un task periodico, almeno uno. */
@@ -539,10 +550,10 @@ namespace Scheduler
      * non si possiede e il loop deve servire il web server, ogni chiamata
      * avanza quanto può e ritorna.
      *
-     *   Idle       serve un passo solo dentro la fascia e se un task è dovuto.
-     *              Con l'ora non valida i task che non la richiedono, il meteo
-     *              e il cinema al boot, bastano ad accendere la radio dove
-     *              SNTP si sincronizza.
+     *   Idle       serve un passo solo dentro la fascia, se un task è dovuto
+     *              oppure se l'ora non è valida e da CLOCK_RECOVERY_CYCLES
+     *              cicli nessun passo ha acceso la radio, dove SNTP si
+     *              sincronizza: senza ora sarebbe dovuto il solo meteo.
      *   Acquiring  radio dello scheduler: radioOn(), già bloccante su
      *              connessione e SNTP. Manutenzione: la STA entro
      *              RADIO_STA_ATTESA_MS dall'inizio, poi l'ora entro
@@ -572,8 +583,17 @@ namespace Scheduler
             }
             if (!anyTaskDue(localNow(buffer)))
             {
-              finishNetworkStep("nessun task dovuto");
-              return;
+              if (!isClockRecoveryDue())
+              {
+                finishNetworkStep("nessun task dovuto");
+                return;
+              }
+              LOG("sched", "ora non valida e nessun task dovuto: radio accesa per sincronizzare l'ora");
+            }
+            if (!Clock::valido())
+            {
+              clockAttempted = true;
+              clockAttemptCycle = cycle;
             }
             netPhase = NetPhase::ACQUIRING;
             acquireStartMs = nowMs;
@@ -812,6 +832,7 @@ namespace Scheduler
     detail::lastActiveDay = -1;
     detail::maintenanceRoundDone = false;
     detail::bootPhase = true;
+    detail::clockAttempted = false;
     LOG("sched", "%u task di rete, ciclo di %u s, sensore %s", (unsigned)count, (unsigned)CYCLE_S,
         detail::sensorIsActive() ? "attivo" : "assente (ciclo interno)");
   }
