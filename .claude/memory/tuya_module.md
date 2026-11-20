@@ -161,8 +161,8 @@ property, `code`, `abilityId`, `accessMode` e `typeSpec` (tipo, min, max, step, 
 - L'SDK pubblica in QoS 0. Il modulo usa QoS 1: il PUBACK è l'unico segnale di
   consegna disponibile prima di tornare a dormire.
 - Il `time` del messaggio è l'epoch del campione (`millis() - lastUpdateMs`), non l'istante
-  del publish: il task del sensore gira a valle dei task di rete, quindi la cache
-  contiene il campione del giro precedente, vecchio fino a cinque minuti.
+  del publish: il campione si legge prima della radio e dei fetch che precedono Tuya,
+  e se l'interrogazione del ciclo non ne ha portato uno nuovo è quello di un ciclo prima.
 
 **Device model della console** (letto con `thing/model/get`): tutte le property sono
 `ro`. Gli identifier coincidono con i `TUYA_DP_*`.

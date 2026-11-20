@@ -332,9 +332,10 @@ namespace Tuya
      * massima pressione, con la sessione TLS aperta.
      *
      * Il time del messaggio è l'epoch del campione e non l'istante del
-     * publish: il task del sensore gira a valle di quelli di rete, quindi la
-     * cache contiene il campione del giro precedente e datarlo "adesso"
-     * sarebbe sbagliato. Il time per property viene omesso: la documentazione
+     * publish: il campione si legge prima della radio e dei fetch che precedono
+     * Tuya, e se l'interrogazione del ciclo non ne ha portato uno nuovo è quello
+     * di un ciclo prima, quindi datarlo "adesso" sarebbe sbagliato. Il time per
+     * property viene omesso: la documentazione
      * Tuya lo marca obbligatorio, ma il cloud accetta il messaggio senza
      * (verificato con il report_response, code 0), e quello di messaggio vale
      * per tutte le proprietà. Vale sia in secondi a 10 cifre sia in millisecondi

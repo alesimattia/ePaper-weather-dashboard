@@ -474,7 +474,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 
 | Sorgente | Adattatore nel .ino | Metodo che produce il dato | Cosa arriva sul display |
 |---|---|---|---|
-| Sensore BME680 (BSEC) | `pollIndoorSensor()`, hook `pollSensor` dello scheduler | [Indoor::refresh()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
+| Sensore BME680 (BSEC) | nessuno: [Indoor::poll()](Indoor.h) è direttamente l'hook `pollSensor` dello scheduler | [Indoor::poll()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
 | Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
@@ -679,7 +679,7 @@ il driver può saltare il refresh.
 | IAQ | 1 punto su scala 0-500 | nessuna tolleranza numerica: la dichiara l'accuratezza IAQ (0-3) | `uint16_t` | 1 punto | 10 punti, con l'etichetta sul valore arrotondato (soglie 50, 100, 150, 200, 250, 350: multiple di 10) |
 | Accuratezza IAQ | 4 livelli (0-3) | non applicabile | `uint8_t` | 1 livello | 1 livello (pedice) |
 
-`Indoor::refresh()` è il primo passo di ogni ciclo dello scheduler, e la sua scadenza
+`Indoor::poll()` è il primo passo di ogni ciclo dello scheduler, e la sua scadenza
 (`Indoor::msUntilNextPoll()`, 300 s più 1 s di margine dall'ultima chiamata) è
 l'orologio del ciclo: BSEC non si lascia anticipare nè ritardare, quindi tutto il
 resto si conta in cicli. Il sensore si interroga anche di notte, l'unica attività
@@ -1018,7 +1018,7 @@ del sensore: un'interrogazione del BME680 ogni `CYCLE_S` (300 s, il periodo ULP 
 BSEC). Senza sensore il ciclo è interno e dura lo stesso. Ogni ciclo fa tre passi,
 sempre in quest'ordine:
 
-1. **sensore**: `Indoor::refresh()`;
+1. **sensore**: `Indoor::poll()`;
 2. **rete**: una sola accensione della radio per i task dovuti in questo ciclo,
    nell'ordine della tabella, con i ping di sveglia prima dei fetch;
 3. **frame**: il ridisegno del pannello, sempre, a ogni ciclo della fascia WiFi, con
@@ -1258,7 +1258,7 @@ valore del `.ino`, anche heap e stack dopo ogni giro con lavoro.
 
 ```
 wake      Scheduler::runRound(MANAGED_BY_SCHEDULER)   // alla scadenza esatta del sensore
-            1. sensore: Indoor::refresh()
+            1. sensore: Indoor::poll()
             2. rete, solo in fascia e se un task è dovuto in questo ciclo:
                wifiOn() -> rilegge l'ora (SNTP appena fatto) -> task dovuti, sensore fra l'uno e l'altro -> wifiOff()
             3. frame, solo in fascia: Weather::render()
@@ -1302,7 +1302,7 @@ Ogni esito è loggato con durata e prossimo slot:
 | Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi in due cicli consecutivi, poi domani a `cine_h` |
 | Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Al ciclo successivo, poi alla cadenza `route_min` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
-| BME680 (init failed) | `Indoor::refresh()` no-op, riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
+| BME680 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.

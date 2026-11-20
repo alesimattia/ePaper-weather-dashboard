@@ -16,7 +16,7 @@
  * Lo stato del calibratore viene salvato su NVS (namespace "bme680") ogni 6 ore 
  * e ripristinato all'avvio, azzerando il warm-up dopo un power cycle.
  *
- * Lo scheduler chiama refresh() alla scadenza di msUntilNextPoll(), come primo
+ * Lo scheduler chiama poll() alla scadenza di msUntilNextPoll(), come primo
  * passo di ogni ciclo. Il frame del ciclo legge poi da sè il campione, solo
  * dentro la fascia WiFi.
  */
@@ -49,9 +49,9 @@ namespace Indoor
 {
   /**
    * Ultimo campione prodotto dalla libreria BSEC2. 
-   * Finchè BSEC non ha stabilizzato il primo output, valid=false e tutti i campi a
-   * zero; dopo un cold start ci vogliono ~5 min per il primo sample
-   * (immediato invece quando lo stato è stato ripristinato da NVS).
+   * Finchè BSEC non ha prodotto il primo output, valid=false e tutti i campi a
+   * zero. Il ripristino dello stato da NVS non anticipa il primo campione: evita
+   * il warm-up dell'accuratezza IAQ.
    *
    * BSEC espone ogni grandezza come float perchè ha un solo campo signal, ma
    * qui i tipi seguono il dato: il decimale è significativo solo per la
@@ -124,7 +124,7 @@ namespace Indoor
      *  indica un campione nuovo. */
     inline int64_t  lastOutputTimestampNs = 0;
 
-    /** Istante dell'ultima chiamata a refresh(): la cadenza delle
+    /** Istante dell'ultima chiamata a poll(): la cadenza delle
      *  interrogazioni si conta da qui e non dal campione, così un sensore che
      *  smette di rispondere non fa svegliare il dispositivo a ogni giro. */
     inline uint32_t lastPollMs       = 0;
@@ -143,16 +143,14 @@ namespace Indoor
      * Invalida il campione quando è più vecchio di INDOOR_SAMPLE_MAX_AGE_MS,
      * cioè al secondo campione perso: da lì il riquadro mostra "--" e Tuya
      * smette di pubblicare, invece di esporre un valore vecchio come attuale.
-     * @return true se il campione è appena scaduto.
      */
-    inline bool expireIfStale()
+    inline void expireIfStale()
     {
       if (!current.valid || !elapsed(millis(), current.lastUpdateMs, INDOOR_SAMPLE_MAX_AGE_MS))
-        return false;
+        return;
       current.valid = false;
       LOG("BME680", "nessun campione da %lu s: dato scaduto",
           (unsigned long)((millis() - current.lastUpdateMs) / 1000UL));
-      return true;
     }
 
     /**
@@ -457,8 +455,9 @@ namespace Indoor
     LOG("BME680", "init ok, ULP 5 min");
   }
 
-  /** Vero quando il sensore e' stato inizializzato con successo. È l'hook
-   *  preconditionsMet() del task del sensore nel .ino: senza sensore il task è sospeso. */
+  /** Vero quando il sensore è stato inizializzato con successo. È l'hook
+   *  sensorActive dello scheduler: senza sensore poll() non viene chiamata e il
+   *  ciclo diventa interno. */
   inline bool attivo() { return detail::bsecOk; }
 
   /**
@@ -467,7 +466,7 @@ namespace Indoor
    * next_call, ogni 300 s in ULP, e prima non fa nulla: interrogare più spesso
    * non anticipa nessun campione, quindi la cadenza si conta dall'ultima
    * chiamata, che il campione arrivi o no.
-   * Usato dal .ino come scadenza custom del task del sensore.
+   * È l'hook msUntilSensorPoll dello scheduler, cioè la scadenza del ciclo.
    */
   inline uint32_t msUntilNextPoll()
   {
@@ -479,38 +478,40 @@ namespace Indoor
   }
 
   /**
-   * Interroga il sensore. Lo scheduler la chiama alla scadenza data da
-   * msUntilNextPoll().
-   * @return true quando il dato da mostrare è cambiato: un nuovo campione,
-   *         oppure il campione precedente appena scaduto. Lo scheduler non lo
-   *         usa: il frame si disegna a ogni ciclo e legge da sè il campione.
+   * Interroga il sensore. Lo scheduler la chiama alla scadenza di
+   * msUntilNextPoll() e solo con attivo() vero, perchè con il sensore non
+   * inizializzato bsec.run() girerebbe su un'istanza BSEC mai creata.
    */
-  inline bool refresh()
+  inline void poll()
   {
     using namespace detail;
-    if (!bsecOk) return false;
 
     lastPollMs = millis();
     everPolled = true;
     if (!bsec.run())
     {
       /**
-       * run() ritorna false anche quando semplicemente non ci sono dati:
-       * non e' un errore fatale. Il confronto e' con != e non con <: i codici
-       * positivi sono warning, fra cui la violazione di temporizzazione
-       * (100), e con un filtro sui soli negativi resterebbero invisibili.
+       * run() ritorna false per un errore o un warning di BSEC o del sensore;
+       * una chiamata prima di next_call ritorna true senza produrre uscite. Il
+       * confronto è con != e non con <: i codici positivi sono warning, fra cui
+       * la violazione di temporizzazione (100), e con un filtro sui soli
+       * negativi resterebbero invisibili.
        */
       if (bsec.status != BSEC_OK || bsec.sensor.status != BME68X_OK)
         LOG("BME680", "run: bsec=%d (%s), sensor=%d",
             bsec.status, detail::descriviStatoBsec(bsec.status), bsec.sensor.status);
-      return expireIfStale();
+      expireIfStale();
+      return;
     }
 
     // Le uscite restano nella libreria fra un run() e l'altro: è nuovo solo un
     // campione con un timestamp diverso dall'ultimo applicato.
     const bsecOutputs* outputs = bsec.getOutputs();
     if (outputs == nullptr || outputs->output[0].time_stamp == lastOutputTimestampNs)
-      return expireIfStale();
+    {
+      expireIfStale();
+      return;
+    }
     lastOutputTimestampNs = outputs->output[0].time_stamp;
     applyOutputs(*outputs);
 
@@ -531,8 +532,6 @@ namespace Indoor
       lastStateSaveMs = millis();
       if (current.iaqAccuracy >= 3) savedAtFullAccuracy = true;
     }
-
-    return true;
   }
 
   /**
@@ -544,23 +543,6 @@ namespace Indoor
     return detail::current;
   }
 
-  /**
-   * Mappa il valore IAQ (0-500) a una breve etichetta in italiano
-   * descrittiva della qualita' dell'aria. Scala ufficiale Bosch BSEC:
-   *
-   *   IAQ         |  Etichetta  |  Significato
-   *   ------------|-------------|-------------------------
-   *     0..  50   |  "Ottima"   |  aria pulita
-   *    51.. 100   |  "Buona"    |  aria tipica indoor
-   *   101.. 150   |  "Discreta" |  leggermente inquinata
-   *   151.. 200   |  "Mediocre" |  moderatamente inquinata
-   *   201.. 250   |  "Cattiva"  |  pesantemente inquinata
-   *   251.. 350   |  "Pessima"  |  gravemente inquinata
-   *    > 350      |  "Nociva"   |  aria nociva
-   *
-   * Usato da: Weather.h (renderIndoorBox) per mostrare la
-   * condizione accanto al valore numerico IAQ.
-   */
   /**
    * Valori del riquadro Interno come si mostrano sul display. Il campione resta
    * alla risoluzione dei suoi tipi: queste tre funzioni applicano solo il crop di
@@ -587,6 +569,23 @@ namespace Indoor
     return (uint16_t)(((uint32_t)iaq + 5) / 10 * 10);
   }
 
+  /**
+   * Mappa il valore IAQ (0-500) a una breve etichetta in italiano
+   * descrittiva della qualita' dell'aria. Scala ufficiale Bosch BSEC:
+   *
+   *   IAQ         |  Etichetta  |  Significato
+   *   ------------|-------------|-------------------------
+   *     0..  50   |  "Ottima"   |  aria pulita
+   *    51.. 100   |  "Buona"    |  aria tipica indoor
+   *   101.. 150   |  "Discreta" |  leggermente inquinata
+   *   151.. 200   |  "Mediocre" |  moderatamente inquinata
+   *   201.. 250   |  "Cattiva"  |  pesantemente inquinata
+   *   251.. 350   |  "Pessima"  |  gravemente inquinata
+   *    > 350      |  "Nociva"   |  aria nociva
+   *
+   * Usato da: Weather.h (renderIndoorBox) per mostrare la
+   * condizione accanto al valore numerico IAQ.
+   */
   inline const char* iaqLabel(uint16_t iaq)
   {
     if (iaq <=  50) return "Ottima";

@@ -661,10 +661,6 @@ static Scheduler::Outcome runTuyaPublish()
  *  brucia il suo unico tentativo per cadenza. */
 static bool tuyaReady() { return Tuya::readyToPublish(); }
 
-/** Passo del sensore del ciclo: il valore di ritorno di Indoor::refresh() non
- *  serve, perchè il frame del ciclo si disegna comunque. */
-static void pollIndoorSensor() { Indoor::refresh(); }
-
 /**
  * Tutti i flussi di rete del dispositivo. L'ordine delle righe è l'ordine di
  * esecuzione dentro il passo di rete del ciclo, che viene dopo il sensore e
@@ -909,7 +905,7 @@ void setup()
 	hooks.radioOff = wifiOff;
 	hooks.sensorActive = Indoor::attivo;
 	hooks.msUntilSensorPoll = Indoor::msUntilNextPoll;
-	hooks.pollSensor = pollIndoorSensor;
+	hooks.pollSensor = Indoor::poll;
 	hooks.drawFrame = Weather::render;
 	Scheduler::begin(TASK_TABLE, TASK_COUNT, hooks);
 }
