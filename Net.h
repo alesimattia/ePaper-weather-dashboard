@@ -12,7 +12,7 @@
  * Configurazione unica delle connessioni HTTPS dei produttori di rete e
  * riconoscimento delle credenziali lasciate al valore del template.
  *
- * Esiste perchè le stesse quattro regole valgono in più punti di quattro moduli:
+ * Esiste perchè le stesse quattro regole valgono in più punti di tre moduli:
  * certificato non verificato, handshake con un tetto, risposte non chunked,
  * corpo letto attendendo le pause fra i record TLS (BodyStream).
  * Tenerle qui fa sì che un produttore aggiunto in futuro le erediti da sè.
@@ -23,7 +23,7 @@ namespace Net
    * Prepara un client TLS: certificato non verificato, come in tutti i fetch
    * dei dati pubblici, e handshake limitato a TLS_HANDSHAKE_TIMEOUT_S, perchè il
    * default del core (120 s) fermerebbe tutti i produttori successivi.
-   * Usato direttamente da Mail.h, che riusa la connessione in HTTP/1.1.
+   * Usato da beginHttps().
    */
   inline void prepareTlsClient(WiFiClientSecure& client)
   {

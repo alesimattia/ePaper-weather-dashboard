@@ -2,17 +2,15 @@
 Verifica da questa macchina che le credenziali Google dell'header di
 configurazione funzionino come le usa il firmware, prima di flashare.
 
-Rifà le stesse chiamate dei moduli Calendar e Mail:
+Rifà le stesse chiamate del modulo Calendar:
   1. rinnovo dell'access token con le tre macro GOOGLE_* (grant_type=refresh_token
      senza scope, come Calendar::detail::refreshGoogleToken());
-  2. lettura di un evento del calendario primario (Calendar API);
-  3. lettura di un id di messaggio della posta in arrivo (Gmail API).
+  2. lettura di un evento del calendario primario (Calendar API).
 
 Stampa gli scope del token, i codici HTTP e, per gli errori, il messaggio e i
 motivi di Google, che distinguono le cause di un 403: SERVICE_DISABLED = API non
 abilitata nel progetto, ACCESS_TOKEN_SCOPE_INSUFFICIENT = token emesso senza
-quello scope. Non stampa i valori delle macro nè il contenuto di eventi e
-messaggi.
+quello scope. Non stampa i valori delle macro nè il contenuto degli eventi.
 
 Uso:
     python3 tools/google_api_check.py
@@ -50,8 +48,6 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 VERIFICHE = {
     "Calendar API": "https://www.googleapis.com/calendar/v3/calendars/primary/events"
                     "?maxResults=1&fields=items(id)",
-    "Gmail API": "https://gmail.googleapis.com/gmail/v1/users/me/messages"
-                 "?maxResults=1&labelIds=INBOX&fields=messages(id)",
 }
 # ---------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@ type: project
 
 `drawTestBackground()` (`ePaper-weather-dashboard.ino`) sceglie fra due descrittori senza altri rami:
 - `CinemaStore::image()` → immagine scaricata, nella partizione `wallpaper` mappata con `esp_partition_mmap` (vedi [[esp32_cinema_consumer]]);
-- `&img_la_grande_onda_desc` → fallback in `PROGMEM` (Flash readonly), quando la prima è `nullptr`.
+- `&img_great_wave_desc` → fallback in `PROGMEM` (Flash readonly), quando la prima è `nullptr`.
 
 **Why (deduzione architetturale, non documentata esplicitamente nel driver):**
 - Su AVR (Arduino UNO, Mega) `PROGMEM` vive in spazio Harvard separato dalla RAM: per leggere serve `pgm_read_byte()` con un opcode dedicato.
@@ -29,14 +29,14 @@ su tutte le altre varianti di display.
 
 **Il fallback deve combaciare con l'area del wallpaper.** Il descrittore in `wallpaper/` va
 generato dall'utente con `epd_image_converter.pyw` a `Layout::CINEMA_W x CINEMA_H` del 097c,
-cioè `610x290`, la stessa larghezza del riquadro Posta (`CINEMA_W` = `MAIL_W`), così wallpaper e
-Posta restano allineati. `showImage` **non clippa** e ricava lo stride dalla larghezza del
+cioè `610x440` (`img_great_wave.h`, sorgente `wallpaper/great_wave.jpg`). `showImage` **non clippa** e ricava lo stride dalla larghezza del
 descrittore: `drawTestBackground()` taglia le righe oltre `CINEMA_H`, ma le colonne oltre
 `CINEMA_W` sconfinano nel gutter, dove nessuno le sbianca. La larghezza giusta si ottiene
 fornendo l'immagine a misura, non con codice (scelta dell'utente). Il fallback è unico per i due
-pannelli: sul 122c (area 610x325) resta più basso e lascia una fascia bianca. Nessuno
+pannelli: sul 122c (area 610x536) resta più basso e lascia una fascia bianca, accettata dall'utente. Nessuno
 `static_assert` sulla misura, per scelta dell'utente: è preferibile a un errore di compilazione.
 
-**Il fallback è monocromatico** (`FORMAT_BW_1BPP`, un solo piano, `data1` e `data2` a `nullptr`),
-mentre l'immagine scaricata è a due piani su questi pannelli. Il formato viaggia dentro il
-`Descriptor`, quindi i due convivono senza rami nel chiamante.
+**Il fallback è a due piani** (`FORMAT_BWR_1BPP`, nero e rosso, `data2` a `nullptr`), come
+l'immagine scaricata; un fallback monocromatico (`FORMAT_BW_1BPP`, `data1` a `nullptr`)
+funzionerebbe allo stesso modo, perchè il formato viaggia dentro il `Descriptor` e
+`drawTestBackground()` sposta `data1` solo se presente.

@@ -9,7 +9,7 @@ Scrive, a partire dalla root del repository:
     preview.svg                  il frame del 9.7", che GitHub mostra nel README
     preview_<pannello>.html      pagina locale con zoom, zone e coordinate
 
-I dati mostrati (meteo, eventi, mail, sensore) sono di esempio. Il wallpaper
+I dati mostrati (meteo, eventi, sensore) sono di esempio. Il wallpaper
 è quello di fallback ritagliato all'area cinema, cioè alla misura esatta che
 il server serve al firmware. L'uscita è deterministica: rigenerare senza
 modifiche al layout non cambia nessun file.
@@ -479,14 +479,6 @@ SAMPLE_EVENTS = [
     ("Dentista", datetime(2026, 11, 4, 11, 15), False),
     ("Consegna documentazione", datetime(2026, 11, 5, 17, 0), False),
 ]
-SAMPLE_MAILS = [
-    ("mario.rossi@example.com", "Riunione domani ore 10, sala B: prepara le slide", datetime(2026, 10, 30, 9, 42), True),
-    ("notifiche@github.example", "[epd] Nuova issue sul layout del banner", datetime(2026, 10, 30, 8, 15), False),
-    ("ordini@shop.example", "Il tuo ordine e' in consegna oggi", datetime(2026, 10, 30, 7, 30), True),
-    ("newsletter@tech.example", "5 trend ESP32 da seguire", datetime(2026, 10, 29, 22, 10), False),
-    ("banca@bank.example", "Estratto conto di ottobre disponibile", datetime(2026, 10, 29, 18, 2), False),
-    ("luca.bianchi@example.com", "Foto del weekend", datetime(2026, 10, 29, 16, 47), False),
-]
 
 
 # =============================================================================
@@ -559,19 +551,17 @@ class Frame:
 
     # --- frame -----------------------------------------------------------------
     def render(self):
-        """Weather::renderFrame(): wallpaper, calendario, posta, banner su fondo bianco."""
+        """Weather::renderFrame(): wallpaper, calendario, banner su fondo bianco."""
         L = self.L
         self.c.fill_rect(0, 0, L["SCREEN_W"], L["SCREEN_H"], WHITE)
         self.draw_wallpaper()
         self.draw_calendar()
-        self.draw_mail()
         self.draw_banner()
         return self.c
 
     def draw_wallpaper(self):
-        """showImage() del fallback ritagliato all'area cinema, larga quanto la Posta: mostra
-        il frame come appare con un'immagine a misura CINEMA_W x CINEMA_H, anche se l'asset
-        ne sborda. Piano nero con bit 0 = nero, piano rosso con bit 0 = rosso, come lo
+        """showImage() del fallback ritagliato all'area cinema: mostra il frame come appare
+        con un'immagine a misura CINEMA_W x CINEMA_H, anche se l'asset ne sborda. Piano nero con bit 0 = nero, piano rosso con bit 0 = rosso, come lo
         compone GxEPDImage."""
         L = self.L
         width, height, black, red = self.sources["wallpaper"]
@@ -638,43 +628,6 @@ class Frame:
             self.draw_right(date, right_x, top + row_h - L["EVT_DATE_FROM_BOTTOM"], color)
             self.font("BODY")
             self.draw_left(self.truncate(title, L["EVT_W"] - right_w - L["EVT_RIGHT_GAP"]), L["EVT_X"], title_base, color)
-
-    def draw_mail(self):
-        """Mail::draw(): riquadro Posta a due colonne, busta nera accanto alle non lette."""
-        L, c = self.L, self.c
-        self.font("TITLE")
-        self.fieldset(L["MAIL_X"], L["MAIL_Y"], L["MAIL_W"], L["MAIL_H"], "Posta")
-        grid_h = L["MAIL_ROWS_PER_COL"] * L["MAIL_ROW_H"]
-        c.vline(L["MAIL_X"] + L["MAIL_COL_W"], L["MAIL_BODY_Y"] + 4, grid_h - 8, BLACK)
-        for index in range(L["MAIL_MAX"]):
-            col, row = index // L["MAIL_ROWS_PER_COL"], index % L["MAIL_ROWS_PER_COL"]
-            cell_x = L["MAIL_X"] + col * L["MAIL_COL_W"]
-            top = L["MAIL_BODY_Y"] + row * L["MAIL_ROW_H"]
-            left, right = cell_x + L["BOX_PAD"], cell_x + L["MAIL_COL_W"] - L["BOX_PAD"]
-            line1 = top + L["MAIL_LINE1_BASELINE"]
-            line2 = line1 + L["MAIL_LINE_GAP"]
-            if row:
-                c.hline(left, top, right - left, BLACK)
-            self.font("BODY")
-            if index >= len(SAMPLE_MAILS):
-                self.draw_left("--", left, line1, BLACK)
-                continue
-            sender, subject, received, unread = SAMPLE_MAILS[index]
-            time, date = received.strftime("%H:%M"), received.strftime("%d/%m")
-            self.font("SMALL")
-            right_w = max(self.text_width(time), self.text_width(date))
-            self.draw_right(time, right, line1, BLACK)
-            self.draw_right(date, right, line2, BLACK)
-            self.font("BODY")
-            max_w = right - left - right_w - L["MAIL_RIGHT_GAP"]
-            reserve = L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"] if unread else 0
-            sender = self.truncate(sender, max_w - reserve)
-            self.draw_left(sender, left, line1, BLACK)
-            if unread:
-                c.bitmap(left + self.text_width(sender) + L["SMALL_ICON_GAP"], self.small_icon_y(line1),
-                         self.sources["small_icons"]["MAIL"], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], BLACK)
-            self.font("SMALL")
-            self.draw_left(self.truncate(subject, max_w), left, line2, BLACK)
 
     def draw_banner(self):
         """Weather::drawBanner(): riquadri, orario accanto al titolo Meteo, badge Tuya, Interno,
@@ -930,7 +883,6 @@ def zones(L):
     """Zone del layout mostrate nella pagina HTML: nome, x, y, larghezza, altezza."""
     return [
         ("Wallpaper cinema", L["CINEMA_X"], L["CINEMA_Y"], L["CINEMA_W"], L["CINEMA_H"]),
-        ("Posta", L["MAIL_X"], L["MAIL_Y"], L["MAIL_W"], L["MAIL_H"]),
         ("Calendario", L["CAL_X"], L["CAL_Y"], L["CAL_W"], L["CAL_H"]),
         ("Eventi", L["EVT_X"], L["EVT_Y"], L["EVT_W"], L["EVT_H"]),
         ("Interno", L["INDOOR_X"], L["BANNER_Y"], L["INDOOR_W"], L["BANNER_H"]),

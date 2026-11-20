@@ -7,14 +7,13 @@
 #include "Layout.h"
 
 /**
- * Icone piccole del riquadro Interno, della colonna alba/tramonto e della
- * busta delle mail non lette: bitmap 1bpp 20x20 in PROGMEM, MSB a sinistra,
- * nel formato di display.drawBitmap(). Le righe sono scritte a mano a 3 byte
+ * Icone piccole del riquadro Interno e della colonna alba/tramonto: bitmap
+ * 1bpp 20x20 in PROGMEM, MSB a sinistra, nel formato di display.drawBitmap(). Le righe sono scritte a mano a 3 byte
  * l'una, quindi il lato resta Layout::SMALL_ICON_SIZE = 20; solo il
  * termometro ha una riga in più, Layout::TEMPERATURE_ICON_H. Le icone meteo
  * stanno in icons_weather.h, generato da tools/weather_icons.py.
  *
- * Usato da: Weather.h e Mail.h.
+ * Usato da: Weather.h.
  */
 
 /**
@@ -186,36 +185,6 @@ static const uint8_t INDOOR_ICON_AIR_QUALITY[Layout::SMALL_ICON_SIZE * 3] PROGME
   0x00, 0x40, 0x00,   // riga 17
   0x00, 0x40, 0x00,   // riga 18
   0x00, 0xC0, 0x00    // riga 19: ........XX.......... (piega terminale)
-};
-
-/**
- * Icona mail (busta schiacciata 20w x 14h visibili, contorno nero).
- * La cornice bitmap è 20x20 e il contenuto è un rettangolo 18w x 14h
- * centrato verticalmente (rows 3..16), con una patta a V che converge
- * più rapidamente (2 cols/row) all'apex su row 7. Usata da Mail.h come
- * badge "unread" inline accanto al mittente di ogni mail non letta.
- */
-static const uint8_t INDOOR_ICON_MAIL[Layout::SMALL_ICON_SIZE * 3] PROGMEM = {
-  0x00, 0x00, 0x00,   // riga  0: ....................
-  0x00, 0x00, 0x00,   // riga  1: ....................
-  0x00, 0x00, 0x00,   // riga  2: ....................
-  0x7F, 0xFF, 0xE0,   // riga  3: .XXXXXXXXXXXXXXXXXX. (top edge)
-  0x60, 0x00, 0x60,   // riga  4: .XX..............XX.
-  0x48, 0x01, 0x20,   // riga  5: .X..X..........X..X.
-  0x42, 0x04, 0x20,   // riga  6: .X....X......X....X.
-  0x40, 0xF0, 0x20,   // riga  7: .X......XXXX......X. (apex patta)
-  0x40, 0x00, 0x20,   // riga  8: .X................X.
-  0x40, 0x00, 0x20,   // riga  9: .X................X.
-  0x40, 0x00, 0x20,   // riga 10: .X................X.
-  0x40, 0x00, 0x20,   // riga 11: .X................X.
-  0x40, 0x00, 0x20,   // riga 12: .X................X.
-  0x40, 0x00, 0x20,   // riga 13: .X................X.
-  0x40, 0x00, 0x20,   // riga 14: .X................X.
-  0x40, 0x00, 0x20,   // riga 15: .X................X.
-  0x7F, 0xFF, 0xE0,   // riga 16: .XXXXXXXXXXXXXXXXXX. (bottom edge)
-  0x00, 0x00, 0x00,   // riga 17: ....................
-  0x00, 0x00, 0x00,   // riga 18: ....................
-  0x00, 0x00, 0x00    // riga 19: ....................
 };
 
 #endif

@@ -1,17 +1,17 @@
 ---
 name: Vincoli numerici layout (097c + 122c)
-description: Come Layout_common.h deriva la geometria dalle due manopole del pannello, le somme che la tengono in piedi e i vincoli fra font e misure delle zone
+description: Come Layout_common.h deriva la geometria dalla misura dello schermo del pannello, le somme che la tengono in piedi e i vincoli fra font e misure delle zone
 type: project
 ---
 
 Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px altezza (Y); costanti `*_W` = larghezza, `*_H` = altezza.
 
-**Da dove vengono i numeri.** `Layout_097c.h` / `Layout_122c.h` danno solo `SCREEN_W/H` (dal driver), `CINEMA_H` (290 / 325) e `MAIL_ROWS_PER_COL` (2 / 3); `Layout_common.h` deriva tutto il resto da quei valori e da sette token: `MARGIN` 10 (dal bordo), `GUTTER` 10 (fra zone affiancate), `STACK_GAP` 16 (fra zone impilate), `BOX_RADIUS` 12, `TITLE_INSET` 16, `BOX_PAD` 12, `TOP_BOX_Y` 14. Vedi [[layout_separation]].
+**Da dove vengono i numeri.** `Layout_097c.h` / `Layout_122c.h` danno solo `SCREEN_W/H` (dal driver); `Layout_common.h` deriva tutto il resto da quei valori e da sette token: `MARGIN` 10 (dal bordo), `GUTTER` 10 (fra zone affiancate), `STACK_GAP` 16 (fra zone impilate), `BOX_RADIUS` 12, `TITLE_INSET` 16, `BOX_PAD` 12, `TOP_BOX_Y` 14. Vedi [[layout_separation]].
 
 **Perchè STACK_GAP 16 e TOP_BOX_Y 14.** Un titolo in FreeSansBold12pt seduto sul bordo ha la baseline a mezza cap height (8 px) e sporge di circa 9 px sopra il bordo: fra due riquadri impilati servono quindi almeno 16 px, e il riquadro in cima allo schermo ha il bordo a y=14 perchè il titolo resti a 5 px dal bordo.
 
 **Colonne (uguali sui due pannelli, larghezza 960):**
-- sinistra x=10..620: wallpaper (`CINEMA_X/Y` = 10, `CINEMA_W` 610) e Posta (`MAIL_W` 610, due colonne da 305);
+- sinistra x=10..620: wallpaper (`CINEMA_X/Y` = 10, `CINEMA_W` 610);
 - destra x=630..950: scheda calendario (`SIDEBAR_W` 320);
 - banner: Interno 180 + 10 + Meteo 300 + 10 + Previsioni 440 = 940 = 960 - 2 × 10. Meteo = blocco corrente 160 + colonna sole 140; Previsioni = 3 blocchi da 146.
 
@@ -21,15 +21,14 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 
 **Altezze (097c / 122c):**
 - banner alto 196, `BANNER_Y` = `SCREEN_H - MARGIN - 196` = 466 / 562; i suoi titoli sporgono di circa 10 px sopra il bordo;
-- wallpaper y=10..300 / 10..335;
-- Posta da `CINEMA_Y + CINEMA_H + 16` a `BANNER_Y - 16`: 316..450 / 351..546, righe da 57 / 58 px (contenuto da +14 a -6 del riquadro);
+- wallpaper da `CINEMA_Y` a `BANNER_Y - STACK_GAP`: y=10..450 / 10..546, `CINEMA_H` 440 / 536, con il fondo allineato a quello della scheda calendario;
 - scheda calendario y=14..450 / 14..546: intestazione dei giorni alta 22 e griglia del mese 6 righe da 20, filetto a y=179 su entrambi, eventi da y=185 alti 259 / 355.
 
-**Culling per pagina.** Il loop paged ha 8 pagine (fasce da 84 px sul 097c, 96 sul 122c; con `ROTATION 0` la pagina k è [k·PH, (k+1)·PH)). `Weather::renderFrame()` chiama `Calendar::draw()`, `Mail::draw()` e `drawBanner()` solo se il loro riquadro, allargato in alto di `STACK_GAP` per il titolo, tocca la fascia; dentro, intestazione e celle della griglia, righe evento (`EVT_ROW_H`) e celle posta (`MAIL_ROW_H`) si saltano fuori fascia. Il criterio regge perchè ogni testo, filetto, badge e icona sta dentro la propria riga o il proprio riquadro, discendenti compresi (misurato sui font): un elemento nuovo che sporge oltre il suo riquadro verrebbe tagliato. Non ci sono sbiancamenti: il buffer di ogni pagina lo azzera il template, e prima dei riquadri disegna solo il wallpaper, tagliato all'altezza `CINEMA_H`. `GxEPD2_3C` non ridefinisce `fillRect`, quindi Adafruit_GFX la esegue pixel per pixel attraverso `drawPixel` virtuale, e il clip sulla pagina avviene solo lì dentro: uno sbiancamento di un'area grande costa centinaia di migliaia di chiamate per pagina, e non se ne aggiungono. Il log `render` (LOGV) misura i ms di solo disegno per frame.
+**Culling per pagina.** Il loop paged ha 8 pagine (fasce da 84 px sul 097c, 96 sul 122c; con `ROTATION 0` la pagina k è [k·PH, (k+1)·PH)). `Weather::renderFrame()` chiama `Calendar::draw()` e `drawBanner()` solo se il loro riquadro, allargato in alto di `STACK_GAP` per il titolo, tocca la fascia; dentro, intestazione e celle della griglia e righe evento (`EVT_ROW_H`) si saltano fuori fascia. Il criterio regge perchè ogni testo, filetto, badge e icona sta dentro la propria riga o il proprio riquadro, discendenti compresi (misurato sui font): un elemento nuovo che sporge oltre il suo riquadro verrebbe tagliato. Non ci sono sbiancamenti: il buffer di ogni pagina lo azzera il template, e prima dei riquadri disegna solo il wallpaper, tagliato all'altezza `CINEMA_H`. `GxEPD2_3C` non ridefinisce `fillRect`, quindi Adafruit_GFX la esegue pixel per pixel attraverso `drawPixel` virtuale, e il clip sulla pagina avviene solo lì dentro: uno sbiancamento di un'area grande costa centinaia di migliaia di chiamate per pagina, e non se ne aggiungono. Il log `render` (LOGV) misura i ms di solo disegno per frame.
 
-**Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 40 px (`MIN_EVT_ROW_H` in `Calendar.h`, che `tools/layout_preview.py` legge dal sorgente): 6 righe da 43 sul 097c, 7 da 50 sul 122c. La soglia viene da orario e data in 9pt: con `EVT_TIME_BASELINE` 16 e `EVT_DATE_FROM_BOTTOM` 6, sotto i 40 px i discendenti di "tutto gg" toccano la data sotto. Con un solo calendario configurato la cache di una sorgente ha 5 eventi, quindi la sesta riga del 097c resta "--" (vedi [[calendar_module]]). Una riga di Posta deve contenere i 41 px di mittente più oggetto. Entrambi i limiti, e le aree non positive, fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
+**Righe minime.** Gli eventi si dividono in 7, 6 o 5 righe, il massimo con righe da almeno 40 px (`MIN_EVT_ROW_H` in `Calendar.h`, che `tools/layout_preview.py` legge dal sorgente): 6 righe da 43 sul 097c, 7 da 50 sul 122c. La soglia viene da orario e data in 9pt: con `EVT_TIME_BASELINE` 16 e `EVT_DATE_FROM_BOTTOM` 6, sotto i 40 px i discendenti di "tutto gg" toccano la data sotto. Con un solo calendario configurato la cache di una sorgente ha 5 eventi, quindi la sesta riga del 097c resta "--" (vedi [[calendar_module]]). Il limite delle righe evento (in `Calendar.h`) e le aree non positive (in `Layout_common.h`) fermano la build con `static_assert`; la misura del wallpaper no, per scelta dell'utente.
 
-**Font per elemento, oltre ai ruoli di `Layout_common.h`.** Intestazione e numeri del mese, orario e data di eventi e mail, cifre della barra temp-range sono in `FONT_SMALL`; titolo degli eventi e mittente delle mail in `FONT_BODY`. Nell'Interno temperatura e umidità sono in `FONT_LARGE`, qualità dell'aria e pressione in `FONT_BODY`, per scelta dell'utente.
+**Font per elemento, oltre ai ruoli di `Layout_common.h`.** Intestazione e numeri del mese, orario e data degli eventi, cifre della barra temp-range sono in `FONT_SMALL`; titolo degli eventi in `FONT_BODY`. Nell'Interno temperatura e umidità sono in `FONT_LARGE`, qualità dell'aria e pressione in `FONT_BODY`, per scelta dell'utente.
 
 **Font e larghezze che vincolano le zone** (misurate dalle glyph table GFX):
 - "Mediocre 200" (caso peggiore reale di `Indoor::iaqLabel`) misura 139 px in 12pt e 107 in 9pt. Nell'Interno largo 180 la riga IAQ ripiega su `FONT_SMALL` quando testo + `INDOOR_UNIT_GAP` + pedice supera `INDOOR_X + INDOOR_W - BOX_PAD`: ripiegano "Discreta", "Pessima" e "Mediocre", le altre restano in 12pt. Senza ripiego l'Interno non scende sotto 200. Dopo il ripiego la riga più larga è la stessa IAQ in 9pt con il pedice, che fissa l'Interno ad almeno ~170; la pressione ("1014" in 12pt più "mBar" in 9pt) è più corta;

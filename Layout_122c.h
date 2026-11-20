@@ -7,11 +7,10 @@
  * coda FFC: la seconda coda non risponde, quindi il pannello stampa una sola
  * banda, vedi GxEPD2_SOLUM_ESL/README_122c.md.
  *
- * Qui stanno solo il pannello (driver, pin, page, geometria dello schermo) e
- * le due manopole della dashboard; tutte le coordinate le deriva
- * Layout_common.h, incluso in coda. Rispetto al 9.7" la larghezza è la stessa
- * e l'altezza in più va al wallpaper, alla terza riga della Posta e a righe
- * di eventi in più nella sidebar.
+ * Qui sta solo il pannello (driver, pin, page, geometria dello schermo);
+ * tutte le coordinate le deriva Layout_common.h, incluso in coda. Rispetto
+ * al 9.7" la larghezza è la stessa e l'altezza in più va al wallpaper e a
+ * righe di eventi in più nella sidebar.
  */
 
 #include <Arduino.h>
@@ -88,12 +87,6 @@ namespace Layout
   inline constexpr uint8_t ROTATION = 0;
   inline constexpr int16_t SCREEN_W = (ROTATION % 2 == 0) ? Panel::WIDTH_VISIBLE : Panel::HEIGHT;
   inline constexpr int16_t SCREEN_H = (ROTATION % 2 == 0) ? Panel::HEIGHT : Panel::WIDTH_VISIBLE;
-
-  /** Altezza del wallpaper cinema: con i margini e la Posta a tre righe
-   *  chiude la colonna sinistra sopra il banner. */
-  inline constexpr int16_t CINEMA_H          = 325;
-  /** Righe di mail per colonna: due colonne da tre, sei mail. */
-  inline constexpr int16_t MAIL_ROWS_PER_COL = 3;
 }
 
 #define LAYOUT_PANEL_SELECTED

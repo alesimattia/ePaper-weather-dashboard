@@ -1,6 +1,6 @@
 ---
-name: Autorizzazione Google OAuth (Calendar + Gmail)
-description: procedura completa per collegare le API Google al firmware (progetto, DUE API da abilitare, consenso, client desktop, script, verifica, copia di Env.h), progetto in uso, errori del consenso e 403 a runtime con la causa, ciclo di vita del refresh token
+name: Autorizzazione Google OAuth (Calendar)
+description: procedura completa per collegare Google Calendar al firmware (progetto, API da abilitare, consenso, client desktop, script, verifica, copia di Env.h), progetto in uso, errori del consenso e 403 a runtime con la causa, ciclo di vita del refresh token
 type: project
 ---
 
@@ -19,15 +19,13 @@ saltato emerge solo a runtime sul dispositivo.
 
 1. **Progetto** fuori da qualsiasi organizzazione Workspace (alla creazione: "Nessuna
    organizzazione"); dentro un'organizzazione il consenso diventa Interno → `403 org_internal`.
-2. **Abilitare ENTRAMBE le API** nello stesso progetto, dalla Libreria:
-   - Google Calendar API, servizio `calendar-json.googleapis.com`:
-     `https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=awesome-gist-508310-j4`
-   - Gmail API, servizio `gmail.googleapis.com`:
-     `https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=awesome-gist-508310-j4`
+2. **Abilitare la Google Calendar API** nel progetto, dalla Libreria, servizio
+   `calendar-json.googleapis.com`:
+   `https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=awesome-gist-508310-j4`
 
    Abilitata = la pagina mostra "Gestisci" invece di "Abilita"; elenco completo in
    `/apis/dashboard?project=…`. Propagazione di pochi minuti. Senza la API: il token si rinnova
-   (`[Google] token OK`) ma quel modulo prende `403 SERVICE_DISABLED`. Non serve riautorizzare
+   (`[Google] token OK`) ma il fetch degli eventi prende `403 SERVICE_DISABLED`. Non serve riautorizzare
    né riflashare: il task riprende al primo slot. `gcloud` non è installato sul Mac.
 3. **Schermata consenso** (Google Auth Platform, `/auth/overview?project=…`): tipo **Esterno**.
    In `/auth/audience`: aggiungere l'account agli **utenti di test e salvare** (essere proprietari
@@ -38,18 +36,17 @@ saltato emerge solo a runtime sul dispositivo.
    rinominarlo: lo copre il `/*.json` del `.gitignore`.
 5. **Script** (scrive le tre macro in Env.h, non stampa i valori):
    `/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 tools/google_oauth_setup.py`.
-   Dal browser: *Avanzate → Apri comunque* (app non verificata), spuntare **entrambi** gli scope
-   `calendar.readonly` e `gmail.readonly`.
+   Dal browser: *Avanzate → Apri comunque* (app non verificata), spuntare lo scope
+   `calendar.readonly`.
 6. **Verifica dal Mac, prima di flashare**: `python3 tools/google_api_check.py` (sola stdlib,
    qualunque interprete, nessun argomento). Rinnova il token dalle tre macro di Env.h come il
-   firmware e stampa il campo `scope` (devono esserci entrambi), poi una richiesta minima a
-   Calendar API e Gmail API: `HTTP 200` su tutte e due = collegamento corretto; altrimenti stampa
-   messaggio e motivi di Google. Exit 1 se un passo fallisce. Non stampa macro, eventi o messaggi.
+   firmware e stampa il campo `scope`, poi una richiesta minima a Calendar API: `HTTP 200` =
+   collegamento corretto; altrimenti stampa messaggio e motivi di Google. Exit 1 se un passo
+   fallisce. Non stampa macro nè eventi.
 7. **Env.h è gitignored**: ogni macchina che compila ne ha una copia propria; dopo una
    rigenerazione va copiata a mano su quella che builda e flasha.
 
-Atteso sul seriale: `[Google] token OK`, `[Mail] fetched N message ids`,
-`[Mail] batch parsed N/N messaggi`, `[Google] fetched N events`.
+Atteso sul seriale: `[Google] token OK`, `[Google] fetched N events`.
 
 ## Errori e causa
 
@@ -59,19 +56,18 @@ Atteso sul seriale: `[Google] token OK`, `[Mail] fetched N message ids`,
 | consenso | `403 access_denied` "app in fase di test" | account non fra gli utenti di test | aggiungerlo **e salvare**, o pubblicare |
 | consenso | `500` su accounts.google.com | propagazione lato Google dopo ogni modifica al consenso | riprovare dopo qualche minuto; se insiste, incognito con un solo account |
 | seriale | `[OAuth] token refresh failed: http=400` `invalid_grant` | token revocato, password cambiata, app ancora in Test da 7 giorni, sei mesi senza uso | rigenerare il token (passo 5) |
-| seriale | `[Mail] list fetch failed: http=403` con `token OK` | corpo `SERVICE_DISABLED` / `accessNotConfigured`: **Gmail API non abilitata** | passo 2 |
-| seriale | idem | corpo `ACCESS_TOKEN_SCOPE_INSUFFICIENT`: token emesso senza `gmail.readonly` | passo 5 spuntando entrambi gli scope |
+| seriale | `[Google] events fetch failed: http=403` con `token OK` | corpo `SERVICE_DISABLED` / `accessNotConfigured`: **Calendar API non abilitata** | passo 2 |
+| seriale | idem | corpo `ACCESS_TOKEN_SCOPE_INSUFFICIENT`: token emesso senza `calendar.readonly` | passo 5 spuntando lo scope |
 
-Il firmware logga solo il codice HTTP, mai il corpo: i due 403 di Gmail si distinguono solo con
+Il firmware logga solo il codice HTTP, mai il corpo: i due 403 si distinguono solo con
 `tools/google_api_check.py` (passo 6). Un 403 `SERVICE_DISABLED` è di progetto, quindi vale per qualunque token
 e qualunque copia di Env.h.
 
 ## Vincoli del firmware
 
-`Calendar.h` (`refreshGoogleToken()`) e `Mail.h` condividono un unico `GOOGLE_REFRESH_TOKEN` e la
-stessa cache di access token (vedi [[mail_module]]): una sola app con **entrambi** gli scope, due
-app separate non sono utilizzabili. Il refresh omette `scope`, che quindi viene ereditato dal
-token. Un token non eredita uno scope aggiunto dopo la sua emissione: aggiungerne uno richiede di
+`Calendar.h` (`refreshGoogleToken()`) tiene in cache un solo access token per il
+`GOOGLE_REFRESH_TOKEN`. Il refresh omette `scope`, che quindi viene ereditato dal token: un token
+emesso con scope in più continua a funzionare. Un token non eredita uno scope aggiunto dopo la sua emissione: aggiungerne uno richiede di
 rifare l'autorizzazione da capo.
 
 ## Contratto dello script
@@ -110,7 +106,7 @@ Test e sono passati 7 giorni, o non lo si usa da sei mesi; cambiano gli scope; s
 Stato di pubblicazione: con l'app in **Test** i refresh token scadono dopo 7 giorni; dopo il
 passaggio **In produzione** il token va rigenerato, perchè quello emesso in Test si porta dietro la
 scadenza. Resta un'app non verificata (tetto di 100 utenti): la verifica Google è per app
-distribuite a terzi, con scope Gmail comporta un audit e non c'entra con la scadenza.
+distribuite a terzi e non c'entra con la scadenza.
 
 ## Gemello per Outlook
 

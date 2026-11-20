@@ -300,5 +300,5 @@ sbagliate.
 
 Correlate: [[scheduler_task_table]] per la tabella dei task e i suoi hook,
 [[timings_nvs_config]] per pavimenti e vincoli incrociati delle cadenze,
-[[clock_sntp]] per la dipendenza dall'ora assoluta, [[mail_module]] per il
-contratto dei moduli di rete, [[fetch_flag_ordering]] per l'ordering dei flag.
+[[clock_sntp]] per la dipendenza dall'ora assoluta, [[fetch_flag_ordering]] per
+l'ordering dei flag.

@@ -37,9 +37,8 @@ data non dipende dalla riuscita del meteo (vedi [[clock_sntp]]).
 credenziali presenti. Con le credenziali Microsoft al placeholder il task outlook
 è sospeso e la lista mostra i soli eventi Google: la cache di una sorgente tiene
 5 eventi, quindi sul 9.7", che mostra 6 righe, l'ultima resta "--" (vedi
-[[layout_invariants]]). La guardia Google vale anche
-per Mail, che condivide le credenziali (vedi [[mail_module]],
-[[google_oauth_setup]]).
+[[layout_invariants]]). Credenziali e scope Google in
+[[google_oauth_setup]].
 
 **Testo.** I titoli passano da `Graphics::foldToFontCharset()` alla ricezione
 (vedi [[resa_testo_pannello]]).

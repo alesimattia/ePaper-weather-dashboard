@@ -12,7 +12,7 @@ senza lasciare spazio, quindi "caffè" esce "caff". Il glifo ° non esiste:
 
 **Conversione alla ricezione.** `Graphics::foldToFontCharset(char*)` riduce sul
 posto una stringa UTF-8 ai caratteri disegnabili, subito dopo la copia nei buffer
-fissi: titoli degli eventi Outlook e Google, mittente e oggetto Mail. Il meteo non
+fissi: titoli degli eventi Outlook e Google. Il meteo non
 scarica testo: l'etichetta viene dal codice condizione ed è già ASCII (vedi
 [[weather_icons]]). Regole, scelte dall'utente:
 - à á è é ì í ò ó ù ú e le maiuscole diventano vocale più apostrofo (`e'`);
@@ -36,9 +36,9 @@ blocco corrente usa la stessa riga "pop% mm" delle previsioni.
 
 **Troncamento.** `Graphics::truncateToWidth()` accorcia finchè il prefisso con
 ".." in coda rientra, misurato con i puntini già scritti, e toglie gli spazi in
-coda al prefisso. Lo usano eventi, mail e blocchi meteo.
+coda al prefisso. Lo usano eventi e blocchi meteo.
 
 **How to apply:** ogni nuovo testo che arriva dalla rete va passato da
 `foldToFontCharset()` alla ricezione, non al disegno. Ogni nuovo testo centrato
 in uno spazio fisso va misurato con `getTextBounds()` e troncato, come fanno
-calendario, mail e blocchi meteo.
+calendario e blocchi meteo.

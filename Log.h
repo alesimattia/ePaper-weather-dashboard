@@ -50,8 +50,8 @@
  * Riga di log su Serial, con tag fra parentesi quadre e a capo automatico.
  * `tag` e `fmt` devono essere letterali.
  *
- *   LOG("Mail", "list vuota (nessuna mail)");
- *   LOG("Mail", "list fetch failed: http=%d", code);
+ *   LOG("Google", "nessun evento in agenda");
+ *   LOG("Google", "events fetch failed: http=%d", code);
  *
  * Il '\n' finale lo mette la macro: non va ripetuto in `fmt`. Un '%' che
  * deve comparire nel testo va raddoppiato ("%%"), perche' il messaggio

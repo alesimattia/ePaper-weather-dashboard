@@ -67,7 +67,7 @@ namespace Routefinder
     Auto      = 0,   // percorso dentro la fascia, cinema fuori
     Cinema    = 1,
     Route     = 2,
-    Wallpaper = 3    // fallback PROGMEM la_grande_onda
+    Wallpaper = 3    // fallback PROGMEM great_wave
   };
 
   /** Carburante passato alla Routes API. I valori sono quelli in NVS. */

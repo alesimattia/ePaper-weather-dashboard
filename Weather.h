@@ -21,7 +21,6 @@
 #include "Graphics.h"
 #include "Calendar.h"
 #include "Indoor.h"
-#include "Mail.h"      // Mail::draw() invocato dentro renderFrame()
 #include "Tuya.h"      // Tuya::hasFailed() letto da drawBanner() per il badge di guasto
 #include "PartialRefresh.h"   // politica del refresh differenziale, usata da renderFrame()
 
@@ -1070,8 +1069,6 @@ namespace Weather
         drawTestBackground();
         if (Graphics::intersectsPage(Layout::CAL_Y - Layout::STACK_GAP, Layout::CAL_H + Layout::STACK_GAP))
           Calendar::draw(calEpoch);
-        if (Graphics::intersectsPage(Layout::MAIL_Y - Layout::STACK_GAP, Layout::MAIL_H + Layout::STACK_GAP))
-          Mail::draw();
         if (Graphics::intersectsPage(Layout::BANNER_Y - Layout::STACK_GAP,
                                      Layout::SCREEN_H - Layout::BANNER_Y + Layout::STACK_GAP))
           drawBanner();

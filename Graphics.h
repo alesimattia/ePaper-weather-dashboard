@@ -8,7 +8,7 @@
 #include "Layout.h"
 
 /**
- * Utility di disegno condivise fra i moduli (Weather, Calendar, Mail).
+ * Utility di disegno condivise fra i moduli (Weather, Calendar).
  * Header-only, non tiene stato: le funzioni di disegno scrivono direttamente
  * sul display globale dichiarato nello sketch .ino e usano il font che il
  * chiamante ha impostato.
@@ -61,7 +61,7 @@ namespace Graphics
   }
 
   /** Vero se le righe [top, top + height) toccano la pagina corrente. Usato
-   *  da Weather.h, Calendar.h e Mail.h per saltare gli elementi fuori pagina. */
+   *  da Weather.h e Calendar.h per saltare gli elementi fuori pagina. */
   inline bool intersectsPage(int16_t top, int16_t height)
   {
     return top < detail::pageBottom && (int32_t)top + height > detail::pageTop;
@@ -248,7 +248,7 @@ namespace Graphics
    * sanno disegnare: Adafruit_GFX scarta in silenzio ogni byte fuori da
    * 0x20..0x7E, quindi "caffè" uscirebbe "caff". Il risultato non è mai più
    * lungo dell'originale, e una sequenza troncata dal buffer viene scartata.
-   * Usato da Weather.h, Calendar.h e Mail.h subito dopo la copia dei testi
+   * Usato da Weather.h e Calendar.h subito dopo la copia dei testi
    * ricevuti dalla rete.
    */
   inline void foldToFontCharset(char* text)

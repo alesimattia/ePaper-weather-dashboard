@@ -43,7 +43,6 @@ ENV_FILENAME = "Env.h"
 # rifare l'autorizzazione da capo.
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
 # Macro da scrivere -> campo da cui prendere il valore. "refresh_token" arriva

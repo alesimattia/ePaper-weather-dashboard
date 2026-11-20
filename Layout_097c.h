@@ -7,9 +7,8 @@
  * portrait, che il driver indirizza come 960w x 672h: con setRotation(0) è
  * la geometria visibile.
  *
- * Qui stanno solo il pannello (driver, pin, page, geometria dello schermo) e
- * le due manopole della dashboard, l'altezza del wallpaper e le righe della
- * Posta; tutte le coordinate le deriva Layout_common.h, incluso in coda.
+ * Qui sta solo il pannello (driver, pin, page, geometria dello schermo);
+ * tutte le coordinate le deriva Layout_common.h, incluso in coda.
  *
  * Lo sketch .ino seleziona quale Layout includere via Layout.h: per il
  * pannello 12.2" si commenta DISPLAY_VARIANT_097C e si scommenta
@@ -74,12 +73,6 @@ namespace Layout
   inline constexpr uint8_t ROTATION = 0;
   inline constexpr int16_t SCREEN_W = (ROTATION % 2 == 0) ? Panel::WIDTH_VISIBLE : Panel::HEIGHT;
   inline constexpr int16_t SCREEN_H = (ROTATION % 2 == 0) ? Panel::HEIGHT : Panel::WIDTH_VISIBLE;
-
-  /** Altezza del wallpaper cinema: con i margini e la Posta a due righe
-   *  chiude la colonna sinistra sopra il banner. */
-  inline constexpr int16_t CINEMA_H          = 290;
-  /** Righe di mail per colonna: due colonne da due, quattro mail. */
-  inline constexpr int16_t MAIL_ROWS_PER_COL = 2;
 }
 
 #define LAYOUT_PANEL_SELECTED

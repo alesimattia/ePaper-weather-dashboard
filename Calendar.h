@@ -252,11 +252,6 @@ namespace Calendar
      * Gestisce sia flussi senza client_secret (Microsoft client pubblico)
      * sia flussi con client_secret (Google desktop app).
      *
-     * RIUSO ESTERNO: Mail.h la raggiunge attraverso refreshGoogleToken(), con
-     * cui condivide GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN e la cache del
-     * token: il refresh_token deve quindi essere stato emesso con scope
-     * unificati calendar.readonly + gmail.readonly.
-     *
      * @param tokenUrl     endpoint token
      * @param clientId     client id
      * @param clientSecret client secret ("" per client pubblici)
@@ -452,20 +447,12 @@ namespace Calendar
 
     // =======================================================================
     // Google Calendar API v3: token + fetch eventi
-    //
-    // SHARED CON MAIL: cachedGoogleToken e googleTokenExpiresAtMs sono la
-    // SOLA cache di access_token Google del progetto. Mail.h
-    // (Mail::detail::refreshToken / Mail::detail::bearer) riusa questa
-    // cache invece di mantenerne una propria: 1 sola POST al token
-    // endpoint per ciclo, backoff coerente, accoppiamento accettato perche'
-    // condividono lo stesso refresh_token e gli stessi scope.
     // =======================================================================
 
     /**
-     * Rinnova l'access token Google se scaduto (margine 60 s).
-     * Aggiorna SOLO cachedGoogleToken e googleTokenExpiresAtMs: nessuna
-     * struttura specifica Mail viene toccata, il modulo Mail legge le stesse
-     * variabili dopo che questa funzione torna true.
+     * Rinnova l'access token Google se scaduto (margine 60 s), aggiornando
+     * cachedGoogleToken e googleTokenExpiresAtMs: finchè il token è valido
+     * nessuna POST al token endpoint.
      */
     inline bool refreshGoogleToken()
     {
@@ -903,21 +890,12 @@ namespace Calendar
    * Le credenziali arrivano da Env.h (GOOGLE_CLIENT_ID,
    * GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN). Scope richiesto:
    * https://www.googleapis.com/auth/calendar.readonly
-   *
-   * INTERAZIONE CON MAIL: Calendar::Google e Mail::* condividono lo stesso
-   * GOOGLE_REFRESH_TOKEN e lo stesso access_token cached
-   * (Calendar::detail::cachedGoogleToken). Le cadenze di fetch sono pero'
-   * INDIPENDENTI: sono due task distinti dello scheduler, con la propria
-   * cadenza e i propri tentativi. Il refresh del token e' invece
-   * implicitamente condiviso, perche' ricade su una sola cache: chi dei due
-   * gira per primo lo paga, e per questo la tabella mette mail prima di
-   * Google.
    */
   namespace Google
   {
     /**
      * Vero se Env.h contiene credenziali Google vere e non quelle del
-     * template. Vale anche per Mail, che usa le stesse credenziali.
+     * template.
      */
     inline bool isConfigured()
     {

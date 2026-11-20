@@ -5,7 +5,7 @@ metadata:
   type: feedback
 ---
 
-Nei commenti del firmware non si scrivono misure che dipendono dal layout (larghezze, altezze, coordinate, conteggi di righe derivati dalle costanti di `Layout_common.h` o delle manopole): si descrive la relazione o il vincolo a parole e si rimanda alla costante. I commenti non si eliminano, perchè servono a identificare e "chiamare" un pezzo del layout.
+Nei commenti del firmware non si scrivono misure che dipendono dal layout (larghezze, altezze, coordinate, conteggi di righe derivati dalle costanti di `Layout_common.h` o dei `Layout_<pannello>.h`): si descrive la relazione o il vincolo a parole e si rimanda alla costante. I commenti non si eliminano, perchè servono a identificare e "chiamare" un pezzo del layout.
 
 **Why:** le misure cambiano quando cambia il layout e il commento resta falso senza che nessuno se ne accorga.
 

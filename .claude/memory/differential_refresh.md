@@ -96,7 +96,7 @@ campione non valido (BSEC non ancora stabilizzato, campione scaduto) → `Sensor
 ## Perchè questi elementi sono in nero
 
 Un testo rosso che cambia a ogni ciclo o a ogni fetch impedisce il partial. Sono in nero la temperatura
-del riquadro Interno e il suo "--", il tratto previsione del grafico e la busta delle mail non lette.
+del riquadro Interno e il suo "--" e il tratto previsione del grafico.
 La previsione è tratteggiata (`TC_DASH_ON` e `TC_DASH_OFF` in `Layout_common.h`) per restare
 distinguibile dal passato; la fase parte dal vertice "adesso", con un contatore locale a
 `drawTempChart` che avanza solo sui passi della previsione, e va replicata uguale in

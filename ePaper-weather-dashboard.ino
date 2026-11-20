@@ -145,7 +145,7 @@ static RenderServer g_route_server = {"route", ROUTEFINDER_PREWARM_URL, false, 0
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
 
 // Fallback wallpaper offline: immagine PROGMEM
-#include "wallpaper/img_la_grande_onda.h" //img_la_grande_onda_desc
+#include "wallpaper/img_great_wave.h" //img_great_wave_desc
 
 /** Weather.h contiene logica, fetch OpenWeather One Call 3.0, cache,
  * rendering banner. Il .ino si limita ad accendere/spegnere il WiFi
@@ -156,7 +156,6 @@ static RenderServer g_route_server = {"route", ROUTEFINDER_PREWARM_URL, false, 0
  * => basta questo piu' Maintenance.h per avere tutte le API dei moduli */
 #include "Weather.h"
 #include "Maintenance.h"
-#include "Mail.h"
 // Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT). Non disegna nulla:
 // il pannello la interroga solo per il badge di guasto del riquadro Indoor.
 #include "Tuya.h"
@@ -284,10 +283,9 @@ void initDisplay()
 // Background cinema
 //
 // L'immagine occupa Layout::CINEMA_W x Layout::CINEMA_H a partire da
-// (Layout::CINEMA_X, Layout::CINEMA_Y), dentro i margini in cima alla colonna
-// sinistra; sotto c'e' il riquadro Posta, a destra la scheda del calendario.
-// Le misure le deriva Layout_common.h: 610w x 290h sul 9.7", 610w x 325h sul
-// 12.2". Convenzione: NwxMh = N px larghezza x M px altezza.
+// (Layout::CINEMA_X, Layout::CINEMA_Y) e occupa la colonna sinistra dentro i
+// margini fino al banner, con la scheda del calendario a destra. Le misure le
+// deriva Layout_common.h. Convenzione: NwxMh = N px larghezza x M px altezza.
 //
 // L'immagine scaricata vive in flash, in uno dei due slot di CinemaStore, e
 // sopravvive al reboot; senza un'immagine valida si mostra il fallback PROGMEM.
@@ -337,7 +335,7 @@ static constexpr const char *cinemaColorsParam(uint8_t planes)
  * Quello che si abbandona e' la RISPOSTA: con setTimeout() breve la GET
  * ritorna appena scaduta l'attesa degli header, end() chiude il socket e
  * l'istanza prosegue il boot per conto suo. HTTP/1.0 chiude la connessione
- * senza keep-alive. Il chiamante intanto fa meteo, mail e calendari, che e' il
+ * senza keep-alive. Il chiamante intanto fa meteo e calendari, che è il
  * tempo di copertura vero di questo meccanismo.
  *
  * Nessun valore di ritorno: l'esito non cambia niente nel resto del giro. Il
@@ -505,7 +503,7 @@ static bool downloadImageToStore(RenderServer &server, const char *url, const ch
 /**
  * Scarica l'immagine cinema dal server render.com.
  *
- * Ultima chiamata di rete del giro, dopo meteo, mail e calendari: è l'unica
+ * Ultima chiamata di rete del giro, dopo meteo e calendari: è l'unica
  * che può pagare il cold start di render.com, e il tempo speso dagli altri
  * fetch è il tempo che il server ha per completare il boot avviato da
  * prewarmCinemaServer().
@@ -562,11 +560,6 @@ static Scheduler::Outcome runWeatherFetch()
  *  ritenta invece di attendere la cadenza piena. */
 static bool isWeatherIncomplete() { return !Weather::datiCompleti(); }
 
-static Scheduler::Outcome runMailFetch()
-{
-	return Mail::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
-}
-
 static Scheduler::Outcome runGoogleCalendarFetch()
 {
 	return Calendar::Google::runFetch() ? Scheduler::Outcome::OK : Scheduler::Outcome::FAILED;
@@ -593,7 +586,6 @@ static bool isClockValidForCalendars() { return Clock::valido(); }
  * a ogni slot, e non accende la radio per sè. Gli altri proseguono come sempre.
  */
 static bool weatherReady() { return Weather::isConfigured(); }
-static bool mailReady() { return Mail::isConfigured(); }
 static bool googleReady() { return isClockValidForCalendars() && Calendar::Google::isConfigured(); }
 static bool outlookReady() { return isClockValidForCalendars() && Calendar::Outlook::isConfigured(); }
 
@@ -666,9 +658,6 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
  * esecuzione dentro il passo di rete del ciclo, che viene dopo il sensore e
  * prima del frame, e non è arbitrario:
  *
- *   - mail prima di Google perche' i due condividono la cache del token
- *     OAuth: chi gira per primo paga il refresh;
- *   - Google prima di Outlook perche' il token appena rinfrescato e' il suo;
  *   - la telemetria Tuya dopo il sensore, che nello stesso ciclo ha appena
  *     prodotto il campione da pubblicare, e prima del cinema: i secondi del
  *     suo handshake TLS sono altro tempo di copertura del boot di render.com;
@@ -679,7 +668,7 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
  *     stesso ciclo: il cinema è sospeso finchè il percorso è la sorgente
  *     del riquadro.
  *
- * Le cadenze sono multipli del ciclo (Timings.h, campo `step`): meteo, mail e
+ * Le cadenze sono multipli del ciclo (Timings.h, campo `step`): meteo e
  * calendari a 10 minuti cadono un ciclo sì e uno no, Tuya e percorso a ogni
  * ciclo. Nessun task chiede ridisegni: il frame si disegna a ogni ciclo della
  * fascia WiFi e legge da sè i dati, badge di Tuya compreso.
@@ -692,9 +681,6 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
 static Scheduler::Task TASK_TABLE[] = {
 	{"meteo", Scheduler::Cadence::PERIODIC, &Timings::Valori::owmMin, nullptr, FETCH_MAX_TENTATIVI,
 	 runWeatherFetch, weatherReady, isWeatherIncomplete, nullptr},
-
-	{"mail", Scheduler::Cadence::PERIODIC, &Timings::Valori::mailMin, nullptr, FETCH_MAX_TENTATIVI,
-	 runMailFetch, mailReady, nullptr, nullptr},
 
 	{"google", Scheduler::Cadence::PERIODIC, &Timings::Valori::googleMin, nullptr, FETCH_MAX_TENTATIVI,
 	 runGoogleCalendarFetch, googleReady, nullptr, nullptr},
@@ -728,7 +714,7 @@ void drawTestBackground()
 		shown == Routefinder::ShownImage::Route    ? CinemaStore::image(CinemaStore::Kind::Route) :
 		shown == Routefinder::ShownImage::Cinema   ? CinemaStore::image(CinemaStore::Kind::Cinema) :
 													 nullptr;
-	const GxEPDImage::Descriptor &image = stored ? *stored : img_la_grande_onda_desc;
+	const GxEPDImage::Descriptor &image = stored ? *stored : img_great_wave_desc;
 	int16_t top = Layout::CINEMA_Y;
 	int16_t height = (int16_t)(image.height < Layout::CINEMA_H ? image.height : Layout::CINEMA_H);
 	if (!Graphics::clipToPage(top, height)) return;
@@ -863,8 +849,6 @@ void setup()
 	Weather::begin();
 	Calendar::Outlook::begin();
 	Calendar::Google::begin();
-	// Cache mail Gmail (vuota al boot). Il fetch parte alla prima finestra WiFi.
-	Mail::begin();
 	/**
 	 * Sensore ambientale BME680 via I2C (Bosch BSEC2 in ULP, sample ogni 5 min). 
 	 * Lo stato del calibratore, se presente in NonVolatileStorage, viene ripristinato qui dentro.

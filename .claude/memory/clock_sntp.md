@@ -76,7 +76,7 @@ appartiene a nessuno dei due.
 
 - **`configTzTime` e non `configTime`**: la seconda deriva la stringa TZ dagli
   offset e **sovrascriverebbe** il fuso, perdendo il DST automatico di
-  Europe/Rome e rompendo tutti i `localtime_r()` di Weather, Calendar e Mail.
+  Europe/Rome e rompendo tutti i `localtime_r()` di Weather e Calendar.
   Passando `CLOCK_POSIX_TZ` a `configTzTime` si riapplica in modo idempotente
   lo stesso fuso di `begin()`.
 - **Budget mai sotto i 10 s** (`TIME_SYNC_TIMEOUT_MS` 20000, l'unico per i due
@@ -119,17 +119,15 @@ appartiene a nessuno dei due.
   appena l'ora è vera.
 - `Tuya::readyToPublish()` e `Tuya::runPublish()`: TuyaLink firma un timestamp
   Unix, quindi senza ora vera il publish non parte (vedi [[tuya_module]]).
-- `Mail::draw()` usa l'ora solo per formattare, e la sua soglia è la stessa
-  `TIME_VALID_EPOCH_MIN`.
 
-**Non può andare in stallo**: meteo e mail non dipendono dall'ora e continuano
-ad aprire la finestra radio, dove la sincronizzazione avviene. È la stessa
+**Non può andare in stallo**: il meteo non dipende dall'ora e continua ad aprire
+la finestra radio, dove la sincronizzazione avviene, come il cinema al boot. È la stessa
 ragione per cui `isInsideRadioHours()` è fail-open.
 
 **Modo di fallire su una rete che blocca NTP**: l'orologio non diventa mai
 valido, i due calendari, Tuya, il percorso e il cinema giornaliero non girano
 affatto e la lista eventi resta ai placeholder. È voluto: è meglio di
-appuntamenti vecchi presentati come prossimi. Meteo e mail restano operativi,
+appuntamenti vecchi presentati come prossimi. Il meteo resta operativo,
 perchè `wifiOn()` ignora il ritorno della sincronizzazione e la connessione
 riesce lo stesso. Il costo è il budget `TIME_SYNC_TIMEOUT_MS` speso a ogni
 passo di rete, perchè il backoff `TIME_SYNC_RETRY_MS` (60 s) è minore del ciclo.

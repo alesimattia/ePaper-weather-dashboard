@@ -74,10 +74,9 @@
 #endif
 #define WEATHER_FORECAST_FETCH_MIN_FLOOR 10
 
-/** Calendari e posta: nessun pavimento sui dati (un evento o una mail possono
- *  arrivare in qualsiasi momento), ma sotto un ciclo un fetch non verrebbe mai
- *  mostrato prima del successivo. Il costo è energetico, ~5-10 s di radio
- *  accesa per fetch. */
+/** Calendari: nessun pavimento sui dati (un evento può arrivare in qualsiasi
+ *  momento), ma sotto un ciclo un fetch non verrebbe mai mostrato prima del
+ *  successivo. Il costo è energetico, ~5-10 s di radio accesa per fetch. */
 #ifndef CAL_OUTLOOK_FETCH_MIN
   #define CAL_OUTLOOK_FETCH_MIN 10
 #endif
@@ -87,11 +86,6 @@
   #define CAL_GOOGLE_FETCH_MIN 10
 #endif
 #define CAL_GOOGLE_FETCH_MIN_FLOOR CYCLE_MIN
-
-#ifndef MAIL_GOOGLE_FETCH_MIN
-  #define MAIL_GOOGLE_FETCH_MIN 10
-#endif
-#define MAIL_GOOGLE_FETCH_MIN_FLOOR CYCLE_MIN
 
 /** Telemetria Tuya. Il pavimento e' il periodo di campionamento del BME680:
  *  sotto quello si ripubblica lo stesso campione, perche' la cache di Indoor
@@ -237,11 +231,6 @@
  *  publish. */
 #define TUYA_KEEPALIVE_S 1200
 
-/** Budget wall-clock di UNA esecuzione del fetch mail, non una cadenza:
- *  limita quanto a lungo la sequenza token + list + batch puo' occupare la
- *  finestra radio. */
-#define MAIL_FETCH_BUDGET_MS 10000UL
-
 /** Persistenza dello stato di calibrazione BSEC in NVS. */
 #define BSEC_STATE_SAVE_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
 
@@ -352,9 +341,6 @@ static_assert(CAL_OUTLOOK_FETCH_MIN >= CAL_OUTLOOK_FETCH_MIN_FLOOR &&
 static_assert(CAL_GOOGLE_FETCH_MIN >= CAL_GOOGLE_FETCH_MIN_FLOOR &&
                   CAL_GOOGLE_FETCH_MIN <= CADENZA_MAX_MIN,
               "CAL_GOOGLE_FETCH_MIN fuori dai limiti");
-static_assert(MAIL_GOOGLE_FETCH_MIN >= MAIL_GOOGLE_FETCH_MIN_FLOOR &&
-                  MAIL_GOOGLE_FETCH_MIN <= CADENZA_MAX_MIN,
-              "MAIL_GOOGLE_FETCH_MIN fuori dai limiti");
 static_assert(TUYA_PUBLISH_MIN >= TUYA_PUBLISH_MIN_FLOOR && TUYA_PUBLISH_MIN <= CADENZA_MAX_MIN,
               "sotto il pavimento il publish Tuya ripubblica lo stesso campione BSEC");
 static_assert(TUYA_KEEPALIVE_S >= 30 && TUYA_KEEPALIVE_S <= 1200,
@@ -412,7 +398,6 @@ namespace Timings
     uint16_t owmMin;
     uint16_t outlookMin;
     uint16_t googleMin;
-    uint16_t mailMin;
     uint16_t tuyaMin;
     uint16_t finestraManutenzioneMin;
     uint16_t wifiOraInizio;
@@ -425,7 +410,6 @@ namespace Timings
       WEATHER_FORECAST_FETCH_MIN,
       CAL_OUTLOOK_FETCH_MIN,
       CAL_GOOGLE_FETCH_MIN,
-      MAIL_GOOGLE_FETCH_MIN,
       TUYA_PUBLISH_MIN,
       OTA_WINDOW_MIN,
       WIFI_ACTIVE_HOUR_START,
@@ -474,8 +458,6 @@ namespace Timings
          &Valori::outlookMin, CAL_OUTLOOK_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_OUTLOOK_FETCH_MIN, CYCLE_MIN},
         {"goog_min",   "Calendario Google",                         "min",
          &Valori::googleMin, CAL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_GOOGLE_FETCH_MIN, CYCLE_MIN},
-        {"mail_min",   "Posta Gmail",                               "min",
-         &Valori::mailMin, MAIL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, MAIL_GOOGLE_FETCH_MIN, CYCLE_MIN},
         {"tuya_min",   "Telemetria Tuya",                           "min",
          &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, CADENZA_MAX_MIN, TUYA_PUBLISH_MIN, CYCLE_MIN},
         {"maint_min",  "Finestra di manutenzione",                  "min",

@@ -46,8 +46,6 @@ Lo sketch principale compone uno schermo completo con:
   (Microsoft Graph) e **Google Calendar** ordinati per inizio: gli
   eventi di oggi sono colorati in rosso, gli altri in nero, con evento
   in corso (end nel futuro) mantenuto fino al termine effettivo;
-- **riquadro Posta** sotto al wallpaper: 4 mail su 097c (2×2) / 6 su
-  122c (2×3). Vedi [Mail (`Mail.h`)](#mail-mailh);
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
   impostato da `Clock::begin()` in `setup()`);
 - **telemetria Tuya** del BME680 verso l'app Smart Life (opzionale);
@@ -233,10 +231,10 @@ scommentando UNA sola delle due varianti:
 | `DISPLAY_VARIANT_122C`  | SOLUM 12.2"          | 960w × 768h | [Layout_122c.h](Layout_122c.h) |
 
 Ogni `Layout_<pannello>.h` definisce nel namespace `Layout` soltanto il
-pannello e due manopole, poi include [`Layout_common.h`](Layout_common.h), che
-ne deriva tutte le coordinate. I moduli applicativi (`Weather.h`, `Calendar.h`,
-`Mail.h`, `Graphics.h`, `icons.h`, lo sketch `.ino`) leggono tutto come
-`Layout::*`. Famiglie di simboli:
+pannello, poi include [`Layout_common.h`](Layout_common.h), che ne deriva
+tutte le coordinate. I moduli applicativi (`Weather.h`, `Calendar.h`,
+`Graphics.h`, `icons.h`, lo sketch `.ino`) leggono tutto come `Layout::*`.
+Famiglie di simboli:
 
 - **`Layout::Panel`**, `PAGE_HEIGHT`, `makePanel()`: classe driver e sua
   costruzione. Lo sketch istanzia il display come
@@ -244,21 +242,19 @@ ne deriva tutte le coordinate. I moduli applicativi (`Weather.h`, `Calendar.h`,
 - **`Layout::PIN_*`, `ROTATION`, `SCREEN_W/H`**: pin del driver, orientamento e
   geometria del frame visibile, presa dal driver. Il bus HSPI condiviso resta
   nello sketch.
-- **Manopole del pannello**: `CINEMA_H` (altezza del wallpaper) e
-  `MAIL_ROWS_PER_COL` (righe del riquadro Posta).
 - **Token** di `Layout_common.h`: `MARGIN`, `GUTTER`, `STACK_GAP`,
   `BOX_RADIUS`, `TITLE_INSET`, `BOX_PAD`, `TOP_BOX_Y`.
-- **`Layout::CINEMA_*`**: posizione e dimensioni del wallpaper, `STRIDE`,
-  `PLANE_SZ`, `PLANES`, `TOTAL_SZ` per il fetch HTTP. L'URL lo compone lo
-  sketch da queste costanti.
+- **`Layout::CINEMA_*`**: posizione e dimensioni del wallpaper, che occupa la
+  colonna sinistra fino a `BANNER_Y - STACK_GAP`, `STRIDE`, `PLANE_SZ`,
+  `PLANES`, `TOTAL_SZ` per il fetch HTTP. L'URL lo compone lo sketch da queste
+  costanti.
 - **`Layout::BANNER_*`, `INDOOR_*`, `WEATHER_*`, `FORECAST_*`, `WX_*`, `SUN_*`,
   `SUNRISE_*`, `SUNSET_*`, `TRB_*`, `TC_*`**: riquadri, blocchi e baseline del banner meteo, espresse
   come `BANNER_Y + offset`, che a sua volta deriva da `SCREEN_H`.
-- **`Layout::CAL_*` / `EVT_*` / `MAIL_*`**: scheda della sidebar, eventi e
-  riquadro Posta.
+- **`Layout::CAL_*` / `EVT_*`**: scheda della sidebar ed eventi.
 - **`Layout::FONT_*`**: `const GFXfont*` per ciascun ruolo semantico.
-- **`static_assert`** di geometria: righe della Posta e degli eventi troppo
-  basse o aree non positive fermano la build.
+- **`static_assert`** di geometria: aree non positive e blocchi meteo più
+  stretti della loro icona fermano la build.
 
 Il dispatcher [`Layout.h`](Layout.h) valuta le `#define` e include uno
 solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
@@ -268,20 +264,18 @@ solo dei due `Layout_*.h`; se nessuno (o entrambi) sono definiti emette
 
 Il pannello 12.2" ha la stessa larghezza (960 px) e 96 px in più in
 altezza (672→768). Tutte le X e le larghezze coincidono; le altezze le
-deriva `Layout_common.h` dalle due manopole e da `SCREEN_H`:
+deriva `Layout_common.h` da `SCREEN_H`:
 
 | Costante           | 097c   | 122c   | Note                                        |
 |--------------------|-------:|-------:|---------------------------------------------|
 | `SCREEN_H`         | 672    | 768    | dal driver                                  |
-| `CINEMA_H`         | 290    | 325    | manopola: altezza del wallpaper             |
-| `MAIL_ROWS_PER_COL`| 2      | 3      | manopola: 4 mail sul 097c, 6 sul 122c       |
 | `BANNER_Y`         | 466    | 562    | `SCREEN_H - MARGIN - BANNER_H`, banner alto 196 |
-| `MAIL_Y` / `MAIL_H`| 316 / 134 | 351 / 195 | righe da 57 e 58 px                       |
+| `CINEMA_H`         | 440    | 536    | wallpaper fino a `BANNER_Y - STACK_GAP`     |
 | `CAL_H`            | 436    | 532    | scheda della sidebar fino a `BANNER_Y - STACK_GAP` |
 | `EVT_H`            | 259    | 355    | 6 righe da 43 px sul 097c, 7 da 50 sul 122c |
-| `CINEMA_PLANE_SZ`  | 22 330 | 25 025 | ceil(W/8)·H per ogni piano, con W = 610     |
+| `CINEMA_PLANE_SZ`  | 33 880 | 41 272 | ceil(W/8)·H per ogni piano, con W = 610     |
 | `CINEMA_PLANES`    | 2      | 2      | black e red: nessuno dei due pannelli ha il giallo |
-| `CINEMA_TOTAL_SZ`  | 44 660 | 50 050 | piano × piani, ~44 KB / ~49 KB              |
+| `CINEMA_TOTAL_SZ`  | 67 760 | 82 544 | piano × piani, ~66 KB / ~81 KB              |
 
 ### Font utilizzati
 
@@ -293,8 +287,8 @@ Adafruit_GFX (`<Fonts/*.h>`).
 
 | Alias semantico        | Font GFX             | Dimensione  | Dove viene usato |
 |------------------------|----------------------|-------------|------------------|
-| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Intestazione e numeri della griglia del mese; orario e data degli eventi; oggetto, orario e data delle mail; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; cifre della barra temp-range; badge `TUYA ERR`; righe meteo e IAQ che non entrano in 12 pt |
-| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Titolo degli eventi; mittente delle mail; orario, etichetta e riga precipitazioni dei blocchi meteo; orario del meteo corrente accanto al titolo Meteo; IAQ e pressione del riquadro Interno; alba e tramonto |
+| `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Intestazione e numeri della griglia del mese; orario e data degli eventi; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; cifre della barra temp-range; badge `TUYA ERR`; righe meteo e IAQ che non entrano in 12 pt |
+| `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Titolo degli eventi; orario, etichetta e riga precipitazioni dei blocchi meteo; orario del meteo corrente accanto al titolo Meteo; IAQ e pressione del riquadro Interno; alba e tramonto |
 | `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Temperatura e umidità del riquadro Interno |
 | `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo, in rosso |
 | `FONT_TITLE`           | `FreeSansBold12pt7b` | 12 pt bold  | Titoli dei riquadri sul bordo superiore, compreso il mese |
@@ -315,8 +309,8 @@ Note pratiche:
    `GxEPDImage.h`.
 2. Creare `Layout_<nome>.h` con gli stessi simboli di pannello del namespace
    `Layout` (Panel, pin, `PAGE_HEIGHT`, `makePanel()`, `ROTATION`,
-   `SCREEN_W/H`) e le due manopole `CINEMA_H` e `MAIL_ROWS_PER_COL`, poi
-   `#define LAYOUT_PANEL_SELECTED` e l'include di `Layout_common.h`.
+   `SCREEN_W/H`), poi `#define LAYOUT_PANEL_SELECTED` e l'include di
+   `Layout_common.h`.
 3. Aggiungere il ramo `#elif defined(DISPLAY_VARIANT_<NOME>)` in
    [Layout.h](Layout.h).
 4. Nello sketch `.ino` aggiungere `#define DISPLAY_VARIANT_<NOME>` in
@@ -385,23 +379,18 @@ dominio non-sensibili stanno nei moduli consumer: `CLOCK_POSIX_TZ`
 | `OTA_AP_PASSWORD`       | si | Minimo 8 caratteri (limite WPA2).                                |
 | `MSGRAPH_CLIENT_ID`     | opz | Client pubblico Azure AD con scope `Calendars.Read offline_access`. Omettere tutti e due i MSGRAPH_* se non si usa Outlook. |
 | `MSGRAPH_REFRESH_TOKEN` | opz | Refresh token ottenuto da PC via MSAL.                          |
-| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa nè Google Calendar nè Gmail. |
+| `GOOGLE_CLIENT_ID`      | opz | Client OAuth "Desktop app" da Google Cloud Console. Omettere tutti e tre i GOOGLE_* se non si usa Google Calendar. |
 | `GOOGLE_CLIENT_SECRET`  | opz | Client secret della stessa app.                                 |
-| `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly` **e/o** `gmail.readonly` (vedi sotto). |
+| `GOOGLE_REFRESH_TOKEN`  | opz | Refresh token con scope `calendar.readonly` (vedi sotto). |
 | `TUYA_DEVICE_ID`        | opz | DeviceID TuyaLink, dalla console `platform.tuya.com`. È **per-dispositivo**: ogni esemplare consuma una licenza a sè. Lasciando i placeholder la telemetria si disattiva da sè. |
 | `TUYA_DEVICE_SECRET`    | opz | DeviceSecret dello stesso device: è la chiave con cui il firmware firma l'HMAC di autenticazione MQTT. |
 
-> ℹ️ **Refresh token Google condiviso fra Calendar e Mail**. `Mail.h` riusa
-> `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REFRESH_TOKEN`: se
-> abiliti entrambi i moduli (Calendar Google + Mail), il refresh_token deve
-> essere stato emesso con **scope unificati** `calendar.readonly` +
-> `gmail.readonly`. Per aggiungere il modulo Mail a un progetto che già
-> usa il Calendar: ri-esegui il flusso OAuth (con `prompt=consent`)
-> chiedendo entrambi gli scope, sostituisci `GOOGLE_REFRESH_TOKEN` con il
-> nuovo valore e abilita la **Gmail API** sullo stesso progetto Cloud.
-> Prima di flashare, `python3 tools/google_api_check.py` rifà da PC il
-> rinnovo del token e una richiesta a Calendar API e Gmail API con le
-> credenziali di `Env.h`, e per ogni errore stampa il motivo di Google.
+> ℹ️ **Refresh token Google**. `python3 tools/google_oauth_setup.py` esegue
+> da PC il flusso OAuth (con `prompt=consent`) per lo scope
+> `calendar.readonly` e scrive in `Env.h` client id, client secret e refresh
+> token. Prima di flashare, `python3 tools/google_api_check.py` rifà da PC il
+> rinnovo del token e una richiesta a Calendar API con le credenziali di
+> `Env.h`, e per ogni errore stampa il motivo di Google.
 
 > ⚠️ **Non committare `Env.h`** dopo averlo editato: è gitignored, si parte da
 > `Env_template.h`.
@@ -478,7 +467,6 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 | Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
-| Posta Gmail | `runMailFetch()` | [Mail::runFetch()](Mail.h), che chiama `refreshToken()`, `fetchMessageIds()` e `parseBatchPart()` | Celle della posta (mittente, oggetto troncato a 60 caratteri, data) |
 | Banner cinema | `runCinemaFetch()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp e salvato in flash da [CinemaStore](CinemaStore.h). Se manca, c'è il fallback PROGMEM |
 | Percorso del mattino | `runRouteFetch()` | [fetchRouteImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmRouteServer()](ePaper-weather-dashboard.ino) | Stesso formato del cinema, scaricato da routefinder nello slot inattivo di [CinemaStore](CinemaStore.h); al suo posto nel riquadro secondo [Routefinder](Routefinder.h) |
 
@@ -486,15 +474,15 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 
 Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo la propria funzionalità:
 
-- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `preconditionsMet()` del task (`weatherReady()`, `mailReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
+- **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `preconditionsMet()` del task (`weatherReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
 - **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
-- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte. Mail resta in HTTP/1.1 per riusare la connessione fra lista e batch, e legge le risposte con `getString()`.
+- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte.
 - **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
 - **Testo.** I testi ricevuti passano da [Graphics::foldToFontCharset()](Graphics.h): i font a 7 bit non disegnano le lettere accentate, che diventano vocale più apostrofo (`caffè` → `caffe'`).
 
 #### Produttori indiretti
 
-- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`isClockValidForCalendars()`) e i calcoli di data in mail, calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
+- [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`isClockValidForCalendars()`) e i calcoli di data in calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
 - Il sensore è il primo passo di ogni ciclo dello scheduler, e la sua scadenza ([Indoor::msUntilNextPoll()](Indoor.h), 300 s più 1 s dall'ultima chiamata) è l'orologio del ciclo. Senza sensore (`Indoor::attivo()` falso) il ciclo è interno. Dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
 - [Tuya::runPublish()](Tuya.h) pubblica il campione appena letto nello stesso ciclo e non porta dati al pannello, nè comanda il refresh: il badge `TUYA ERR` lo legge `drawBanner()` da `Tuya::hasFailed()` al momento del disegno.
@@ -502,7 +490,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 #### Consumatori
 
 - Il pannello si ridisegna a ogni ciclo della fascia WiFi, dopo il sensore e i fetch dello stesso ciclo: l'hook `drawFrame` dello scheduler è `Weather::render()`. Nessun task chiede ridisegni, quindi non esiste un flag di dati nuovi.
-- `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()`, `Mail::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia, eventi e posta e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
+- `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia ed eventi e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
   - [renderSunColumn()](Weather.h) per mini-grafico, barra temp-range, alba e tramonto;
@@ -596,65 +584,6 @@ Widget del mese e lista eventi Outlook + Google.
   quando è sincronizzato, altrimenti `Weather::slots[0].epoch`; senza nessuno dei
   due la scheda ha il titolo `--` e nessuna griglia, invece di "Gennaio 1970".
   `Calendar::draw()` accetta solo un `utcEpoch`, il fuso lo applica `Clock`.
-
-### Mail (`Mail.h`)
-
-Ultime mail della casella Gmail, nel riquadro "Posta" sotto al wallpaper cinema
-(4 su 097c in 2×2, 6 su 122c in 2×3). Tutto nero, busta delle mail non lette
-compresa: un elemento rosso che cambia di frequente impedirebbe il refresh
-parziale.
-
-| Funzione | Effetto |
-|---|---|
-| `Mail::begin()` | Azzera la cache. Una tantum in `setup()`. |
-| `Mail::runFetch()` | Fetch best-effort. Ritorna `true` se la cache è aggiornata; il dato compare nel frame dello stesso ciclo. Cadenza e ritenti non sono suoi. |
-| `Mail::draw()` | Disegna il riquadro e le `Layout::MAIL_MAX` celle nell'area `Layout::MAIL_*`, dentro il paged loop. Con una cache più grande (`MAIL_MAX_MESSAGES`) disegna solo le prime. |
-| `Mail::isConfigured()` | Vero se le credenziali Google di `Env.h` sono configurate: è la precondizione del task `mail`. |
-
-**Cella**: indirizzo del mittente (solo `<email>`, il nome leggibile è scartato)
-in alto a sinistra con la busta 20×20 se la mail è non letta, oggetto
-(`FONT_SMALL`, max 60 caratteri) sotto, orario `HH:MM` e data `dd/MM` a destra,
-oppure `--` se la mail non ha `internalDate`. Cella senza mail: placeholder `--`.
-
-**Fetch** (1 GET + 1 POST batch sulla stessa connessione TLS in HTTP/1.1 keep-alive;
-se il server la chiude dopo la lista, HTTPClient si riconnette da sè):
-
-1. Refresh token condiviso con `Calendar::Google`: `Mail.h` non ha una propria cache
-   di access token, usa `Calendar::detail::refreshGoogleToken()` e
-   `cachedGoogleToken`. Una sola POST al token endpoint per ciclo.
-2. `GET /gmail/v1/users/me/messages?maxResults=N&labelIds=INBOX&fields=messages(id)`.
-3. Una POST `multipart/mixed` a `https://gmail.googleapis.com/batch/gmail/v1` con N
-   sub-request `messages.get` (`format=metadata`, header `From,Subject,Date`), parsata
-   in streaming. Una sub-response 4xx/5xx non blocca le altre.
-4. Commit atomico della cache dal buffer temporaneo. Il timestamp è
-   `internalDate` di Gmail, non l'header `Date`.
-
-**Configurazione** (in `Mail.h`, override-abile dal `.ino`; la cadenza `mail_min` è in
-`Timings.h`, indipendente da quella dei calendari):
-
-| `#define` | Default | Effetto |
-|---|---|---|
-| `MAIL_MAX_MESSAGES` | `Layout::MAIL_MAX` (4 097c / 6 122c) | Mail da scaricare e tenere in cache: tante quante le celle visibili. |
-| `MAIL_ONLY_UNREAD` | `0` | `1` per filtrare solo le non lette (`labelIds=INBOX&labelIds=UNREAD`). |
-| `MAIL_GMAIL_HOST` / `MAIL_GMAIL_BATCH_URL` | `https://gmail.googleapis.com` / `.../batch/gmail/v1` | Host base e endpoint batch. |
-| `MAIL_GMAIL_SCOPE` | `gmail.readonly` (URL-encoded) | Scope OAuth richiesto. |
-| `MAIL_SENDER_LEN` / `MAIL_SUBJECT_LEN` | `64` / `60` | Lunghezza dei buffer mittente e oggetto. |
-
-`MAIL_FETCH_BUDGET_MS` (10 s, in `Timings.h`) è il tetto di una esecuzione: oltre la
-soglia il fetch si ferma e restano in cache le mail già parsate.
-
-**Resilienza**: `runFetch()` è best-effort e ritorna sempre entro il budget; la
-cache viene riscritta solo su fetch riuscito, quindi su un errore transitorio resta
-visibile l'ultimo snapshot valido.
-
-| Scenario | Ritorno | Cache |
-|---|---|---|
-| WiFi giù | Non viene chiamata: lo scheduler segna `saltato` senza spendere il tentativo | Preservata |
-| Token fallito, budget esaurito, list o batch in errore | `false` | Preservata |
-| `messages.list` 401 | `false`, più reset di `cachedGoogleToken`: il refresh si ripara al ciclo dopo | Preservata |
-| Inbox vuota (0 mail) | `true` | **Azzerata**: è una risposta valida |
-| Batch HTTP 200 ma 0 parsati | `false` | Preservata (guardia contro il wipe) |
-| Batch con M<N parsati, o tutto OK | `true` | Aggiornata |
 
 ### Indoor (`Indoor.h`)
 
@@ -884,7 +813,7 @@ in caso di successo torna a `/` da sè dopo il riavvio.
 elencate in [Cadenze configurabili](#cadenze-configurabili-timingsh-modificabili-da-config):
 
 ```
-curl -u admin:PASSWORD -d "owm_min=30&mail_min=15" http://epd-dashboard.local/config
+curl -u admin:PASSWORD -d "owm_min=30&goog_min=15" http://epd-dashboard.local/config
 ```
 
 - Si può inviare un sottoinsieme: le chiavi assenti restano al valore corrente, quelle
@@ -915,7 +844,7 @@ controllo dell'origine sulle POST. Non ci sono HTTPS nè token.
    partizione durante il parsing della richiesta, quindi un controllo a valle
    arriverebbe dopo `Update.end()`.
 4. **Tabella delle partizioni con due slot applicative**: quella di
-   [`partitions.csv`](partitions.csv) ne ha due da 1920 KB; con `Huge APP`
+   [`partitions.csv`](partitions.csv) ne ha due da 1856 KB; con `Huge APP`
    l'aggiornamento via web non è possibile. Un aggiornamento OTA non cambia la
    tabella: la prima installazione con il csv va fatta via seriale.
 
@@ -939,7 +868,7 @@ Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespa
 |---|---|---|
 | Partenza, arrivo | `ROUTEFINDER_ORIGIN_*` (o `LAT`/`LON`), `ROUTEFINDER_DESTINATION_*` | "lat, lng" come li copia Google Maps; arrivo a 0,0 = percorso sospeso |
 | Carburante | Benzina | Benzina, Diesel, Ibrido, Elettrico |
-| Riquadro | Automatica | Automatica (percorso in fascia, cinema fuori), Cinema, Percorso, Wallpaper (`la_grande_onda`) |
+| Riquadro | Automatica | Automatica (percorso in fascia, cinema fuori), Cinema, Percorso, Wallpaper (`great_wave`) |
 | Fascia | 07:00-09:00 | ai minuti, fine esclusa, dentro la fascia WiFi |
 
 La cadenza è `route_min` in `/config` (5 min, cioè a ogni ciclo, pavimento 5): ogni
@@ -985,7 +914,6 @@ void setup()
   Weather::begin();
   Calendar::Outlook::begin();
   Calendar::Google::begin();
-  Mail::begin();                             // cache mail Gmail (vuota al boot)
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
   CinemaStore::begin();                      // immagine cinema e percorso salvati in flash, se ci sono
@@ -1026,7 +954,7 @@ sempre in quest'ordine:
    i dati appena prodotti.
 
 Le cadenze sono multipli del ciclo e si contano in cicli dallo slot precedente, mai in
-millisecondi, quindi non scivolano: meteo, mail e calendari a 10 minuti cadono un frame
+millisecondi, quindi non scivolano: meteo e calendari a 10 minuti cadono un frame
 sì e uno no, percorso e Tuya a ogni frame. Un fetch fallito in modo rapido (meno di
 `FAST_FAILURE_MAX_MS`) ritenta una volta nella stessa accensione della radio, dopo
 `SESSION_RETRY_MS` e prima del frame; uno lento, un timeout, ritenta al ciclo successivo
@@ -1053,8 +981,7 @@ La sequenza dei task di rete sta nella tabella `TASK_TABLE`, l'unico posto dove 
 | Task | Cadenza | Note |
 |---|---|---|
 | `meteo` | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta al ciclo successivo invece di attendere la cadenza piena. |
-| `mail` | `mail_min` | Prima di Google: condividono la cache del token OAuth e chi gira per primo paga il refresh. |
-| `google` | `goog_min` | Il token è quello appena rinfrescato da mail. **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
+| `google` | `goog_min` | **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | `outl_min` | Stessa precondizione di `google`. |
 | `tuya` | `tuya_min` | Telemetria BME680 sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
 | `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso fuori dalla fascia percorso o dalla sorgente percorso, senza orologio, arrivo o token. All'ingresso nella fascia parte al primo ciclo. Ping di sveglia solo se l'istanza dorme. |
@@ -1065,22 +992,20 @@ Ingresso e uscita dalla fascia percorso, scadenza del percorso e cambio di sorge
 riquadro a ogni frame, quindi il cambio compare al ciclo successivo.
 
 Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_common.h`
-con le manopole di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
+con la geometria di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
 affiancate, 16 px fra zone impilate:
 
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
-| Wallpaper         | `x=10..620, y=10..300`    | Background cinema scaricato via HTTP (610w × 290h BWR)  |
-| Posta             | `x=10..620, y=316..450`   | Riquadro con 2×2 = 4 mail su righe da 57 px. Per cella: email mittente + busta se non letta / oggetto / orario HH:MM / data dd/MM |
+| Wallpaper         | `x=10..620, y=10..450`    | Background cinema scaricato via HTTP (610w × 440h BWR)  |
 | Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=179, poi 6 eventi da 43 px (Outlook + Google merged) |
 | Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
 | Banner Meteo      | `x=200..500, y=466..662`  | 300w × 196h, blocco corrente 160w + colonna sole 140w, orario del corrente accanto al titolo |
 | Banner Previsioni | `x=510..950, y=466..662`  | 440w × 196h, 3 blocchi da 146w                          |
 
 Sul pannello SOLUM 12.2" (960w × 768h) X e larghezze sono identici. Il
-wallpaper scende a `y=335` (610w × 325h), la Posta occupa `y=351..546` con 2×3
-= 6 mail, la scheda calendario arriva a `y=546` con 7 eventi e il banner sta a
-`y=562..758`. Vedi la tabella nella sezione
+wallpaper scende a `y=546` (610w × 536h), come la scheda calendario con 7 eventi, e
+il banner sta a `y=562..758`. Vedi la tabella nella sezione
 [Differenze layout 097c vs 122c](#differenze-layout-097c-vs-122c).
 
 Anteprima del frame disegnata come la disegna il firmware, dalle costanti di
@@ -1101,10 +1026,6 @@ campo senza rete:
 > mano: dopo ogni modifica del layout si rigenerano con
 > `python tools/layout_preview.py`, che legge anche font GFX, icone e wallpaper
 > veri e richiede Pillow.
->
-> La pagina [`docs/mockup_097c.html`](docs/mockup_097c.html) conserva il
-> confronto fra il layout precedente e le due varianti proposte, con le icone
-> meteo e la tabella delle coordinate.
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner
@@ -1160,7 +1081,6 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | `owm_min` | `10` | `10` | `5` | min | Cadenza One Call 3.0, un frame sì e uno no. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
 | `outl_min` | `10` | `5` | `5` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati, ma sotto un ciclo il fetch non verrebbe mostrato prima del successivo. |
 | `goog_min` | `10` | `5` | `5` | min | Cadenza Google Calendar API v3. |
-| `mail_min` | `10` | `5` | `5` | min | Cadenza Gmail API. |
 | `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il periodo di campionamento del BME680: sotto, si ripubblica lo stesso campione. |
 | `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
@@ -1202,7 +1122,6 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `PARTIAL_MIN_TEMP_C`, `PARTIAL_TEMP_HYSTERESIS_C` | `18` °C, `2` °C | Sotto la soglia il frame è pieno, perchè la LUT del partial ha frame fissi e non compensa il freddo; dopo un pieno per freddo il partial riparte sopra soglia più isteresi. Valore prudente, non misurato. Senza BME680 collegato la soglia non si applica e il partial si prova comunque; con il sensore collegato un campione non valido tiene il frame pieno. |
 | `PARTIAL_MAX_GAP_MS` | 2 × 300 s + 1 s, in ms | Oltre questa distanza dall'ultimo frame il riferimento del differenziale non si usa (notte, riavvio, finestra di manutenzione). |
 | `MAINT_CLIENT_IDLE_MS` | `30000` ms | Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima richiesta HTTP è più recente di così, o finchè un dispositivo è associato all'AP di emergenza. |
-| `MAIL_FETCH_BUDGET_MS` | `10000` ms | Budget di **una** esecuzione del fetch mail, non una cadenza. |
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
 | `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. Vale anche come attesa del resto di un pacchetto iniziato. |
 | `TUYA_ACK_TIMEOUT_MS` | `2000` ms | Attesa della conferma applicativa del cloud, pagata solo con `TUYA_REQUEST_ACK` a 1. |
@@ -1233,7 +1152,7 @@ ogni giro Maintenance::servi()                 // macchina a stati + handleClien
               Idle        serve solo se un task è dovuto, dentro la fascia WiFi
               Acquiring   STA connessa (al più RADIO_STA_ATTESA_MS dall'inizio del passo),
                           poi ora valida (al più TIME_SYNC_TIMEOUT_MS dalla STA vista)
-              Running     meteo -> mail -> google -> outlook -> tuya -> route -> cinema,
+              Running     meteo -> google -> outlook -> tuya -> route -> cinema,
                           con l'ora già nota; un task fallito ritenta una volta dopo
                           SESSION_RETRY_MS nella stessa accensione, se il fallimento è
                           stato rapido (in questo primo passo, qualunque fallimento)
@@ -1271,7 +1190,7 @@ Proprietà del ciclo:
 
 - **le cadenze sono in cicli**. Con i default il dispositivo si sveglia ogni ~301 s:
   un ciclo con sensore, Tuya, percorso (in fascia percorso) e frame, il successivo
-  anche con meteo, mail e calendari, e così via. Nessun task scivola rispetto ai frame,
+  anche con meteo e calendari, e così via. Nessun task scivola rispetto ai frame,
   perchè lo slot si conta dal ciclo in cui si è aperto e non dall'istante di fine;
 - **un risveglio per ciclo**: nessun anticipo, nessun ritento a 30 s, nessun risveglio
   ai bordi della fascia percorso;
@@ -1282,7 +1201,7 @@ Ogni esito è loggato con durata e prossimo slot:
 
 ```
 [sched] meteo: ok in 1240 ms, prossimo fra 2 cicli
-[sched] mail: fallito in 3100 ms (tentativo 1/2), ritento nella stessa accensione
+[sched] google: fallito in 3100 ms (tentativo 1/2), ritento nella stessa accensione
 [sched] outlook: saltato, radio non connessa (slot intatto)
 [sched] cinema: ok in 4230 ms, prossimo domani dalle 07
 [sched] sleep 276030 ms (prossimo: sensore)
@@ -1298,17 +1217,16 @@ Ogni esito è loggato con durata e prossimo slot:
 | Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame del ciclo lo mostra | Al ciclo successivo |
 | Radio caduta a giro iniziato | Esito `saltato`: **lo slot resta intatto e il tentativo non viene speso**, perchè è un guasto a monte | Al primo giro con la radio su |
 | `wifiOn()` fallito | Nessun tentativo speso, il frame del ciclo si disegna comunque con i dati in cache | Al ciclo successivo |
-| Mail (list 401) | Reset del `cachedGoogleToken` condiviso: il refresh si ripara da solo, cache preservata | Al ciclo successivo |
-| Mail (0 mail) o calendario senza eventi futuri | Cache **azzerata**: è una risposta valida, non un errore, e il frame del ciclo la mostra | Alla cadenza piena |
+| Calendario (eventi 401) | Reset del token in cache del calendario: il refresh si ripara da solo, cache degli eventi preservata | Al ciclo successivo |
+| Calendario senza eventi futuri | Cache **azzerata**: è una risposta valida, non un errore, e il frame del ciclo la mostra | Alla cadenza piena |
 | Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi in due cicli consecutivi, poi domani a `cine_h` |
 | Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Al ciclo successivo, poi alla cadenza `route_min` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
 | BME680 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
-| Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo, mail e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
+| Orologio mai sincronizzato (SNTP irraggiungibile) | I due task calendario restano **sospesi** e la lista eventi mostra i placeholder `--`. Meteo e cinema non ne risentono | Al primo SNTP riuscito, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.
-Un fallimento di Mail non blocca Calendar; un fallimento di Calendar non
-blocca Weather; un fallimento di Weather non blocca Indoor. L'ordine
+Un fallimento di Calendar non blocca Weather; un fallimento di Weather non blocca Indoor. L'ordine
 dei task è di priorità, non una catena di dipendenze: ognuno parte
 indipendentemente e fallisce indipendentemente con il proprio backoff. Il dispositivo
 non si blocca mai: qualunque combinazione di failure produce comunque un refresh del
@@ -1330,35 +1248,36 @@ Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 
 ## Background cinema
 
-Il wallpaper in cima alla colonna sinistra (`Layout::CINEMA_W` ×
+Il wallpaper occupa la colonna sinistra fino al banner (`Layout::CINEMA_W` ×
 `Layout::CINEMA_H` px a partire da (`CINEMA_X`, `CINEMA_Y`) = (10, 10): 610w ×
-290h sul 097c, 610w × 325h sul 122c) mostra un collage locandine + orari
+440h sul 097c, 610w × 536h sul 122c) e mostra un collage locandine + orari
 scaricato via HTTP dalla webapp [`webapp/`](webapp/) (vedi
-[webapp/README.md](webapp/README.md) per l'API). Sotto c'è il riquadro **Posta**
-del modulo [`Mail.h`](Mail.h).
+[webapp/README.md](webapp/README.md) per l'API).
 
 ### Flusso
 
 1. **Boot**: [`CinemaStore::begin()`](CinemaStore.h) cerca la partizione `wallpaper`
    e rimette a schermo l'ultima immagine scaricata, già dal primo frame. Senza
    immagine valida [`drawTestBackground()`](ePaper-weather-dashboard.ino) usa il
-   fallback PROGMEM `img_la_grande_onda_desc`. Il fallback si genera con
-   [`epd_image_converter.pyw`](#convertitore-immagini-python) a 610w × 290h:
+   fallback PROGMEM `img_great_wave_desc` (610w × 440h BWR, sorgente
+   `wallpaper/great_wave.jpg`). Il fallback si genera con
+   [`epd_image_converter.pyw`](#convertitore-immagini-python):
    `drawTestBackground()` ne taglia le righe all'altezza `CINEMA_H`, mentre
-   un'immagine più larga sconfina nella colonna destra.
-2. **Fetch**: `fetchCinemaImage()` è l'**ultimo** task di rete del giro, dopo meteo,
-   mail e calendari, perchè è l'unico che può pagare il cold start di render.com e il
+   un'immagine più larga sconfina nella colonna destra. Sul 122c il fallback è più
+   basso dell'area e sotto resta una fascia bianca.
+2. **Fetch**: `fetchCinemaImage()` è l'**ultimo** task di rete del giro, dopo meteo
+   e calendari, perchè è l'unico che può pagare il cold start di render.com e il
    tempo degli altri è la copertura di quel boot. Fa un `HTTP GET` all'URL che
    compone da `CINEMA_ORIGIN` e dalle costanti del layout:
    ```
-   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=290&colors=bwr&dither=floyd   (097c)
-   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=325&colors=bwr&dither=floyd   (122c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=440&colors=bwr&dither=floyd   (097c)
+   https://cinema-epd.onrender.com/cinema/arduino?width=610&height=536&colors=bwr&dither=floyd   (122c)
    ```
    `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio: lo usa anche il
    ping `/health`. Larghezza, altezza e piani non possono divergere dall'immagine
    salvata, perchè vengono dalle stesse costanti.
 3. **Slot in flash**: prima della GET `CinemaStore::beginWrite()` cancella i settori
-   dello slot libero (11 sul 097c, 13 sul 122c), così l'erase, che ferma la cache
+   dello slot libero (17 sul 097c, 21 sul 122c), così l'erase, che ferma la cache
    della flash per circa mezzo secondo, avviene prima che la connessione TLS esista.
 4. **Lettura**: `Net::BodyStream::readBytes()` a blocchi da 1 KB su stack, scritti in
    flash con `CinemaStore::writeChunk()`, attendendo le pause fra i blocchi del corpo
@@ -1388,8 +1307,8 @@ la cadenza giornaliera resta sospesa.
 **Cold-start mitigation dal firmware.** Render.com free tier dorme dopo 15 min di
 inattività, e il boot successivo costa 22,4 s misurati. Il pre-warm lo fa il
 dispositivo, che è l'unico a sapere quando serve: `prewarmCinemaServer()` apre il giro
-di fetch con una GET a `/health` e ne abbandona la risposta; il giro esegue poi meteo,
-mail e calendari e scarica l'immagine **per ultima**. Render fa così il proprio boot
+di fetch con una GET a `/health` e ne abbandona la risposta; il giro esegue poi meteo
+e calendari e scarica l'immagine **per ultima**. Render fa così il proprio boot
 mentre l'ESP32 è occupato altrove, e il fetch cinema lo trova caldo o quasi. Pingare
 `/health` basta perchè le cache su disco sopravvivono al suspend: dopo il boot
 `/cinema/arduino` risponde in 0,5 s, quindi a costare è il processo, non la pipeline di
@@ -1400,11 +1319,11 @@ deriva di cron.
 
 | Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` | Settori per slot |
 |----------|------------------:|----------------:|------------------:|-----------------:|
-| 097c (610w × 290h, BWR)  | 22 330 byte | 2 | **44 660 byte** (~44 KB) | 11 |
-| 122c (610w × 325h, BWR)  | 25 025 byte | 2 | **50 050 byte** (~49 KB) | 13 |
+| 097c (610w × 440h, BWR)  | 33 880 byte | 2 | **67 760 byte** (~66 KB) | 17 |
+| 122c (610w × 536h, BWR)  | 41 272 byte | 2 | **82 544 byte** (~81 KB) | 21 |
 
 L'immagine non occupa heap: sta nella partizione dati `wallpaper` di
-[`partitions.csv`](partitions.csv), 104 KB divisi in due slot da 13 settori, ognuno
+[`partitions.csv`](partitions.csv), 168 KB divisi in due slot da 21 settori, ognuno
 con un'intestazione di 16 byte davanti ai due piani. Se il csv venisse tolto,
 `CinemaStore` usa la partizione `spiffs` dello schema "Minimal SPIFFS". Senza nessuna
 delle due (per esempio un dispositivo aggiornato via OTA da una tabella `no_fs`, che
@@ -1413,8 +1332,8 @@ PROGMEM finchè non si riflasha via seriale.
 
 Il Serial monitor stampa qualcosa come, sul 097c:
 ```
-[cinema] partizione wallpaper, slot da 53248 byte, immagine nello slot 0
-[cinema] fetching https://cinema-epd.onrender.com/cinema/arduino?width=610&height=290&colors=bwr&dither=floyd
+[cinema] partizione wallpaper, slot da 86016 byte, immagine nello slot 0
+[cinema] fetching https://cinema-epd.onrender.com/cinema/arduino?width=610&height=440&colors=bwr&dither=floyd
 [cinema] download completato e salvato in flash
 ```
 
@@ -1433,7 +1352,6 @@ limiti pubblici documentati:
 | OpenWeather One Call 3.0 | `WEATHER_FORECAST_FETCH_MIN` | 10 min | 1 000 chiamate/giorno incluse nella sottoscrizione One Call API, oltre a consumo ([fonte](https://openweathermap.org/api/one-call-3)) |
 | Microsoft Graph (Outlook) | `CAL_OUTLOOK_FETCH_MIN`      | 10 min | 10 000 richieste ogni 10 min per combinazione app e casella, 4 richieste concorrenti ([fonte](https://learn.microsoft.com/en-us/graph/throttling-limits)) |
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 10 000 richieste/min per progetto e 600/min per utente; soglia giornaliera di 1 000 000 richieste oltre la quale è prevista la fatturazione ([fonte](https://developers.google.com/workspace/calendar/api/guides/quota)) |
-| Gmail API (Mail)          | `MAIL_GOOGLE_FETCH_MIN`      | 10 min | 6 000 quota unit/min per utente e 1 200 000/min per progetto; `messages.list` costa 5 unit e `messages.get` 20, e ogni richiesta di un batch conta singolarmente ([quota](https://developers.google.com/workspace/gmail/api/reference/quota), [batch](https://developers.google.com/workspace/gmail/api/guides/batch)). Un fetch costa 5 + N × 20 unit: 85 con 4 mail, 125 con 6, ben sotto la soglia. |
 | TuyaLink (MQTT)           | `TUYA_PUBLISH_MIN`           | 5 min  | Il vincolo documentato è la **licenza per device**: una licenza per dispositivo, con due licenze gratuite per account a scopo di debug e le successive a pagamento ([fonte](https://developer.tuya.com/en/docs/iot/lisence-management?id=Kb4qlem97idl0)). Il pavimento non è del fornitore ma del sensore: sotto i 5 min si ripubblica lo stesso campione. |
 
 Il fetch cinema (endpoint render.com) avviene **una volta al giorno alle
@@ -1464,7 +1382,7 @@ L'icona usa tutta l'informazione del codice condizione `weather[0].id`
 tornado, quota di nubi) e il giorno/notte; l'etichetta resta breve e senza
 accenti, misurata per entrare nel blocco in 12 pt o in 9 pt. La tabella copre i
 55 codici documentati da OpenWeather; un codice sconosciuto mostra la nuvola e
-`--`. Le icone piccole di Interno, alba e tramonto e della busta restano in
+`--`. Le icone piccole di Interno, alba e tramonto restano in
 [`icons.h`](icons.h).
 
 ```bash
@@ -1534,11 +1452,15 @@ Windows) oppure `python tools/epd_image_converter.pyw`.
    [Selezione del display](#selezione-del-display)).
 3. Schema partizione: la tabella vera è [`partitions.csv`](partitions.csv),
    nella cartella dello sketch, che il core usa al posto dello schema scelto
-   a menu (IDE Arduino, VS Code e `build.ps1`): due slot OTA da 1920 KB per
+   a menu (IDE Arduino, VS Code e `build.ps1`): due slot OTA da 1856 KB per
    l'aggiornamento via web, la partizione `wallpaper` per l'immagine cinema e
    la coredump. Nel menu *Tools → Partition Scheme* va comunque scelto
-   **"Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)"**, il cui limite di
-   1920 KB coincide con gli slot e tiene giusto il controllo di dimensione.
+   **"Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)"** per gli altri
+   parametri dello schema, ma il suo limite di 1920 KB supera gli slot: il
+   controllo di dimensione si riporta a 1900544 byte con
+   `--build-property upload.maximum_size=1900544` (`build.ps1`) e con
+   `buildPreferences` in [`.vscode/arduino.json`](.vscode/arduino.json).
+   L'Arduino IDE 2 non ha un override: lì il controllo resta a 1920 KB.
 
    La tabella si scrive solo via seriale: il primo flash dopo un cambio del
    csv va fatto dal cavo, perchè l'aggiornamento via web non la tocca.

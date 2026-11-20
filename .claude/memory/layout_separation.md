@@ -9,11 +9,11 @@ Convenzione dimensioni in questo file: `NwxMh` = N px larghezza (X) × M px alte
 Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960w x 672h e SOLUM 12.2" 960w x 768h, landscape post-rotation) con la stessa logica applicativa. La separazione è realizzata da:
 
 - `Layout.h` (dispatcher): include `Layout_097c.h` o `Layout_122c.h` in base a `#define DISPLAY_VARIANT_097C` / `DISPLAY_VARIANT_122C` settato nel `.ino`. Emette `#error` se nessuno o entrambi sono definiti.
-- `Layout_097c.h` / `Layout_122c.h`: definiscono nel namespace `Layout` solo il pannello (`Panel`, `PAGE_HEIGHT`, `makePanel()`, pin, `BUSY_WAKE_PIN`, `ROTATION`, `SCREEN_W/H` presi da `Panel::WIDTH_VISIBLE` e `Panel::HEIGHT`) e due manopole, `CINEMA_H` e `MAIL_ROWS_PER_COL`; poi `#define LAYOUT_PANEL_SELECTED` e includono `Layout_common.h`.
-- `Layout_common.h`: token, font e tutte le coordinate, derivate dalle manopole e da `SCREEN_W/H`; dà `#error` se incluso senza un Layout di pannello. Numeri e somme in [[layout_invariants]].
-- I moduli (`Weather.h`, `Calendar.h`, `Mail.h`, `Graphics.h`, `icons.h`, `.ino`) referenziano tutto via `Layout::*` e includono `Layout.h`. Nessun #include diretto al driver fuori dai Layout_*.h.
+- `Layout_097c.h` / `Layout_122c.h`: definiscono nel namespace `Layout` solo il pannello (`Panel`, `PAGE_HEIGHT`, `makePanel()`, pin, `BUSY_WAKE_PIN`, `ROTATION`, `SCREEN_W/H` presi da `Panel::WIDTH_VISIBLE` e `Panel::HEIGHT`); poi `#define LAYOUT_PANEL_SELECTED` e includono `Layout_common.h`.
+- `Layout_common.h`: token, font e tutte le coordinate, derivate da `SCREEN_W/H`, compresa l'altezza del wallpaper `CINEMA_H`, che arriva al banner; dà `#error` se incluso senza un Layout di pannello. Numeri e somme in [[layout_invariants]].
+- I moduli (`Weather.h`, `Calendar.h`, `Graphics.h`, `icons.h`, `.ino`) referenziano tutto via `Layout::*` e includono `Layout.h`. Nessun #include diretto al driver fuori dai Layout_*.h.
 - `Weather.h`, `Calendar.h` e `Graphics.h` dichiarano `extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;`. **Devono usare `Layout::PAGE_HEIGHT`, non ricalcolare `Panel::HEIGHT / 8`**: sono argomenti template, quindi un valore diverso da quello del `.ino` dà un tipo diverso e il link fallisce. Verificato cambiando `PAGE_HEIGHT` a `/12` e ricompilando.
-- Le include guard non devono avere il nome di una costante `Layout::`: `Mail.h` usa `MAIL_MODULE_H` perchè una guardia `MAIL_H` cancellerebbe `Layout::MAIL_H` (verificato: errore di compilazione in `Mail::draw()`).
+- Le include guard non devono avere il nome di una costante `Layout::`: una guardia `#define CAL_H` cancellerebbe `Layout::CAL_H`, e l'errore di compilazione comparirebbe nel modulo che usa la costante, non nell'header della guardia.
 
 **Come i Layout arrivano al driver.** Ogni `Layout_*.h` definisce il proprio `SOLUM_PANEL_*` e include l'ombrello `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h`, che gli restituisce la classe come macro: nessun Layout nomina il driver. Poi espone tre simboli che il `.ino` usa senza sapere quale pannello sia montato:
 
@@ -24,9 +24,9 @@ Il firmware ePaper supporta due pannelli (SOLUM 9.7" 960w x 672h e SOLUM 12.2" 9
 **Why:** supportare più pannelli con lo stesso codice applicativo e la stessa resa, cambiando solo ciò che il pannello impone. Entrambi i driver stanno nel submodule `GxEPD2_SOLUM_ESL` (vedi [[gxepd2_solum_esl_library]]); del 12.2" **è validata una sola banda**, vedi [[gxepd2_122c_driver]].
 
 **How to apply:**
-- Modifiche di coordinate, token e font: in `Layout_common.h`; altezza del wallpaper e righe della Posta: nelle manopole del `Layout_<pannello>.h`. Mai valori pixel nei moduli.
+- Modifiche di coordinate, token e font: in `Layout_common.h`. Mai valori pixel nei moduli.
 - Le baseline del banner sono `BANNER_Y + offset` e `BANNER_Y` deriva da `SCREEN_H`, così l'altezza diversa del 12.2" si propaga senza toccare la baseline math.
-- Per aggiungere un terzo pannello: driver nella libreria (contratto in [[gxepd2_solum_esl_library]]) + nuovo `Layout_<nome>.h` con i simboli di pannello e le due manopole + ramo `#elif` nel dispatcher + `#define DISPLAY_VARIANT_<NOME>` nel `.ino`. Nè i moduli nè la riga di costruzione del display vanno toccati.
+- Per aggiungere un terzo pannello: driver nella libreria (contratto in [[gxepd2_solum_esl_library]]) + nuovo `Layout_<nome>.h` con i simboli di pannello + ramo `#elif` nel dispatcher + `#define DISPLAY_VARIANT_<NOME>` nel `.ino`. Nè i moduli nè la riga di costruzione del display vanno toccati.
 - Dopo ogni modifica di coordinate, font, icone o disegno dei moduli si rigenerano le anteprime con `python tools/layout_preview.py`: `preview.svg` (mostrata dal README su GitHub), `preview_<pannello>.html` (frame nel browser con zoom e zone) e `docs/layout_<pannello>.png`. Lo script trova i pannelli dai `Layout_*.h`, legge costanti, font GFX, icone e wallpaper veri e replica il disegno dei moduli e le primitive di Adafruit_GFX: cambiando il disegno di un modulo va allineata la funzione corrispondente dello script. Le anteprime non si eliminano, perchè l'utente le usa per vedere subito l'interfaccia implementata.
 
 **Cosa NON sta nei Layout:**

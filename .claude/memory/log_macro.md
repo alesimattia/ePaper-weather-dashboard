@@ -18,6 +18,6 @@ Il preprocessore concatena tag, testo e a capo in **un unico letterale**: nessun
 
 **Verbosità a compile-time**, non a runtime: `LOG_LEVEL` 0/1/2 nel `.ino`. La forma spenta è `((void)sizeof(...))`, che in contesto non valutato non genera né codice né stringhe, resta type-checked e marca gli argomenti come usati (niente `-Wunused-variable`). È un'**espressione**, quindi `LOG(...)` funziona come ramo senza graffe di un `if/else` senza il solito `do{}while(0)`.
 
-A `LOG_LEVEL 1` i tre siti per-elemento (`logSlot` di Weather, la riga per messaggio di Mail, il campione BME680) sono `LOGV` e spariscono: sono ~10 righe per ciclo, la metà del totale, ed erano rumore che sommergeva gli esiti.
+A `LOG_LEVEL 1` i siti per-elemento (`logSlot` di Weather, il campione BME680) sono `LOGV` e spariscono: sono rumore che sommergerebbe gli esiti.
 
 **Nota sull'output:** i messaggi che prima usavano `println` terminavano con `\r\n` e ora con `\n`. L'output era già misto; adesso è uniforme.

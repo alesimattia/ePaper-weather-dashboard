@@ -540,8 +540,9 @@ namespace Scheduler
      * avanza quanto può e ritorna.
      *
      *   Idle       serve un passo solo dentro la fascia e se un task è dovuto.
-     *              Con l'ora non valida i task che non la richiedono, meteo e
-     *              mail, bastano ad accendere la radio dove SNTP si sincronizza.
+     *              Con l'ora non valida i task che non la richiedono, il meteo
+     *              e il cinema al boot, bastano ad accendere la radio dove
+     *              SNTP si sincronizza.
      *   Acquiring  radio dello scheduler: radioOn(), già bloccante su
      *              connessione e SNTP. Manutenzione: la STA entro
      *              RADIO_STA_ATTESA_MS dall'inizio, poi l'ora entro

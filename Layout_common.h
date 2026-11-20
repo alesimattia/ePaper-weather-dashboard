@@ -3,9 +3,9 @@
 
 /**
  * Geometria della dashboard comune ai pannelli: token di spaziatura, font e
- * coordinate di ogni zona, tutte derivate da SCREEN_W/SCREEN_H e dalle due
- * manopole del pannello (CINEMA_H e MAIL_ROWS_PER_COL). Va incluso in coda a
- * un Layout_<pannello>.h, che definisce prima quei simboli nel namespace Layout.
+ * coordinate di ogni zona, tutte derivate da SCREEN_W/SCREEN_H. Va incluso in
+ * coda a un Layout_<pannello>.h, che definisce prima i simboli del pannello
+ * nel namespace Layout.
  *
  * Convenzione: NwxMh = N px in larghezza (X) e M px in altezza (Y), costanti
  * _W larghezze e _H altezze, coordinate (x, y) con origine in alto a sinistra
@@ -31,7 +31,7 @@ namespace Layout
   inline constexpr const GFXfont* FONT_LARGE      = &FreeSans18pt7b;
   /** Testo standard: orari, eventi, giorni del mese, etichette meteo. */
   inline constexpr const GFXfont* FONT_BODY       = &FreeSans12pt7b;
-  /** Unità, pedici, oggetto delle mail, etichette del grafico, badge Tuya. */
+  /** Unità, pedici, etichette del grafico, badge Tuya. */
   inline constexpr const GFXfont* FONT_SMALL      = &FreeSans9pt7b;
   /** Titoli dei riquadri, seduti sul bordo superiore. */
   inline constexpr const GFXfont* FONT_TITLE      = &FreeSansBold12pt7b;
@@ -56,14 +56,14 @@ namespace Layout
   // Lato delle icone in pixel.
   /** Spazio riservato all'icona meteo; le bitmap stanno in icons_weather.h. */
   inline constexpr int16_t ICON_SIZE       = 88;
-  /** Icone piccole di icons.h (Interno, alba e tramonto, busta). */
+  /** Icone piccole di icons.h (Interno, alba e tramonto). */
   inline constexpr int16_t SMALL_ICON_SIZE = 20;
   inline constexpr int16_t SMALL_ICON_GAP  = 6;
   /** Il termometro è una riga più alto delle altre icone piccole: lo stelo si
    *  allunga verso l'alto e il bulbo resta allineato alle icone sotto. */
   inline constexpr int16_t TEMPERATURE_ICON_H = SMALL_ICON_SIZE + 1;
 
-  // Colonne: wallpaper e Posta a sinistra, scheda calendario a destra.
+  // Colonne: wallpaper a sinistra, scheda calendario a destra.
   inline constexpr int16_t SIDEBAR_W = 320;
   inline constexpr int16_t SIDEBAR_X = SCREEN_W - MARGIN - SIDEBAR_W;
   /** Bordo destro della colonna sinistra, che ne fissa la larghezza utile. */
@@ -172,40 +172,21 @@ namespace Layout
   /** Spazio fra il titolo troncato e la colonna orario/data. */
   inline constexpr int16_t EVT_RIGHT_GAP            = 10;
 
-  // Wallpaper cinema, dentro i margini in cima alla colonna sinistra.
+  // Wallpaper cinema: tutta la colonna sinistra dentro i margini, fino al
+  // banner, alla stessa distanza dal banner della scheda calendario.
   inline constexpr int16_t  CINEMA_X        = MARGIN;
   inline constexpr int16_t  CINEMA_Y        = MARGIN;
   inline constexpr int16_t  CINEMA_W        = LEFT_COLUMN_END - MARGIN;
+  inline constexpr int16_t  CINEMA_H        = BANNER_Y - STACK_GAP - CINEMA_Y;
   inline constexpr uint16_t CINEMA_STRIDE   = (CINEMA_W + 7) / 8;
   inline constexpr uint32_t CINEMA_PLANE_SZ = (uint32_t)CINEMA_STRIDE * CINEMA_H;
   /** Piani che i due pannelli rendono, black e accent: nessuno ha il giallo. */
   inline constexpr uint8_t  CINEMA_PLANES   = 2;
   inline constexpr uint32_t CINEMA_TOTAL_SZ = CINEMA_PLANE_SZ * CINEMA_PLANES;
 
-  // Posta, sotto il wallpaper: due colonne lette dall'alto in basso.
-  inline constexpr int16_t MAIL_X      = MARGIN;
-  inline constexpr int16_t MAIL_Y      = CINEMA_Y + CINEMA_H + STACK_GAP;
-  inline constexpr int16_t MAIL_W      = LEFT_COLUMN_END - MARGIN;
-  inline constexpr int16_t MAIL_H      = BANNER_Y - STACK_GAP - MAIL_Y;
-  inline constexpr int16_t MAIL_COLS   = 2;
-  inline constexpr int16_t MAIL_MAX    = MAIL_COLS * MAIL_ROWS_PER_COL;
-  inline constexpr int16_t MAIL_COL_W  = MAIL_W / MAIL_COLS;
-  inline constexpr int16_t MAIL_BODY_Y = MAIL_Y + BOX_TITLE_BAND;
-  inline constexpr int16_t MAIL_ROW_H  =
-      (MAIL_H - BOX_TITLE_BAND - BOX_BOTTOM_PAD) / MAIL_ROWS_PER_COL;
-  /** Altezza delle due righe di testo di una mail, centrate nella riga; la
-   *  prima baseline cade una cap height di FONT_BODY (17 px) sotto la cima. */
-  inline constexpr int16_t MAIL_TEXT_H         = 41;
-  inline constexpr int16_t MAIL_LINE1_BASELINE = (MAIL_ROW_H - MAIL_TEXT_H) / 2 + 17;
-  inline constexpr int16_t MAIL_LINE_GAP       = 20;
-  /** Spazio fra il testo a sinistra e la colonna orario/data. */
-  inline constexpr int16_t MAIL_RIGHT_GAP      = 10;
-
-  // Le manopole del pannello possono rompere queste relazioni: la build si
-  // ferma qui invece di disegnare righe sovrapposte o aree negative.
-  static_assert(MAIL_ROW_H >= MAIL_TEXT_H,
-                "Layout: le righe della Posta sono troppo basse per mittente e oggetto");
-  static_assert(CINEMA_H > 0 && MAIL_H > 0 && EVT_H > 0 && FORECAST_W > 0,
+  // La geometria di un pannello nuovo può rompere queste relazioni: la build
+  // si ferma qui invece di disegnare aree negative.
+  static_assert(CINEMA_H > 0 && EVT_H > 0 && FORECAST_W > 0,
                 "Layout: una zona ha altezza o larghezza non positiva");
   static_assert(CURRENT_BLOCK_W >= ICON_SIZE && FORECAST_BLOCK_W >= ICON_SIZE,
                 "Layout: un blocco meteo è più stretto della sua icona");

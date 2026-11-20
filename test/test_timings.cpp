@@ -58,34 +58,34 @@ int main()
   ok(!applica(k, nullptr), "percorso sotto il pavimento respinto");
 
   // Le cadenze sono multipli del ciclo: lo scheduler le conta in cicli.
-  Valori n = get(); n.mailMin = 12;
+  Valori n = get(); n.googleMin = 12;
   m = nullptr;
-  ok(!applica(n, &m) && get().mailMin == 10, "mail a 12 min, non multiplo del ciclo: respinto, stato invariato");
+  ok(!applica(n, &m) && get().googleMin == 10, "Google a 12 min, non multiplo del ciclo: respinto, stato invariato");
   std::printf("   motivo: %s\n", m ? m : "(nessuno)");
-  ok(m != nullptr && std::strstr(m, "mail_min") && std::strstr(m, "multiplo di 5"),
+  ok(m != nullptr && std::strstr(m, "goog_min") && std::strstr(m, "multiplo di 5"),
      "  il motivo nomina la chiave e il passo");
   Valori o = get(); o.owmMin = 15; o.wifiOraFine = 22;   // ore a passo 1
   ok(applica(o, nullptr), "meteo a 15 min e fine fascia alle 22: accettati");
   ok(campi()[0].step == CYCLE_MIN, "passo delle cadenze nel descrittore = CYCLE_MIN");
 
-  Valori g = get(); g.mailMin = 20;
-  ok(applica(g, nullptr) && save(), "mail a 20 min: applicato e salvato");
+  Valori g = get(); g.googleMin = 20;
+  ok(applica(g, nullptr) && save(), "Google a 20 min: applicato e salvato");
   Timings::begin();
-  ok(get().mailMin == 20, "  riletto da NVS dopo un riavvio");
+  ok(get().googleMin == 20, "  riletto da NVS dopo un riavvio");
 
   // Valore fuori passo in NVS, per esempio scritto da un firmware con un
   // ciclo diverso: al boot sale al multiplo successivo e si riscrive.
-  { Preferences p; p.begin("timings"); p.putUShort("mail_min", 7); p.end(); }
+  { Preferences p; p.begin("timings"); p.putUShort("goog_min", 7); p.end(); }
   Timings::begin();
-  ok(get().mailMin == 10, "mail a 7 in NVS: al boot sale al multiplo successivo, 10");
+  ok(get().googleMin == 10, "Google a 7 in NVS: al boot sale al multiplo successivo, 10");
   { Preferences p; p.begin("timings");
-    ok(p.getUShort("mail_min", 0) == 10, "  e riscritto"); }
+    ok(p.getUShort("goog_min", 0) == 10, "  e riscritto"); }
 
   // Schema di un firmware precedente (1): le chiavi cambiano significato, il
   // namespace si azzera e si riparte dai default.
-  { Preferences p; p.begin("timings"); p.putUShort("schema", 1); p.putUShort("mail_min", 20); p.end(); }
+  { Preferences p; p.begin("timings"); p.putUShort("schema", 1); p.putUShort("goog_min", 20); p.end(); }
   Timings::begin();
-  ok(get().mailMin == 10 && get().routeMin == 5, "schema 1 in NVS: azzerato, default del ciclo");
+  ok(get().googleMin == 10 && get().routeMin == 5, "schema 1 in NVS: azzerato, default del ciclo");
 
   // Pavimento alzato da un firmware successivo al valore gia' salvato.
   { Preferences p; p.begin("timings"); p.putUShort("owm_min", 4); p.end(); }
@@ -97,7 +97,7 @@ int main()
   Preferences::store.clear();
   Preferences::disponibile = false;
   Timings::begin();
-  ok(get().owmMin == 10 && get().mailMin == 10, "NVS non disponibile: default, nessun blocco");
+  ok(get().owmMin == 10 && get().googleMin == 10, "NVS non disponibile: default, nessun blocco");
   Preferences::disponibile = true;
 
   Valori h = get(); h.owmMin = 600;
