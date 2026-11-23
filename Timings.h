@@ -103,6 +103,13 @@
 #endif
 #define ROUTE_FETCH_MIN_FLOOR CYCLE_MIN
 
+/** Cinema, solo dentro la fascia cinema. Pavimento pari alla cache del server
+ *  (CACHE_TTL_SECONDS di webapp/render.yaml): sotto si riscarica la stessa immagine. */
+#ifndef CINEMA_FETCH_MIN
+  #define CINEMA_FETCH_MIN 60
+#endif
+#define CINEMA_FETCH_MIN_FLOOR 60
+
 /** Durata della finestra di manutenzione (pagina di aggiornamento firmware e
  *  configurazione) aperta a ogni boot. */
 #ifndef OTA_WINDOW_MIN
@@ -125,17 +132,6 @@
   #define WIFI_ACTIVE_HOUR_END 23
 #endif
 
-/**
- * Ora locale del fetch giornaliero dell'immagine cinema. Il palinsesto cambia
- * a giorni, quindi la cadenza e' giornaliera e non periodica; il server
- * mantiene comunque una cache di un'ora. Tenuta separata da
- * WIFI_ACTIVE_HOUR_START cosi' i due possono spostarsi indipendentemente,
- * purche' l'ora del fetch resti dentro la fascia.
- */
-#ifndef CINEMA_DAILY_FETCH_HOUR
-  #define CINEMA_DAILY_FETCH_HOUR 7
-#endif
-
 /** Tetto comune alle cadenze: oltre le 24 h il confronto signed su millis()
  *  perde significato e una cadenza piu' lunga non ha senso in questo firmware. */
 #define CADENZA_MAX_MIN 1440
@@ -145,10 +141,9 @@
 // ---------------------------------------------------------------------------
 
 /** Tentativi consecutivi falliti oltre i quali un task consuma lo slot e
- *  attende la cadenza piena. Il secondo tentativo si fa nella stessa accensione
- *  della radio dopo SESSION_RETRY_MS se il primo è fallito in meno di
- *  FAST_FAILURE_MAX_MS, altrimenti al ciclo successivo. 0 significa politica
- *  pessimista: lo slot si chiude dopo l'esecuzione, comunque vada. */
+ *  attende la cadenza piena. Ogni ritento cade al ciclo successivo, mai nella
+ *  stessa accensione della radio, così nessun fallimento ritarda il frame. 0
+ *  significa un solo tentativo per slot, comunque vada. */
 #define FETCH_MAX_TENTATIVI 2
 
 /** Timeout di un singolo tentativo di connessione della STA e passo del
@@ -173,38 +168,24 @@
  *  manutenzione ripiega sull'access point, così le due attese scadono insieme. */
 #define RADIO_STA_ATTESA_MS ((uint32_t)MAINT_STA_TIMEOUT_S * 1000UL)
 
-/** Distanza fra il fallimento di un task e il suo secondo tentativo nella stessa
- *  accensione della radio, così un guasto transitorio non lascia il frame senza
- *  quel dato per un ciclo intero. */
-#define SESSION_RETRY_MS 5000UL
+/** Timeout HTTP del download dell'immagine cinema e del percorso: lo spin-up del
+ *  free tier render.com dura circa un minuto (render.com/docs/free) e il ping
+ *  di sveglia lo anticipa solo dei secondi degli altri fetch. Vale anche come
+ *  attesa massima senza dati durante la lettura del corpo. */
+#define CINEMA_HTTP_TIMEOUT_MS 75000UL
+#define ROUTE_HTTP_TIMEOUT_MS 75000UL
 
-/** Durata massima di un tentativo fallito perchè lo si ritenti nella stessa
- *  accensione. Sotto questa soglia il guasto è di connessione o di protocollo
- *  (il tetto della connessione TCP è 5 s) e un secondo tentativo ha buone
- *  probabilità di riuscire; sopra è un timeout, che ripetuto subito
- *  raddoppierebbe il tempo di radio e di solito fallirebbe uguale, quindi il
- *  ritento resta al ciclo successivo. Nel primo passo dopo il boot, nella
- *  finestra di manutenzione, la soglia non vale: il primo frame aspetta e il
- *  secondo tentativo, per esempio a un cold start di render.com ormai finito,
- *  si fa comunque. */
-#define FAST_FAILURE_MAX_MS 10000UL
-
-/** Timeout HTTP del download dell'immagine cinema: margine per il cold start
- *  del free tier render.com, misurato in una ventina di secondi. */
-#define CINEMA_HTTP_TIMEOUT_MS 45000UL
-
-/** Timeout HTTP del download del percorso: stesso free tier render.com del
- *  cinema, più la latenza della Routes API in TRAFFIC_AWARE_OPTIMAL. */
-#define ROUTE_HTTP_TIMEOUT_MS 45000UL
-
-/** Età oltre la quale un percorso non si mostra, in multipli della cadenza con
- *  la sorgente Automatica e in secondi con la sorgente forzata a Percorso: un
+/** Età oltre la quale un percorso non si mostra, in multipli della cadenza: un
  *  tempo stimato vecchio è un'informazione sbagliata, e i termini Google non
  *  consentono di conservare a lungo i contenuti della mappa. */
 #define ROUTE_MAX_AGE_CADENCES 3
-#define ROUTE_FORCED_MAX_AGE_S 3600L
 
-/** Attesa massima della RISPOSTA al ping di sveglia del server cinema, non
+/** Durata di una sorgente del riquadro forzata dalla manutenzione, dopo la quale
+ *  torna la sorgente automatica: limita anche le chiamate a routefinder fuori
+ *  dalla fascia percorso. */
+#define SOURCE_OVERRIDE_MS (60UL * 60UL * 1000UL)
+
+/** Attesa massima della RISPOSTA al ping di sveglia dei server render.com, non
  *  della connessione: l'handshake ha il suo tetto, TLS_HANDSHAKE_TIMEOUT_S,
  *  perchè senza handshake completo la richiesta non parte affatto. Va tenuto
  *  sotto 65535: setTimeout() prende un uint16_t. */
@@ -288,12 +269,6 @@
  *  server mentre qualcuno usa le pagine. */
 #define MAINT_CLIENT_IDLE_MS 30000UL
 
-
-/** Distanza minima fra due esecuzioni di un task giornaliero. Evita il
- *  doppione quando l'orologio diventa valido a meta' giornata e l'ora target
- *  risulta gia' passata. */
-#define GIORNALIERA_DISTANZA_MIN_MS (12UL * 60UL * 60UL * 1000UL)
-
 /** Passo del loop durante la finestra di manutenzione: serve a
  *  WebServer::handleClient(), che non e' asincrono. */
 #define MAINTENANCE_LOOP_DELAY_MS 10
@@ -358,13 +333,12 @@ static_assert((unsigned long)TUYA_PUBLISH_MIN * 60UL < (unsigned long)TUYA_KEEPA
               "con questa cadenza il broker Tuya vedrebbe il dispositivo offline fra un publish e il successivo");
 static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CADENZA_MAX_MIN,
               "ROUTE_FETCH_MIN fuori dai limiti");
+static_assert(CINEMA_FETCH_MIN >= CINEMA_FETCH_MIN_FLOOR && CINEMA_FETCH_MIN <= CADENZA_MAX_MIN,
+              "sotto il pavimento il server cinema restituisce la stessa immagine dalla cache");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,
               "OTA_WINDOW_MIN fuori dai limiti");
 static_assert(WIFI_ACTIVE_HOUR_START <= WIFI_ACTIVE_HOUR_END && WIFI_ACTIVE_HOUR_END <= 23,
               "fascia oraria WiFi non valida");
-static_assert(CINEMA_DAILY_FETCH_HOUR >= WIFI_ACTIVE_HOUR_START &&
-                  CINEMA_DAILY_FETCH_HOUR <= WIFI_ACTIVE_HOUR_END,
-              "il fetch giornaliero cinema deve cadere dentro la fascia radio");
 static_assert(SLEEP_MAX_S * 1000ULL >= CYCLE_S * 1000ULL + BSEC_MARGINE_POLL_MS,
               "il tetto dello sleep non deve tagliare l'attesa del sensore: un poll in ritardo "
               "oltre il 6,25% del periodo ULP blocca l'accuratezza di BSEC");
@@ -411,7 +385,7 @@ namespace Timings
     uint16_t finestraManutenzioneMin;
     uint16_t wifiOraInizio;
     uint16_t wifiOraFine;
-    uint16_t cinemaOra;
+    uint16_t cinemaMin;
     uint16_t routeMin;
   };
 
@@ -423,7 +397,7 @@ namespace Timings
       OTA_WINDOW_MIN,
       WIFI_ACTIVE_HOUR_START,
       WIFI_ACTIVE_HOUR_END,
-      CINEMA_DAILY_FETCH_HOUR,
+      CINEMA_FETCH_MIN,
       ROUTE_FETCH_MIN,
   };
 
@@ -475,8 +449,8 @@ namespace Timings
          &Valori::wifiOraInizio, 0, 23, WIFI_ACTIVE_HOUR_START, 1},
         {"wifi_h_fin", "Fine fascia WiFi",                          "ora",
          &Valori::wifiOraFine, 0, 23, WIFI_ACTIVE_HOUR_END, 1},
-        {"cine_h",     "Ora del fetch cinema (in fascia percorso slitta alla sua fine)", "ora",
-         &Valori::cinemaOra, 0, 23, CINEMA_DAILY_FETCH_HOUR, 1},
+        {"cine_min",   "Cinema, dentro la fascia cinema",           "min",
+         &Valori::cinemaMin, CINEMA_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CINEMA_FETCH_MIN, CYCLE_MIN},
         {"route_min",  "Percorso, dentro la fascia percorso",       "min",
          &Valori::routeMin, ROUTE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, ROUTE_FETCH_MIN, CYCLE_MIN},
     };
@@ -520,8 +494,6 @@ namespace Timings
     {
       if (v.wifiOraInizio > v.wifiOraFine)
         return "l'inizio della fascia WiFi supera la fine";
-      if (v.cinemaOra < v.wifiOraInizio || v.cinemaOra > v.wifiOraFine)
-        return "l'ora del fetch cinema cade fuori dalla fascia WiFi";
       return nullptr;
     }
 
@@ -668,9 +640,9 @@ namespace Timings
    * cambia niente.
    *
    * E' in blocco e non campo per campo perche' i vincoli legano piu' valori
-   * fra loro: allargare la fascia WiFi e spostare l'ora del cinema sono
-   * legittimi insieme e illegittimi presi uno alla volta, e applicarli in
-   * sequenza rifiuterebbe una richiesta valida a seconda dell'ordine.
+   * fra loro: spostare insieme inizio e fine della fascia WiFi è legittimo,
+   * mentre applicarli in sequenza rifiuterebbe una richiesta valida a seconda
+   * dell'ordine.
    *
    * Il clamp esiste solo al boot, dove serve a recuperare valori diventati
    * illegali; qui chi scrive e' una persona e merita di sapere che il valore

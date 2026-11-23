@@ -91,11 +91,13 @@ Conseguenze di design:
   rilasciata.
 - Una connessione rimasta aperta (radio mai spenta dallo scheduler, come nella
   finestra di manutenzione) si chiude all'inizio del `runPublish()` successivo.
-- **Costo**: una sessione TLS (circa 40 KB di heap) resta occupata durante i task che
-  seguono Tuya nella tabella (percorso e cinema, che fanno TLS a loro volta). Il log
-  `[Tuya] connessione tenuta aperta ... heap libero` lo riporta a ogni publish. Se
-  l'heap non bastasse, il rimedio è spostare Tuya in fondo alla tabella, perdendo la
-  copertura del boot di render.com che l'ordine attuale dà.
+- **Costo**: una sessione TLS (circa 40 KB di heap) resta occupata fino allo
+  spegnimento della radio; per questo Tuya è l'ultimo task. Il log
+  `[Tuya] connessione tenuta aperta ... heap libero` lo riporta a ogni publish.
+- Nella finestra di manutenzione la radio non si spegne, e la sessione del ciclo
+  precedente sarebbe aperta durante il download di percorso o cinema:
+  `downloadImageToStore()` la chiude con `releaseSession()` prima del suo TLS. Il FIN
+  esce, ma il `runPublish()` del ciclo la chiuderebbe comunque poco dopo.
 - Di notte, fuori dalla fascia WiFi, il dispositivo risulta offline dopo 30 minuti:
   atteso.
 - **Non verificato (solo sul dispositivo)**: che lo spegnimento della radio non faccia
@@ -249,10 +251,10 @@ Zero librerie da installare, tutto in `esp32-libs/3.3.11`: `esp-tls` per il tras
    time, niente da parsare, e un `JsonDocument` allocherebbe nel momento di
    massima pressione di heap. Il campo `sys` è concatenato al format come macro,
    così la composizione resta un unico `snprintf` senza rami.
-3. **Posizione in tabella: prima del cinema.** I secondi dell'handshake TLS diventano
-   altro tempo di copertura del boot di render.com, e il cinema resta l'ultimo; con la
-   connessione tenuta aperta è anche la posizione che sovrappone una sessione TLS
-   inattiva ai fetch di percorso e cinema.
+3. **Posizione in tabella: ultima**, dopo percorso e cinema. Con la connessione tenuta
+   aperta fino allo spegnimento della radio, in qualunque altra posizione la sessione
+   TLS inattiva starebbe accanto all'immagine in RAM (66-81 KB) e alla sessione del
+   download. La copertura dello spin-up di render.com la danno ping, meteo e calendari.
 4. **Guardia difensiva su `s.valid` dentro `runPublish()`**, benchè `readyToPublish()` la
    copra già: pubblicare senza campione manderebbe cinque zeri al cloud,
    indistinguibili nell'app da una misura vera.

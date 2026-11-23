@@ -15,7 +15,7 @@ type: project
 - `applica()` rifiuta un valore fuori limiti o fuori passo con il motivo di `campoNonValido()`, che nomina chiave, limiti o passo;
 - `begin()` clampa ai limiti e porta un valore fuori passo al multiplo successivo, che resta entro il tetto perchè anche il tetto è multiplo; logga e riscrive in NVS, così `/config` mostra il valore in uso;
 - `/config` scrive `step` nell'`<input type=number>`.
-`incoerenza()` resta per i soli vincoli fra campi di `Timings` (fascia WiFi coerente, ora del cinema dentro la fascia); con una combinazione incoerente al boot si torna interamente ai default. Il vincolo "fascia percorso dentro la fascia WiFi" sta in `Routefinder::windowOutsideRadioHours()`, chiamato dalla POST di `/config`.
+`incoerenza()` resta per i soli vincoli fra campi di `Timings` (fascia WiFi coerente); con una combinazione incoerente al boot si torna interamente ai default. Il vincolo "fasce di percorso e cinema dentro la fascia WiFi" sta in `Routefinder::windowsOutsideRadioHours()`, chiamato dalla POST di `/config`. Il cinema ha la cadenza `cine_min` (default e pavimento 60, la cache del server), non un'ora: la sua fascia sta in `Routefinder` ([[routefinder_morning_route]]).
 
 **Aggiungere una cadenza** = un campo in `Valori`, una riga in `CAMPI` con `step`, una riga nella tabella dei task: scheduler e validazione non si toccano.
 
@@ -27,6 +27,6 @@ type: project
 
 **Lo scheduler legge `Timings::get()` a ogni valutazione** e ricalcola le scadenze dal ciclo dello slot precedente, senza mai memorizzare una scadenza assoluta: una modifica ha effetto dal ciclo successivo, senza riavvio.
 
-**`applica()` è transazionale per necessità, non per eleganza.** I vincoli legano più campi fra loro: allargare la fascia WiFi e spostare l'ora del cinema sono legittimi insieme e illegittimi presi uno alla volta. Applicandoli in sequenza, una richiesta valida verrebbe respinta a metà a seconda dell'ordine dei campi.
+**`applica()` è transazionale per necessità, non per eleganza.** I vincoli legano più campi fra loro: spostare insieme inizio e fine della fascia WiFi è legittimo, mentre un passo intermedio può non esserlo. Applicandoli in sequenza, una richiesta valida verrebbe respinta a metà a seconda dell'ordine dei campi.
 
 **Verificato per esecuzione**: `test/test_timings.cpp` compila l'header vero con stub minimi e controlla pavimenti, vincoli incrociati, applicazione transazionale, rifiuto fuori passo con il motivo, arrotondamento al boot, schema precedente azzerato, round-trip su NVS, clamp al boot, NVS assente e schema mancante.

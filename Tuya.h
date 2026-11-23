@@ -76,8 +76,9 @@
  * light sleep. runPublish() la chiude su ogni fallimento e la lascia aperta
  * solo dopo un PUBACK; releaseSession() la rilascia, ed è chiamata da
  * wifiOff() del .ino subito dopo lo spegnimento della radio, quindi prima di
- * ogni sleep. Il costo è l'heap di una sessione TLS (~40 KB) tenuta durante i
- * task che seguono Tuya nella tabella.
+ * ogni sleep. Il costo è l'heap di una sessione TLS (~40 KB) fino allo
+ * spegnimento della radio: per questo Tuya è l'ultimo task della tabella, dopo
+ * i download che tengono l'immagine in RAM.
  *
  * Il modulo non disegna niente e non comanda il refresh del pannello: il badge
  * di guasto lo legge Weather al momento del disegno, quindi compare nel frame
@@ -981,11 +982,13 @@ namespace Tuya
   }
 
   /**
-   * Rilascia la connessione lasciata aperta da runPublish(). Va chiamata solo a
-   * radio già spenta: con la radio accesa la chiusura manderebbe un FIN al
-   * broker, che segnerebbe subito offline il dispositivo. La chiama wifiOff()
-   * del .ino subito dopo lo spegnimento; senza una connessione aperta non fa
-   * niente.
+   * Rilascia la connessione lasciata aperta da runPublish(). Di norma va
+   * chiamata a radio già spenta: con la radio accesa la chiusura manderebbe un
+   * FIN al broker, che segnerebbe subito offline il dispositivo. La chiama
+   * wifiOff() del .ino subito dopo lo spegnimento, e downloadImageToStore()
+   * prima di un download, dove l'unica sessione aperta è quella della finestra
+   * di manutenzione, che il runPublish() successivo chiuderebbe comunque: lì
+   * l'heap serve all'immagine. Senza una connessione aperta non fa niente.
    */
   inline void releaseSession()
   {

@@ -1,7 +1,7 @@
 /**
  * Verifica di Routefinder.h: parser delle coordinate, URL, validazione e
- * persistenza delle impostazioni, fascia ai minuti con il cambio dell'ora
- * legale, sorgente del riquadro e freschezza del percorso.
+ * persistenza delle impostazioni, fasce di percorso e cinema, sorgente
+ * programmata e forzata del riquadro, validità di percorso e cinema.
  *
  * Include l'header VERO del firmware. Orologio e fuso sono quelli finti di
  * test_scheduler.cpp: time(), localtime_r() e mktime() passano per macro dallo
@@ -84,16 +84,19 @@ static void verificaImpostazioni()
   ok(get().originLatE6 == 43615800 && get().originLngE6 == 13518900,
      "partenza di default dalla posizione del meteo");
   ok(!hasDestination(), "arrivo al placeholder 0,0: non configurato");
-  ok(get().windowStartMin == 420 && get().windowEndMin == 540 && get().source == Source::Auto,
-     "fascia 07:00-09:00 e sorgente automatica di default");
+  ok(get().windowStartMin == 420 && get().windowEndMin == 540 &&
+         get().cinemaStartMin == 18 * 60 && get().cinemaEndMin == 21 * 60 && activeSource() == Source::Auto,
+     "fasce 07:00-09:00 e 18:00-21:00, sorgente automatica di default");
 
   Settings s = get();
   s.destinationLatE6 = 43500000; s.destinationLngE6 = -13300000;
   s.fuel = Fuel::Diesel;
+  s.cinemaStartMin = 19 * 60; s.cinemaEndMin = 22 * 60;
   const char* motivo = nullptr;
-  ok(apply(s, &motivo) && save(), "arrivo e carburante applicati e salvati");
+  ok(apply(s, &motivo) && save(), "arrivo, carburante e fascia cinema applicati e salvati");
   begin();
-  ok(hasDestination() && get().fuel == Fuel::Diesel && get().destinationLngE6 == -13300000,
+  ok(hasDestination() && get().fuel == Fuel::Diesel && get().destinationLngE6 == -13300000 &&
+         get().cinemaStartMin == 19 * 60 && get().cinemaEndMin == 22 * 60,
      "  riletti da NVS dopo un riavvio");
 
   char url[200];
@@ -108,58 +111,94 @@ static void verificaImpostazioni()
   Settings g = get(); g.windowStartMin = 6 * 60;
   ok(!apply(g, &motivo), "fascia che inizia prima della fascia WiFi respinta");
   Settings h = get(); h.windowEndMin = 24 * 60;
-  ok(apply(h, nullptr), "fine fascia a mezzanotte dentro la fascia WiFi 7..23 accettata");
-  ok(windowOutsideRadioHours(420, 540, Timings::get()) == nullptr, "default dentro la fascia WiFi");
+  ok(!apply(h, &motivo), "fascia percorso fino a mezzanotte sovrapposta al cinema respinta");
+  std::printf("   motivo: %s\n", motivo ? motivo : "(nessuno)");
+  Settings c1 = get(); c1.cinemaStartMin = 8 * 60;
+  ok(!apply(c1, nullptr), "fascia cinema dentro quella del percorso respinta");
+  Settings c2 = get(); c2.cinemaStartMin = 22 * 60; c2.cinemaEndMin = 21 * 60;
+  ok(!apply(c2, nullptr), "fascia cinema rovesciata respinta");
+  Settings c3 = get(); c3.cinemaStartMin = 10 * 60; c3.cinemaEndMin = 24 * 60;
+  ok(apply(c3, nullptr), "fascia cinema fino a mezzanotte dentro la fascia WiFi 7..23 accettata");
+  ok(windowsOutsideRadioHours(get(), Timings::get()) == nullptr, "fasce dentro la fascia WiFi");
 
   // Fascia WiFi ristretta dopo il salvataggio: al boot si torna ai default.
-  Settings k = get(); k.windowStartMin = 22 * 60; k.windowEndMin = 23 * 60 + 30;
-  ok(apply(k, nullptr) && save(), "fascia 22:00-23:30 salvata");
+  ok(save(), "fascia cinema 10:00-24:00 salvata");
   Timings::Valori w = Timings::get(); w.wifiOraFine = 22;
+  ok(windowsOutsideRadioHours(get(), w) != nullptr, "  una fascia WiFi che non la contiene si rifiuta in /config");
   ok(Timings::applica(w, nullptr), "fascia WiFi ristretta a 7..22");
   begin();
-  ok(get().windowStartMin == 420 && get().windowEndMin == 540, "  fascia percorso tornata ai default al boot");
+  ok(get().cinemaStartMin == 18 * 60 && get().cinemaEndMin == 21 * 60, "  fasce tornate ai default al boot");
   Timings::ripristinaDefault();
 }
 
-static void verificaFascia()
+static void verificaRiquadro()
 {
   using namespace Routefinder;
-  Settings s = get(); s.source = Source::Auto; s.windowStartMin = 7 * 60 + 30; s.windowEndMin = 9 * 60;
-  apply(s, nullptr);
+  Settings s = get(); s.windowStartMin = 7 * 60 + 30; s.windowEndMin = 9 * 60;
+  ok(apply(s, nullptr), "fascia percorso 07:30-09:00, cinema 18:00-21:00");
+  setOverride(Source::Auto);
+  g_msFinto = 1000000;
 
   g_epochFinta = 1000;   // orologio non sincronizzato
-  ok(!isInsideRouteHours() && !isRouteSourceActive(), "senza orologio fuori fascia");
+  ok(scheduledImage() == ShownImage::Wallpaper, "senza orologio: wallpaper");
 
   impostaOra(2026, 11, 6, 7, 29);
-  ok(!isInsideRouteHours(), "07:29 fuori dalla fascia 07:30-09:00");
+  ok(scheduledImage() == ShownImage::Wallpaper, "07:29: wallpaper");
   impostaOra(2026, 11, 6, 7, 30);
-  ok(isInsideRouteHours() && isRouteSourceActive(), "07:30 dentro");
+  ok(scheduledImage() == ShownImage::Route, "07:30: percorso");
   impostaOra(2026, 11, 6, 9, 0);
-  ok(!isInsideRouteHours(), "09:00 fuori: fine esclusa");
+  ok(scheduledImage() == ShownImage::Wallpaper, "09:00: wallpaper, fine esclusa");
+  impostaOra(2026, 11, 6, 18, 0);
+  ok(scheduledImage() == ShownImage::Cinema, "18:00: cinema");
+  impostaOra(2026, 11, 6, 21, 0);
+  ok(scheduledImage() == ShownImage::Wallpaper, "21:00: wallpaper");
 
-  s.source = Source::Cinema; apply(s, nullptr);
+  // Percorso nella sua fascia: valido entro 3 cadenze, altrimenti wallpaper.
   impostaOra(2026, 11, 6, 8, 0);
-  ok(!isRouteSourceActive(), "sorgente Cinema: mai percorso, nemmeno in fascia");
-  ok(shownImage(true, (uint32_t)g_epochFinta) == ShownImage::Cinema, "  e si mostra il cinema");
+  const uint32_t ora = (uint32_t)g_epochFinta;
+  ok(shownImage(ShownImage::Route, ora - 14 * 60, 0) == ShownImage::Route, "08:00: percorso di 14 min mostrato");
+  ok(shownImage(ShownImage::Route, ora - 16 * 60, 0) == ShownImage::Wallpaper, "  di 16 min: wallpaper");
+  ok(shownImage(ShownImage::Cinema, ora, 0) == ShownImage::Wallpaper, "  buffer con il cinema: wallpaper");
+  ok(shownImage(ShownImage::Wallpaper, ora, 0) == ShownImage::Wallpaper, "  buffer vuoto: wallpaper");
 
-  s.source = Source::Wallpaper; apply(s, nullptr);
-  ok(shownImage(true, (uint32_t)g_epochFinta) == ShownImage::Wallpaper, "sorgente Wallpaper");
+  // Cinema nella sua fascia: valido solo se scaricato oggi dopo le 18:00.
+  impostaOra(2026, 11, 5, 20, 0);
+  const uint32_t ieriSera = (uint32_t)g_epochFinta;
+  impostaOra(2026, 11, 6, 18, 5);
+  const uint32_t alle1805 = (uint32_t)g_epochFinta;
+  impostaOra(2026, 11, 6, 19, 0);
+  ok(shownImage(ShownImage::Cinema, alle1805, 0) == ShownImage::Cinema, "19:00: cinema delle 18:05 mostrato");
+  ok(shownImage(ShownImage::Cinema, ieriSera, 0) == ShownImage::Wallpaper, "  cinema di ieri sera: wallpaper");
+  ok(shownImage(ShownImage::Route, alle1805, 0) == ShownImage::Wallpaper, "  buffer con il percorso: wallpaper");
 
-  s.source = Source::Route; apply(s, nullptr);
+  // Forzatura del cinema alle 12:00: vale solo un'immagine scaricata dopo l'inizio.
+  impostaOra(2026, 11, 6, 12, 0);
+  setOverride(Source::Cinema);
+  ok(activeSource() == Source::Cinema && scheduledImage() == ShownImage::Cinema &&
+         overrideRemainingMs() == SOURCE_OVERRIDE_MS,
+     "forzatura a Cinema alle 12:00: un'ora intera");
+  ok(shownImage(ShownImage::Cinema, ieriSera, g_msFinto - 1000) == ShownImage::Wallpaper,
+     "  il cinema di ieri sera non vale");
+  g_msFinto += 5000;
+  ok(shownImage(ShownImage::Cinema, (uint32_t)g_epochFinta, g_msFinto) == ShownImage::Cinema,
+     "  quello scaricato dopo l'inizio della forzatura sì");
+  g_msFinto += SOURCE_OVERRIDE_MS - 5000 - 1;
+  ok(activeSource() == Source::Cinema, "  un millisecondo prima della scadenza ancora forzato");
+  g_msFinto += 1;
+  ok(activeSource() == Source::Auto && scheduledImage() == ShownImage::Wallpaper && overrideRemainingMs() == 0,
+     "  scaduta l'ora torna l'automatico: alle 12 il wallpaper");
+
+  // Forzatura del percorso fuori fascia e del wallpaper in fascia.
   impostaOra(2026, 11, 6, 15, 0);
-  ok(isRouteSourceActive() && !isInsideRouteHours(),
-     "sorgente Percorso: attiva anche fuori fascia, ma fuori dalla fascia del fetch");
-  const uint32_t scaricato = (uint32_t)g_epochFinta - 50 * 60;
-  ok(shownImage(true, scaricato) == ShownImage::Route, "  percorso di 50 min mostrato");
-  ok(shownImage(true, (uint32_t)g_epochFinta - 61 * 60) == ShownImage::Cinema, "  oltre 1 h torna il cinema");
-  ok(shownImage(false, scaricato) == ShownImage::Cinema, "  senza immagine il cinema");
-
-  s.source = Source::Auto; apply(s, nullptr);
+  setOverride(Source::Route);
+  ok(scheduledImage() == ShownImage::Route, "forzatura a Percorso alle 15:00: percorso");
+  ok(shownImage(ShownImage::Route, (uint32_t)g_epochFinta - 5 * 60, g_msFinto) == ShownImage::Route,
+     "  percorso di 5 min mostrato");
   impostaOra(2026, 11, 6, 8, 0);
-  ok(shownImage(true, (uint32_t)g_epochFinta - 14 * 60) == ShownImage::Route, "Auto: 14 min, entro 3 cadenze da 5");
-  ok(shownImage(true, (uint32_t)g_epochFinta - 16 * 60) == ShownImage::Cinema, "Auto: 16 min, scaduto");
-  impostaOra(2026, 11, 6, 10, 0);
-  ok(shownImage(true, (uint32_t)g_epochFinta) == ShownImage::Cinema, "Auto fuori fascia: cinema");
+  setOverride(Source::Wallpaper);
+  ok(scheduledImage() == ShownImage::Wallpaper, "forzatura a Wallpaper alle 08:00: niente percorso");
+  setOverride(Source::Auto);
+  ok(activeSource() == Source::Auto && scheduledImage() == ShownImage::Route, "Automatica annulla la forzatura");
 }
 
 int main()
@@ -167,7 +206,7 @@ int main()
   ok(fusoImposta(TZ_TEST), "stringa POSIX del fuso interpretata");
   verificaParser();
   verificaImpostazioni();
-  verificaFascia();
+  verificaRiquadro();
   std::printf("\n%s\n", falliti ? "CI SONO FALLIMENTI" : "tutti i controlli superati");
   return falliti != 0;
 }

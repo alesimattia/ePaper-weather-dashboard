@@ -9,9 +9,9 @@ Scrive, a partire dalla root del repository:
     preview.svg                  il frame del 9.7", che GitHub mostra nel README
     preview_<pannello>.html      pagina locale con zoom, zone e coordinate
 
-I dati mostrati (meteo, eventi, sensore) sono di esempio. Il wallpaper
-è quello di fallback ritagliato all'area cinema, cioè alla misura esatta che
-il server serve al firmware. L'uscita è deterministica: rigenerare senza
+I dati mostrati (meteo, eventi, sensore) sono di esempio. Il wallpaper è il
+wallpaper/<nome>_<pannello>.bin generato da tools/wallpaper_bin.py, alla
+misura esatta del riquadro. L'uscita è deterministica: rigenerare senza
 modifiche al layout non cambia nessun file.
 
 Uso:
@@ -154,20 +154,20 @@ def read_weather_icons():
     return side, icons, conditions, enum["CLOUD"]
 
 
-def read_wallpaper():
-    """Descrittore del wallpaper di fallback incluso dal .ino: larghezza, altezza, piano
-    nero e piano rosso (None per un'immagine solo B/N)."""
-    sketch = strip_c_comments((ROOT / "ePaper-weather-dashboard.ino").read_text(encoding="utf-8"))
-    header = ROOT / re.search(r'#include\s+"(wallpaper/[^"]+\.h)"', sketch).group(1)
-    text = strip_c_comments(header.read_text(encoding="utf-8", errors="replace"))
-    descriptor = re.search(r"GxEPDImage::Descriptor \w+ = \{\s*GxEPDImage::\w+,\s*(\d+),\s*(\d+),"
-                           r"\s*\(const uint8_t\*\)(\w+),\s*\(const uint8_t\*\)(\w+)", text)
-    if not descriptor:
-        sys.exit(f"Descrittore GxEPDImage non riconosciuto in {header.relative_to(ROOT).as_posix()}")
-    width, height, black, red = descriptor.groups()
-    black_plane = parse_c_bytes(text, f"{black}[] PROGMEM")
-    red_plane = None if red == "nullptr" else parse_c_bytes(text, f"{red}[] PROGMEM")
-    return int(width), int(height), black_plane, red_plane
+WALLPAPER_NAME = "great_wave"
+
+
+def read_wallpaper(panel, layout):
+    """Wallpaper del pannello generato da tools/wallpaper_bin.py, lo stesso file che si
+    carica dalla pagina /wallpaper: larghezza, altezza, piano nero e piano rosso."""
+    path = ROOT / "wallpaper" / f"{WALLPAPER_NAME}_{panel}.bin"
+    if not path.is_file():
+        sys.exit(f"{path.relative_to(ROOT).as_posix()} mancante: generarlo con tools/wallpaper_bin.py")
+    data = path.read_bytes()
+    plane = layout["CINEMA_PLANE_SZ"]
+    if len(data) != 2 * plane:
+        sys.exit(f"{path.relative_to(ROOT).as_posix()}: {len(data)} byte invece di {2 * plane}")
+    return layout["CINEMA_W"], layout["CINEMA_H"], data[:plane], data[plane:]
 
 
 # =============================================================================
@@ -560,11 +560,10 @@ class Frame:
         return self.c
 
     def draw_wallpaper(self):
-        """showImage() del fallback ritagliato all'area cinema: mostra il frame come appare
-        con un'immagine a misura CINEMA_W x CINEMA_H, anche se l'asset ne sborda. Piano nero con bit 0 = nero, piano rosso con bit 0 = rosso, come lo
-        compone GxEPDImage."""
+        """showImage() del wallpaper del pannello, a misura CINEMA_W x CINEMA_H. Piano nero
+        con bit 0 = nero, piano rosso con bit 0 = rosso, come lo compone GxEPDImage."""
         L = self.L
-        width, height, black, red = self.sources["wallpaper"]
+        width, height, black, red = read_wallpaper(self.panel, L)
         stride = (width + 7) // 8
         for yy in range(min(height, L["CINEMA_H"])):
             for xx in range(min(width, L["CINEMA_W"])):
@@ -943,7 +942,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <main>
   <h1>Anteprima __TITLE__</h1>
   <p>Frame disegnato come lo disegna il firmware, dalle costanti di <code>Layout___PANEL__.h</code> e
-     <code>Layout_common.h</code>, con dati di esempio e il wallpaper di fallback ritagliato all'area cinema.
+     <code>Layout_common.h</code>, con dati di esempio e il wallpaper del riquadro caricato da /wallpaper.
      Altri pannelli: __LINKS__.</p>
   <div class="bar">
     <span>Zoom</span>
@@ -1028,7 +1027,6 @@ def generate(fonts_dir):
         "min_event_row_h": int(re.search(r"MIN_EVT_ROW_H\s*=\s*(\d+);", strip_c_comments(calendar)).group(1)),
         "small_icons": read_small_icons(),
         "weather_icons": read_weather_icons(),
-        "wallpaper": read_wallpaper(),
     }
     panels = panel_names()
     changed = []

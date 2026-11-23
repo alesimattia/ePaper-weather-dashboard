@@ -151,6 +151,23 @@ namespace Net
            strncmp(value, "paste_", 6) != 0 &&
            strncmp(value, "0000000", 7) != 0;
   }
+
+  /** Ultimo indirizzo con cui il dispositivo è stato raggiungibile, vuoto se mai. */
+  inline char lastIp[16] = "";
+
+  /**
+   * Ricorda l'indirizzo corrente, quando c'è: il pannello lo mostra a radio
+   * spenta nell'invito a caricare il wallpaper. Usato da wifiOn() del .ino e
+   * da Maintenance.h quando la STA o l'access point salgono.
+   */
+  inline void rememberIp(const IPAddress& address)
+  {
+    if (address == IPAddress(0, 0, 0, 0)) return;
+    snprintf(lastIp, sizeof lastIp, "%u.%u.%u.%u", address[0], address[1], address[2], address[3]);
+  }
+
+  /** Indirizzo ricordato da rememberIp(), stringa vuota se non è mai salita una rete. */
+  inline const char* lastKnownIp() { return lastIp; }
 }
 
 #endif // NET_H

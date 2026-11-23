@@ -38,9 +38,16 @@
  *
  * Le cadenze dei task sono multipli del ciclo e si contano in cicli dallo slot
  * precedente, mai in millisecondi, quindi non accumulano deriva: un task da 10
- * minuti cade un frame sì e uno no, per sempre. Fuori dalla fascia WiFi resta
- * solo il passo del sensore, il minimo che conserva l'accuratezza di BSEC: niente
- * radio e niente frame fino all'apertura della fascia.
+ * minuti cade un frame sì e uno no, per sempre. Un task fallito ritenta una
+ * sola volta, al ciclo successivo e mai nella stessa accensione, così nessun
+ * fallimento ritarda il frame. Lo slot riparte pulito a ogni nuova attivazione
+ * del task, cioè quando la sua precondizione diventa vera e al primo ciclo
+ * della giornata: un ritento lasciato in sospeso da una fascia, da un
+ * forzamento o dalla notte non si trascina in quella dopo.
+ *
+ * Fuori dalla fascia WiFi resta solo il passo del sensore, il minimo che
+ * conserva l'accuratezza di BSEC: niente radio e niente frame fino
+ * all'apertura della fascia.
  *
  * La scadenza del sensore ha la precedenza su tutto: lo sleep dura fino a lei
  * esattamente, e la si controlla anche fra un task di rete e l'altro e prima
@@ -62,13 +69,6 @@ namespace Scheduler
    */
   enum class Outcome : uint8_t { OK, FAILED, SKIPPED };
 
-  /** Come si apre lo slot di un task. */
-  enum class Cadence : uint8_t
-  {
-    PERIODIC,  // ogni intervalMinutes / CYCLE_MIN cicli dallo slot precedente
-    DAILY      // una volta al giorno, dal primo ciclo con l'ora locale indicata
-  };
-
   /** Di chi è la radio durante il giro. */
   enum class RadioMode : uint8_t
   {
@@ -84,7 +84,8 @@ namespace Scheduler
    * `state` è la sola parte che lo scheduler modifica.
    *
    * Gli hook opzionali (nullptr = assente):
-   *   preconditionsMet()  precondizione non temporale; falso sospende il task.
+   *   preconditionsMet()  precondizione non temporale; falso sospende il task,
+   *                       e il ritorno a vero apre uno slot nuovo e subito dovuto.
    *   hasIncompleteData() vero quando l'esecuzione è riuscita ma i dati non
    *                       bastano ancora: lo slot non si chiude e si ritenta.
    *   onRoundStart()      eseguito per TUTTI i task dovuti prima di qualunque
@@ -94,10 +95,8 @@ namespace Scheduler
   struct Task
   {
     const char* tag;
-    Cadence     cadence;
 
-    uint16_t Timings::Valori::*intervalMinutes;     // PERIODIC, multiplo di CYCLE_MIN
-    uint16_t Timings::Valori::*dailyLocalHour;      // DAILY
+    uint16_t Timings::Valori::*intervalMinutes;     // multiplo di CYCLE_MIN
 
     uint8_t  maxAttempts;                           // 0 = un tentativo per slot, comunque vada
 
@@ -113,12 +112,9 @@ namespace Scheduler
       uint32_t openCycle         = 0;      // ciclo in cui si è aperto lo slot in corso
       bool     attempted         = false;  // vero se attemptCycle è significativo
       uint32_t attemptCycle      = 0;      // ciclo dell'ultimo tentativo
-      uint32_t attemptMs         = 0;      // millis() alla fine dell'ultimo tentativo
-      uint32_t lastDurationMs    = 0;      // durata dell'ultimo tentativo, per i fallimenti rapidi
       bool     retrying          = false;
       uint8_t  failedAttempts    = 0;      // falliti consecutivi dentro lo slot corrente
-      int16_t  lastSlotDayOfYear = -1;     // tm_yday dell'ultimo slot giornaliero
-      uint32_t lastDailyMs       = 0;      // istante dell'ultimo slot giornaliero
+      bool     eligible          = false;  // esito dell'ultima valutazione della precondizione
       uint32_t outcomeCount = 0, okCount = 0, failedCount = 0;
     } state;
   };
@@ -161,15 +157,9 @@ namespace Scheduler
     inline bool     staSeen        = false;  // la STA è stata vista connessa in questo passo
     inline uint32_t staSeenMs      = 0;
     inline bool     runStarted     = false;  // gli onRoundStart() del passo sono già partiti
-    inline uint8_t  passesDone     = 0;      // passate in cui almeno un task ha eseguito
-    inline bool     retryAnyFailure = false; // primo passo dopo il boot in manutenzione: ritenta ogni fallimento
-    inline bool     retryWaited    = false;  // la radio dello scheduler ha già atteso fra le due passate
-    inline bool     bootPhase      = true;   // finchè non si conclude il primo passo di rete
+    inline bool     stepRanTask    = false;  // nel passo corrente almeno un task ha eseguito
     inline bool     clockAttempted = false;  // un passo di rete ha già acceso la radio con l'ora non valida
     inline uint32_t clockAttemptCycle = 0;   // ciclo di quel passo
-
-    /** Passate massime di un passo di rete: la seconda ritenta i task falliti. */
-    inline constexpr uint8_t MAX_PASSES = 2;
 
     // Diagnostica del primo frame: istanti assoluti di millis(), -1 se non ancora avvenuti.
     inline int32_t     diagStaMs        = -1;
@@ -208,14 +198,6 @@ namespace Scheduler
     }
 
     inline bool sensorIsActive() { return hooks.sensorActive && hooks.sensorActive(); }
-
-    /** Vero se il tentativo fallito di `s` si ritenta nella stessa accensione
-     *  della radio: è stato rapido, oppure è il primo passo dopo il boot in
-     *  manutenzione, dove il primo frame aspetta e si ritenta ogni fallimento. */
-    inline bool retryEligible(const Task::State& s)
-    {
-      return retryAnyFailure || s.lastDurationMs < FAST_FAILURE_MAX_MS;
-    }
 
     /** Vero se l'ora non è valida e da CLOCK_RECOVERY_CYCLES cicli nessun passo
      *  ha acceso la radio: SNTP si sincronizza solo con la radio accesa, e i
@@ -289,70 +271,61 @@ namespace Scheduler
   inline uint32_t currentCycle() { return detail::cycle; }
 
   /**
-   * Vero se il task va eseguito nel ciclo corrente: precondizioni vere, al più
-   * un tentativo per ciclo (due se il primo è fallito in modo rapido, nella
-   * stessa accensione della radio), e per un periodico i cicli della cadenza trascorsi
-   * dallo slot precedente. Un giornaliero chiede l'orologio, l'ora raggiunta,
-   * un giorno diverso dall'ultimo slot e la distanza minima dal precedente,
-   * contata in millisecondi perchè senza sensore di notte i cicli si fermano.
+   * Riapre lo slot del task da zero: dovuto subito, senza ritenti nè fallimenti
+   * ereditati. Lo chiamano il fronte di salita della precondizione e il primo
+   * ciclo della giornata, cioè ogni nuova attivazione del task.
    */
-  inline bool isDue(const Task& t, const struct tm* today)
+  inline void restartSlot(Task& t)
   {
-    const Task::State& s = t.state;
-    if (t.preconditionsMet && !t.preconditionsMet()) return false;
-    if (s.attempted && s.attemptCycle == detail::cycle)
-    {
-      // Nello stesso ciclo solo il secondo tentativo di un task fallito in modo
-      // rapido, dopo SESSION_RETRY_MS e con la radio ancora accesa: gli altri
-      // aspettano il ciclo successivo.
-      return s.retrying && detail::passesDone < detail::MAX_PASSES && detail::retryEligible(s) &&
-             detail::hasElapsed(millis(), s.attemptMs, SESSION_RETRY_MS);
-    }
-    if (s.retrying) return true;
-    if (t.cadence == Cadence::PERIODIC)
-      return s.neverRun || detail::cycle - s.slotCycle >= detail::cyclesPerSlot(t);
+    t.state.neverRun = true;
+    t.state.retrying = false;
+    t.state.failedAttempts = 0;
+  }
 
-    if (!today) return false;
-    if (!s.neverRun && !detail::hasElapsed(millis(), s.lastDailyMs, GIORNALIERA_DISTANZA_MIN_MS))
-      return false;
-    return today->tm_yday != s.lastSlotDayOfYear &&
-           today->tm_hour >= (int)(Timings::get().*t.dailyLocalHour);
+  /**
+   * Vero se il task va eseguito nel ciclo corrente: precondizione vera, al più
+   * un tentativo per ciclo, e i cicli della cadenza trascorsi dallo slot
+   * precedente oppure un ritento in sospeso. Registra anche l'esito della
+   * precondizione e, sul suo fronte di salita, riapre lo slot: per questo non
+   * è const, e resta idempotente se chiamata più volte nello stesso giro.
+   */
+  inline bool isDue(Task& t)
+  {
+    Task::State& s = t.state;
+    const bool eligible = !t.preconditionsMet || t.preconditionsMet();
+    if (eligible && !s.eligible) restartSlot(t);
+    s.eligible = eligible;
+    if (!eligible) return false;
+    if (s.attempted && s.attemptCycle == detail::cycle) return false;
+    if (s.retrying) return true;
+    return s.neverRun || detail::cycle - s.slotCycle >= detail::cyclesPerSlot(t);
   }
 
   namespace detail
   {
     /** Vero se almeno un task di rete è dovuto nel ciclo corrente. */
-    inline bool anyTaskDue(const struct tm* today)
+    inline bool anyTaskDue()
     {
       for (uint8_t i = 0; i < taskCount; ++i)
-        if (isDue(tasks[i], today)) return true;
+        if (isDue(tasks[i])) return true;
       return false;
     }
 
-    /**
-     * Chiude lo slot corrente: da qui il task non ritenta e la cadenza riparte
-     * dal ciclo in cui lo slot si era aperto. Il giorno di un task giornaliero
-     * si registra solo con l'orologio valido, altrimenti si memorizzerebbe il
-     * 1 gennaio 1970 bruciando uno slot futuro.
-     */
-    inline void closeSlot(Task& t, const struct tm* today)
+    /** Chiude lo slot corrente: da qui il task non ritenta e la cadenza riparte
+     *  dal ciclo in cui lo slot si era aperto. */
+    inline void closeSlot(Task& t)
     {
       t.state.slotCycle = t.state.openCycle;
       t.state.neverRun = false;
       t.state.retrying = false;
       t.state.failedAttempts = 0;
-      if (t.cadence == Cadence::DAILY)
-      {
-        t.state.lastDailyMs = millis();
-        if (today) t.state.lastSlotDayOfYear = (int16_t)today->tm_yday;
-      }
     }
 
     /**
      * Apre un nuovo ciclo se la sua scadenza è arrivata: interroga il sensore e,
      * dentro la fascia, prenota il frame. Il primo ciclo di un giorno dentro la
-     * fascia rende dovuti tutti i periodici, così il primo frame del mattino ha
-     * dati nuovi; i giornalieri seguono solo la propria ora.
+     * fascia riapre lo slot di tutti i task, così il primo frame del mattino ha
+     * dati nuovi e nessun ritento della sera prima si trascina.
      * @return true se il ciclo è stato aperto.
      */
     inline bool startCycleIfDue(const struct tm* today)
@@ -371,9 +344,8 @@ namespace Scheduler
         {
           if (lastActiveDay >= 0 && today->tm_yday != lastActiveDay)
           {
-            for (uint8_t i = 0; i < taskCount; ++i)
-              if (tasks[i].cadence == Cadence::PERIODIC) tasks[i].state.neverRun = true;
-            LOG("sched", "ciclo %lu: primo della giornata, tutti i periodici dovuti", (unsigned long)cycle);
+            for (uint8_t i = 0; i < taskCount; ++i) restartSlot(tasks[i]);
+            LOG("sched", "ciclo %lu: primo della giornata, tutti i task dovuti", (unsigned long)cycle);
           }
           lastActiveDay = (int16_t)today->tm_yday;
         }
@@ -398,10 +370,7 @@ namespace Scheduler
     inline const char* describeNextSlot(const Task& t)
     {
       static char buf[40];
-      if (t.cadence == Cadence::DAILY)
-        snprintf(buf, sizeof buf, "domani dalle %02u", (unsigned)(Timings::get().*t.dailyLocalHour));
-      else
-        snprintf(buf, sizeof buf, "fra %lu cicli", (unsigned long)cyclesPerSlot(t));
+      snprintf(buf, sizeof buf, "fra %lu cicli", (unsigned long)cyclesPerSlot(t));
       return buf;
     }
   }
@@ -412,7 +381,7 @@ namespace Scheduler
    * conta come fallimento ai fini dello slot: è il caso del meteo che ha la
    * corrente ma non le previsioni.
    */
-  inline void recordOutcome(Task& t, Outcome outcome, uint32_t durationMs, const struct tm* today)
+  inline void recordOutcome(Task& t, Outcome outcome, uint32_t durationMs)
   {
     if (outcome == Outcome::SKIPPED)
     {
@@ -424,8 +393,6 @@ namespace Scheduler
     if (!t.state.retrying) t.state.openCycle = detail::cycle;
     t.state.attempted = true;
     t.state.attemptCycle = detail::cycle;
-    t.state.attemptMs = millis();
-    t.state.lastDurationMs = durationMs;
     t.state.outcomeCount++;
 
     const bool incomplete = (outcome != Outcome::FAILED) && t.hasIncompleteData && t.hasIncompleteData();
@@ -438,16 +405,14 @@ namespace Scheduler
     {
       t.state.failedAttempts++;
       t.state.retrying = true;
-      const bool inSession = detail::passesDone + 1 < detail::MAX_PASSES && detail::retryEligible(t.state);
-      LOG("sched", "%s: %s in %lu ms (tentativo %u/%u), ritento %s",
+      LOG("sched", "%s: %s in %lu ms (tentativo %u/%u), ritento al prossimo ciclo",
           t.tag, incomplete ? "dati incompleti" : "fallito",
-          (unsigned long)durationMs, (unsigned)t.state.failedAttempts, (unsigned)t.maxAttempts,
-          inSession ? "nella stessa accensione" : "al prossimo ciclo");
+          (unsigned long)durationMs, (unsigned)t.state.failedAttempts, (unsigned)t.maxAttempts);
       return;
     }
 
     const bool thresholdReached = countsAsFailure && t.maxAttempts > 0;
-    detail::closeSlot(t, today);
+    detail::closeSlot(t);
     if (countsAsFailure)
       LOG("sched", "%s: %s in %lu ms%s, prossimo %s", t.tag,
           incomplete ? "dati incompleti" : "fallito", (unsigned long)durationMs,
@@ -461,10 +426,10 @@ namespace Scheduler
   {
     /** Esegue gli onRoundStart() dei task dovuti, tutti prima di qualunque
      *  run(): chi deve avviare qualcosa lo lascia maturare mentre gli altri girano. */
-    inline void startDueTasks(const struct tm* today)
+    inline void startDueTasks()
     {
       for (uint8_t i = 0; i < taskCount; ++i)
-        if (isDue(tasks[i], today) && tasks[i].onRoundStart) tasks[i].onRoundStart();
+        if (isDue(tasks[i]) && tasks[i].onRoundStart) tasks[i].onRoundStart();
     }
 
     /**
@@ -473,50 +438,30 @@ namespace Scheduler
      * fase di rete lunga potrebbe superare.
      * @return true se almeno un task ha eseguito davvero, cioè non è stato saltato.
      */
-    inline bool runDueTasks(const struct tm* today)
+    inline bool runDueTasks()
     {
       bool ranAny = false;
       for (uint8_t i = 0; i < taskCount; ++i)
       {
         serviceSensorDeadline();
         Task& t = tasks[i];
-        if (!isDue(t, today)) continue;
+        if (!isDue(t)) continue;
 
         // Radio caduta a giro iniziato: guasto a monte, non del task. Lo slot
         // resta intatto e il tentativo si spende al primo giro con la radio su.
         if (WiFi.status() != WL_CONNECTED)
         {
           LOG("sched", "%s: saltato, radio non connessa (slot intatto)", t.tag);
-          recordOutcome(t, Outcome::SKIPPED, 0, today);
+          recordOutcome(t, Outcome::SKIPPED, 0);
           continue;
         }
 
         const uint32_t startMs = millis();
         const Outcome outcome = t.run();
-        recordOutcome(t, outcome, millis() - startMs, today);
+        recordOutcome(t, outcome, millis() - startMs);
         if (outcome != Outcome::SKIPPED) ranAny = true;
       }
       return ranAny;
-    }
-
-    /**
-     * Vero se un task ha fallito in questo ciclo in modo da meritare un secondo
-     * tentativo e il passo ha ancora una passata a disposizione per farlo con la
-     * radio già su. Con la STA caduta non c'è niente da ritentare: il passo si
-     * chiude.
-     */
-    inline bool hasPendingRetry()
-    {
-      if (passesDone >= MAX_PASSES || WiFi.status() != WL_CONNECTED) return false;
-      for (uint8_t i = 0; i < taskCount; ++i)
-      {
-        const Task& t = tasks[i];
-        const Task::State& s = t.state;
-        if (s.retrying && s.attempted && s.attemptCycle == cycle && retryEligible(s) &&
-            (!t.preconditionsMet || t.preconditionsMet()))
-          return true;
-      }
-      return false;
     }
 
     /** Registra gli istanti in cui STA e ora diventano disponibili per la
@@ -533,7 +478,6 @@ namespace Scheduler
       netPhase = NetPhase::DONE;
       frameGate = true;
       stepOutcome = outcome;
-      bootPhase = false;
       noteBootDiagnostics(millis());
     }
 
@@ -558,15 +502,14 @@ namespace Scheduler
      *              connessione e SNTP. Manutenzione: la STA entro
      *              RADIO_STA_ATTESA_MS dall'inizio, poi l'ora entro
      *              TIME_SYNC_TIMEOUT_MS dalla STA vista.
-     *   Running    l'ora si rilegge qui, così i task che la richiedono non
-     *              restano fuori per aver gareggiato con SNTP, e se cade fuori
-     *              fascia un boot notturno non fa fetch. Poi i task, e una
-     *              seconda passata per i falliti rapidi, o per tutti i falliti
-     *              nel primo passo dopo il boot in manutenzione.
+     *   Running    i task valutano qui le precondizioni, quindi quelli che
+     *              chiedono l'ora non restano fuori per aver gareggiato con
+     *              SNTP, e se l'ora cade fuori fascia un boot notturno non fa
+     *              fetch. Poi una sola passata dei task: un fallimento ritenta al
+     *              ciclo successivo, così il frame non aspetta mai.
      */
     inline void advanceNetworkStep(RadioMode mode)
     {
-      struct tm buffer;
       for (;;)
       {
         const uint32_t nowMs = millis();
@@ -581,7 +524,7 @@ namespace Scheduler
               finishNetworkStep("fuori fascia");
               return;
             }
-            if (!anyTaskDue(localNow(buffer)))
+            if (!anyTaskDue())
             {
               if (!isClockRecoveryDue())
               {
@@ -599,9 +542,7 @@ namespace Scheduler
             acquireStartMs = nowMs;
             staSeen = false;
             runStarted = false;
-            passesDone = 0;
-            retryWaited = false;
-            retryAnyFailure = (mode == RadioMode::MANAGED_BY_MAINTENANCE && bootPhase);
+            stepRanTask = false;
             continue;
           }
 
@@ -648,7 +589,6 @@ namespace Scheduler
 
           case NetPhase::RUNNING:
           {
-            const struct tm* today = localNow(buffer);
             const uint32_t cycleAtStart = cycle;
             if (!runStarted)
             {
@@ -660,9 +600,9 @@ namespace Scheduler
                 finishNetworkStep("fuori fascia");
                 return;
               }
-              startDueTasks(today);
+              startDueTasks();
             }
-            if (runDueTasks(today)) ++passesDone;
+            stepRanTask = runDueTasks();
 
             // Un fetch lungo ha attraversato la scadenza del sensore: il ciclo
             // nuovo riparte da Idle, e questo passo serve comunque il frame in
@@ -672,25 +612,10 @@ namespace Scheduler
               releaseRadio(mode);
               frameGate = true;
               stepOutcome = "completo, ciclo attraversato";
-              bootPhase = false;
               return;
             }
-            if (hasPendingRetry())
-            {
-              // Nella finestra di manutenzione il giro riprende dopo
-              // SESSION_RETRY_MS senza bloccare il web server. Con la radio dello
-              // scheduler non si può uscire a metà passo, perchè il loop la
-              // spegnerebbe prima del light sleep: si attende qui, una volta sola.
-              if (mode == RadioMode::MANAGED_BY_MAINTENANCE) return;
-              if (!retryWaited)
-              {
-                retryWaited = true;
-                delay(SESSION_RETRY_MS);
-                continue;
-              }
-            }
             releaseRadio(mode);
-            finishNetworkStep(passesDone > 0 ? "completo" : "nessun task eseguito");
+            finishNetworkStep(stepRanTask ? "completo" : "nessun task eseguito");
             return;
           }
 
@@ -706,8 +631,8 @@ namespace Scheduler
     {
       if (firstFrameLogged) return;
       firstFrameLogged = true;
-      LOG("sched", "primo frame a %lu ms dal boot: STA vista a %ld ms, ora valida a %ld ms (-1 = mai), passo di rete %s, passate %u",
-          (unsigned long)millis(), (long)diagStaMs, (long)diagClockMs, stepOutcome, (unsigned)passesDone);
+      LOG("sched", "primo frame a %lu ms dal boot: STA vista a %ld ms, ora valida a %ld ms (-1 = mai), passo di rete %s",
+          (unsigned long)millis(), (long)diagStaMs, (long)diagClockMs, stepOutcome);
     }
   }
 
@@ -831,7 +756,6 @@ namespace Scheduler
     detail::framePending = false;
     detail::lastActiveDay = -1;
     detail::maintenanceRoundDone = false;
-    detail::bootPhase = true;
     detail::clockAttempted = false;
     LOG("sched", "%u task di rete, ciclo di %u s, sensore %s", (unsigned)count, (unsigned)CYCLE_S,
         detail::sensorIsActive() ? "attivo" : "assente (ciclo interno)");
@@ -845,8 +769,6 @@ namespace Scheduler
    */
   inline void printStatus(Print& out)
   {
-    struct tm localBuffer;
-    const struct tm* today = detail::localNow(localBuffer);
     const char* who = nullptr;
     const uint32_t next = msUntilNextEvent(&who);
     out.printf("ciclo: %lu  prossimo evento: %s fra %lu s  giri radio: %lu\n",
@@ -862,18 +784,14 @@ namespace Scheduler
     out.printf("%-8s %-11s %-10s %7s %7s %7s\n", "task", "cadenza", "prossimo", "esiti", "ok", "falliti");
     for (uint8_t i = 0; i < detail::taskCount; ++i)
     {
-      const Task& t = detail::tasks[i];
+      Task& t = detail::tasks[i];
       char cadence[16];
       char when[16];
-      if (t.cadence == Cadence::DAILY)
-        snprintf(cadence, sizeof cadence, "ore %02u", (unsigned)(Timings::get().*t.dailyLocalHour));
-      else
-        snprintf(cadence, sizeof cadence, "%u'=%lu cicli", (unsigned)(Timings::get().*t.intervalMinutes),
-                 (unsigned long)detail::cyclesPerSlot(t));
+      snprintf(cadence, sizeof cadence, "%u'=%lu cicli", (unsigned)(Timings::get().*t.intervalMinutes),
+               (unsigned long)detail::cyclesPerSlot(t));
 
       if (t.preconditionsMet && !t.preconditionsMet()) snprintf(when, sizeof when, "sospeso");
-      else if (isDue(t, today)) snprintf(when, sizeof when, "ora");
-      else if (t.cadence == Cadence::DAILY) snprintf(when, sizeof when, "giornaliero");
+      else if (isDue(t)) snprintf(when, sizeof when, "ora");
       else if (t.state.retrying) snprintf(when, sizeof when, "ritento");
       else
       {

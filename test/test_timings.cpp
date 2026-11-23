@@ -23,21 +23,21 @@ int main()
 {
   using namespace Timings;
   Timings::begin();
-  ok(get().owmMin == 10 && get().cinemaOra == 7 && get().tuyaMin == 5,
+  ok(get().owmMin == 10 && get().cinemaMin == 60 && get().tuyaMin == 5,
      "default caricati");
   ok(CYCLE_MIN == 5 && CYCLE_S == BSEC_PERIODO_ULP_S, "ciclo di 5 minuti, pari al periodo ULP");
 
-  // Combinazione valida che l'applicazione campo-per-campo respingeva:
-  // allargare la fascia e spostare l'ora del cinema vanno insieme.
+  // Fascia e cadenza del cinema applicate in blocco: un candidato valido
+  // passa per intero.
   Valori a = get();
-  a.wifiOraInizio = 2; a.wifiOraFine = 5; a.cinemaOra = 3;
+  a.wifiOraInizio = 2; a.wifiOraFine = 5; a.cinemaMin = 120;
   const char* m = nullptr;
-  ok(applica(a, &m), "fascia 2..5 + cinema 3 insieme: combinazione valida accettata");
-  ok(get().wifiOraFine == 5 && get().cinemaOra == 3, "  e applicata per intero");
+  ok(applica(a, &m), "fascia 2..5 + cinema ogni 120 min insieme: combinazione valida accettata");
+  ok(get().wifiOraFine == 5 && get().cinemaMin == 120, "  e applicata per intero");
 
-  Valori b = get(); b.cinemaOra = 20;              // fuori dalla fascia 2..5
+  Valori b = get(); b.cinemaMin = 30;              // sotto il pavimento della cache del server
   m = nullptr;
-  ok(!applica(b, &m) && get().cinemaOra == 3, "cinema fuori fascia respinto, stato invariato");
+  ok(!applica(b, &m) && get().cinemaMin == 120, "cinema sotto i 60 min respinto, stato invariato");
   std::printf("   motivo: %s\n", m ? m : "(nessuno)");
 
   Valori c = get(); c.wifiOraInizio = 20; c.wifiOraFine = 5;

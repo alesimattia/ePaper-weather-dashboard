@@ -77,12 +77,6 @@ static void impostaOra(int anno, int mese, int giorno, int h, int m)
   t.tm_hour = h; t.tm_min = m; t.tm_sec = 0; t.tm_isdst = -1;
   g_epochFinta = mktime(&t);
 }
-static const struct tm* oggiLocale()
-{
-  static struct tm t;
-  localtime_r(&g_epochFinta, &t);
-  return &t;
-}
 
 /**
  * Ancora lo stub del fuso a valori indipendenti dal suo stesso codice.
@@ -230,7 +224,7 @@ static int  g_frame = 0;
 /** Durata finta di un run(), che fa avanzare l'orologio come un fetch vero. */
 static uint32_t g_durataRunMs = 0;
 static bool     g_fallisciA = false;
-static int      g_runA = 0, g_runB = 0, g_runD = 0;
+static int      g_runA = 0, g_runB = 0;
 
 /** Fallimenti a comando: A fallisce le prime g_fallisciPrimi volte oltre che con g_fallisciA;
  *  B ha una durata sua (-1 = quella di A) e un proprio fallimento; A può far cadere la radio. */
@@ -253,7 +247,6 @@ static Scheduler::Outcome runB()
   g_msFinto += g_durataBMs >= 0 ? (uint32_t)g_durataBMs : g_durataRunMs;
   return g_fallisciB ? Scheduler::Outcome::FAILED : Scheduler::Outcome::OK;
 }
-static Scheduler::Outcome runD() { evento('d'); ++g_runD; return Scheduler::Outcome::OK; }
 
 static Scheduler::Hooks hooksFinti()
 {
@@ -273,7 +266,7 @@ static void boot(Scheduler::Task* tab, uint8_t n)
   g_sensoreAttivo = true; g_maiInterrogato = true; g_poll = 0;
   g_radioOk = true; g_frame = 0; g_durataRunMs = 0; g_fallisciA = false;
   g_fallisciPrimi = 0; g_fallisciB = false; g_durataBMs = -1; g_radioCadeAlFallimento = false;
-  g_runA = g_runB = g_runD = 0;
+  g_runA = g_runB = 0;
   WiFi.stato = WL_CONNECTED;
   for (uint8_t i = 0; i < n; ++i) tab[i].state = {};
   azzeraEventi();
@@ -290,7 +283,7 @@ static Scheduler::Task taskPeriodico(const char* tag, uint16_t Timings::Valori::
                                      Scheduler::Outcome (*run)(), uint8_t tentativi = FETCH_MAX_TENTATIVI)
 {
   Scheduler::Task t {};
-  t.tag = tag; t.cadence = Scheduler::Cadence::PERIODIC;
+  t.tag = tag;
   t.intervalMinutes = cadenza; t.maxAttempts = tentativi; t.run = run;
   return t;
 }
@@ -372,14 +365,14 @@ int main()
        "  ogni poll entro il 6,25% del periodo ULP");
   }
 
-  // ---- ritento al ciclo successivo (fallimento lento), slot ancorato --------
+  // ---- ritento al ciclo successivo, slot ancorato ---------------------------
   {
     static Scheduler::Task tab[1];
     tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);     // 2 cicli
     impostaOra(2026, 9, 10, 12, 0);
     g_msFinto = 9000000;
     boot(tab, 1);
-    g_durataRunMs = FAST_FAILURE_MAX_MS;       // un timeout non si ritenta nella stessa accensione
+    g_durataRunMs = 20000u;                    // un timeout da 20 s
     g_fallisciA = true;
     Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: fallisce
     ok(tab[0].state.retrying && g_runA == 1, "fallimento: ritento prenotato");
@@ -450,61 +443,86 @@ int main()
        "  attraverso l'ora legale: dalle 00:30 alle 07:00 sono 5 h 30 di orologio");
   }
 
-  // ---- primo ciclo della giornata ------------------------------------------
+  // ---- primo ciclo della giornata: slot riaperti, ritenti della sera azzerati ----
   {
-    Timings::Valori v = Timings::get(); v.googleMin = 1440; v.cinemaOra = 12;
-    ok(Timings::applica(v, nullptr), "cadenza di 24 h e cinema alle 12 applicati");
+    Timings::Valori v = Timings::get(); v.googleMin = 1440;
+    ok(Timings::applica(v, nullptr), "cadenza di 24 h applicata");
     static Scheduler::Task tab[2];
     tab[0] = taskPeriodico("a", &Timings::Valori::googleMin, runA);  // 288 cicli
-    tab[1] = Scheduler::Task{};
-    tab[1].tag = "d"; tab[1].cadence = Scheduler::Cadence::DAILY;
-    tab[1].dailyLocalHour = &Timings::Valori::cinemaOra; tab[1].maxAttempts = FETCH_MAX_TENTATIVI;
-    tab[1].run = runD;
-    impostaOra(2026, 9, 10, 22, 0);
+    tab[1] = taskPeriodico("b", &Timings::Valori::routeMin, runB);   // un ciclo
+    impostaOra(2026, 9, 10, 22, 50);
     g_msFinto = 20000000;
     boot(tab, 2);
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);  // 22:00
-    ok(g_runA == 1 && g_runD == 1, "alle 22:00: periodico e giornaliero (cine_h passata) eseguiti");
-    // Notte: cicli del sensore fino alle 07 del giorno dopo.
-    while (true)
-    {
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);  // 22:50
+    ok(g_runA == 1 && g_runB == 1, "alle 22:50 girano il periodico da 24 h e quello da un ciclo");
+
+    // Un ciclo del sensore, con l'ora locale che avanza come in light sleep.
+    const auto ciclo = []() {
       const uint32_t prima = g_msFinto;
       alProssimoPoll();
       g_epochFinta += (time_t)((g_msFinto - prima) / 1000u);
       azzeraEventi();
       Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
-      struct tm ora;
-      localtime_r(&g_epochFinta, &ora);
-      if (ora.tm_hour == 7) break;
+    };
+    // Ora locale dell'inizio del prossimo ciclo e di quello dopo.
+    const auto oraDelCiclo = [](int cicliAvanti) {
+      const time_t at = g_epochFinta + (time_t)((g_ultimoPollMs + 301000u - g_msFinto) / 1000u)
+                        + (time_t)(cicliAvanti * 301);
+      struct tm local;
+      localtime_r(&at, &local);
+      return local.tm_hour;
+    };
+    // b fallisce solo nell'ultimo ciclo della fascia WiFi: il suo ritento resta in sospeso per la notte.
+    while (oraDelCiclo(0) != 0)
+    {
+      g_fallisciB = oraDelCiclo(1) == 0;
+      ciclo();
     }
-    ok(g_runA == 2, "primo ciclo delle 07: il periodico da 24 h è dovuto, solo 9 h dopo");
-    ok(g_runD == 1, "  il giornaliero no: aspetta le 12");
+    ok(tab[1].state.retrying && tab[1].state.failedAttempts == 1,
+       "ultimo ciclo della sera: b fallisce e il ritento resta in sospeso per la notte");
+    const int runBSera = g_runB;
+    while (oraDelCiclo(0) != 7) ciclo();
+    ok(g_runB == runBSera, "  di notte nessun ritento");
+    ciclo();                                   // primo ciclo delle 07, b fallisce ancora
+    ok(g_runA == 2, "primo ciclo delle 07: il periodico da 24 h è dovuto, solo 8 h dopo");
+    ok(g_runB == runBSera + 1 && tab[1].state.retrying && tab[1].state.failedAttempts == 1,
+       "  il ritento della sera non si trascina: il fallimento delle 07 è il primo dello slot");
     ok(g_frame >= 2 && std::strchr(g_eventi, 'F') != nullptr, "  e il primo frame del mattino è disegnato");
+    g_fallisciB = false;
+    ciclo();
+    ok(g_runB == runBSera + 2 && !tab[1].state.retrying, "  al ciclo dopo il ritento riesce");
     Timings::ripristinaDefault();
   }
 
-  // ---- giornaliero: orologio non valido al boot, nessun doppione ----------
+  // ---- fronte di salita della precondizione: slot nuovo e dovuto ------------
   {
+    static bool idoneo = true;
     static Scheduler::Task tab[1];
-    tab[0] = Scheduler::Task{};
-    tab[0].tag = "d"; tab[0].cadence = Scheduler::Cadence::DAILY;
-    tab[0].dailyLocalHour = &Timings::Valori::cinemaOra; tab[0].maxAttempts = FETCH_MAX_TENTATIVI;
-    tab[0].run = runD;
-    g_epochFinta = 1000;                       // orologio da sincronizzare
-    g_msFinto = 30000000;
+    tab[0] = taskPeriodico("a", &Timings::Valori::owmMin, runA);     // 2 cicli
+    tab[0].preconditionsMet = []() { return idoneo; };
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 25000000;
     boot(tab, 1);
-    // La radio dello scheduler sincronizza l'ora, come wifiOn().
-    Scheduler::Hooks h = hooksFinti();
-    h.radioOn = []() { evento('R'); impostaOra(2026, 9, 10, 12, 0); return true; };
-    Scheduler::begin(tab, 1, h);
-    ok(!Scheduler::isDue(tab[0], nullptr), "orologio non valido: il giornaliero non è dovuto");
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
-    ok(std::strchr(g_eventi, 'R') != nullptr, "  la radio si accende per riprendere l'ora");
-    ok(g_runD == 1 && tab[0].state.lastSlotDayOfYear == oggiLocale()->tm_yday,
-       "  con l'ora sincronizzata il giornaliero gira nello stesso giro e registra il giorno");
-    alProssimoPoll();
-    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
-    ok(g_runD == 1, "  al ciclo dopo non riparte");
+    const auto giro = []() { alProssimoPoll(); Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER); };
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);  // ciclo 1: gira, slot chiuso
+    g_fallisciA = true;
+    giro();                                    // ciclo 2: non dovuto
+    giro();                                    // ciclo 3: fallisce
+    ok(g_runA == 2 && tab[0].state.retrying, "fallimento: ritento in sospeso");
+    idoneo = false;
+    giro();                                    // ciclo 4: sospeso, il ritento non parte
+    ok(g_runA == 2, "  precondizione falsa: nessun tentativo");
+    idoneo = true;
+    giro();                                    // ciclo 5: fronte di salita, slot nuovo
+    ok(g_runA == 3 && tab[0].state.retrying && tab[0].state.failedAttempts == 1,
+       "  al ritorno della precondizione lo slot riparte: il fallimento è il primo, non il secondo");
+    g_fallisciA = false;
+    giro();                                    // ciclo 6: ritento riuscito
+    ok(g_runA == 4 && !tab[0].state.retrying && tab[0].state.slotCycle == 5, "  e il ritento al ciclo dopo riesce");
+    giro();                                    // ciclo 7: la cadenza riparte dal ciclo 5
+    ok(g_runA == 5, "  la cadenza da 2 cicli riprende dal nuovo slot");
+    giro();                                    // ciclo 8: precondizione stabile, nessuna riapertura
+    ok(g_runA == 5, "  con la precondizione stabile nessuna riapertura dello slot");
   }
 
   // ---- ora non valida senza task dovuti: lo scheduler riprende l'ora ------
@@ -710,49 +728,37 @@ int main()
     ok(g_runA == 0 && g_runB == 0 && g_frame == 0, "  ora arrivata, sono le 03:00: nessun fetch nè frame");
   }
 
-  // ---- ritento nella stessa accensione, radio della manutenzione ------------
+  // ---- ritento solo al ciclo successivo, radio della manutenzione ----------
   {
     static Scheduler::Task tab[1];
     tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);   // un ciclo
     const auto giro = []() { Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE); };
 
-    // Primo passo dopo il boot: il frame aspetta il secondo tentativo.
+    // Primo passo dopo il boot: il frame non aspetta, nessun secondo tentativo nel ciclo.
     impostaOra(2026, 9, 10, 8, 30);
     g_msFinto = 70000000;
     boot(tab, 1);
     g_fallisciA = true;
     giro();
-    ok(g_runA == 1 && tab[0].state.retrying && g_frame == 0, "primo tentativo fallito al boot: il frame aspetta il secondo");
+    ok(g_runA == 1 && tab[0].state.retrying && g_frame == 1, "fallimento al boot: ritento in sospeso, frame subito");
     g_fallisciA = false;
-    g_msFinto += 1000;
+    g_msFinto += 10000;
     giro();
-    ok(g_runA == 1 && g_frame == 0, "  prima di SESSION_RETRY_MS il secondo tentativo non parte");
-    g_msFinto += SESSION_RETRY_MS;
+    ok(g_runA == 1, "  nessun secondo tentativo nello stesso ciclo");
+    alProssimoPoll();
     giro();
-    ok(g_runA == 2 && !tab[0].state.retrying && g_frame == 1, "  dopo SESSION_RETRY_MS riesce, e solo allora il frame");
+    ok(g_runA == 2 && !tab[0].state.retrying && g_frame == 2, "  il ritento al ciclo successivo riesce, con il suo frame");
 
-    // Al boot si ritenta anche un fallimento lento: il primo frame aspetta e il server ora è sveglio.
-    impostaOra(2026, 9, 10, 8, 30);
-    g_msFinto = 75000000;
-    boot(tab, 1);
-    g_durataRunMs = FAST_FAILURE_MAX_MS;
-    g_fallisciPrimi = 1;
-    giro();
-    ok(g_runA == 1 && tab[0].state.retrying && g_frame == 0, "primo passo: anche un timeout si ritenta, il frame aspetta");
-    g_msFinto += SESSION_RETRY_MS;
-    giro();
-    ok(g_runA == 2 && !tab[0].state.retrying && g_frame == 1, "  dopo SESSION_RETRY_MS il secondo tentativo riesce, poi il frame");
-
-    // Due fallimenti: lo slot si chiude e il frame esce, nessuno stallo.
+    // Due fallimenti in due cicli: slot chiuso, un frame per ciclo, nessuno stallo.
     impostaOra(2026, 9, 10, 8, 30);
     g_msFinto = 71000000;
     boot(tab, 1);
     g_fallisciA = true;
     giro();
-    g_msFinto += SESSION_RETRY_MS + 1000;
+    alProssimoPoll();
     giro();
-    ok(g_runA == 2 && !tab[0].state.retrying && tab[0].state.slotCycle == 1 && g_frame == 1,
-       "due fallimenti: soglia raggiunta, slot chiuso, frame disegnato");
+    ok(g_runA == 2 && !tab[0].state.retrying && tab[0].state.slotCycle == 1 && g_frame == 2,
+       "due fallimenti in due cicli: soglia raggiunta, slot chiuso, un frame per ciclo");
     g_fallisciA = false;
 
     // Un task con maxAttempts 0 non ritenta.
@@ -762,122 +768,72 @@ int main()
     boot(tab, 1);
     g_fallisciA = true;
     giro();
-    ok(g_runA == 1 && !tab[0].state.retrying && g_frame == 1, "maxAttempts 0: un solo tentativo, il frame non aspetta");
+    ok(g_runA == 1 && !tab[0].state.retrying && g_frame == 1, "maxAttempts 0: un solo tentativo per slot");
     g_fallisciA = false;
 
-    // STA caduta fra i due tentativi: il passo si chiude senza stallo.
+    // STA giù al ciclo del ritento: il ritento resta per il ciclo con la STA su.
     tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
     impostaOra(2026, 9, 10, 8, 30);
     g_msFinto = 73000000;
     boot(tab, 1);
     g_fallisciA = true;
     giro();
-    WiFi.stato = 0;
-    g_msFinto += SESSION_RETRY_MS + 1000;
-    giro();
-    ok(g_runA == 1 && g_frame == 1, "STA caduta prima del secondo tentativo: nessuno stallo, frame disegnato");
     g_fallisciA = false;
+    WiFi.stato = 0;
+    alProssimoPoll();
+    giro();
+    g_msFinto += RADIO_STA_ATTESA_MS;
+    giro();
+    ok(g_runA == 1 && tab[0].state.retrying && g_frame == 2, "STA giù al ciclo del ritento: frame, ritento intatto");
     WiFi.stato = WL_CONNECTED;
-
-    // Dal passo successivo al primo si ritenta solo un fallimento rapido.
-    impostaOra(2026, 9, 10, 8, 30);
-    g_msFinto = 74000000;
-    boot(tab, 1);
-    giro();                                    // primo passo: riesce
-    g_fallisciPrimi = 1;
     alProssimoPoll();
-    giro();                                    // ciclo 2: fallisce in 0 ms
-    ok(g_runA == 2 && tab[0].state.retrying && g_frame == 1, "passo successivo: un fallimento rapido fa attendere il frame");
-    g_msFinto += SESSION_RETRY_MS;
     giro();
-    ok(g_runA == 3 && !tab[0].state.retrying && g_frame == 2, "  e dopo SESSION_RETRY_MS il secondo tentativo, poi il frame");
-
-    impostaOra(2026, 9, 10, 8, 30);
-    g_msFinto = 76000000;
-    boot(tab, 1);
-    giro();                                    // primo passo: riesce
-    g_durataRunMs = FAST_FAILURE_MAX_MS;
-    g_fallisciPrimi = 1;
-    alProssimoPoll();
-    giro();                                    // ciclo 2: fallisce in FAST_FAILURE_MAX_MS
-    ok(g_runA == 2 && tab[0].state.retrying && g_frame == 2, "passo successivo: un timeout non si ritenta, il frame non aspetta");
-    g_msFinto += SESSION_RETRY_MS + 1000;
-    giro();
-    ok(g_runA == 2, "  il ritento resta al ciclo successivo");
+    ok(g_runA == 2 && !tab[0].state.retrying, "  con la STA su il ritento parte e riesce");
   }
 
-  // ---- ritento nella stessa accensione, radio dello scheduler ----------------
+  // ---- ritento solo al ciclo successivo, radio dello scheduler --------------
   {
     static Scheduler::Task tab[2];
     tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
     tab[1] = taskPeriodico("b", &Timings::Valori::routeMin, runB);
     const auto giro = []() { Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER); };
 
-    // Fallimento rapido: seconda passata con la radio ancora accesa, dopo l'attesa.
+    // Fallimento rapido: una sola accensione, nessuna attesa, ritento al ciclo dopo.
     impostaOra(2026, 9, 10, 12, 0);
     g_msFinto = 80000000;
     boot(tab, 1);
     g_fallisciPrimi = 1;
     const uint32_t prima = g_msFinto;
     giro();
-    ok(std::strcmp(g_eventi, "SRaarF") == 0 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
-       "fallimento rapido: secondo tentativo nella stessa accensione, poi radio giù e frame");
-    ok(g_msFinto - prima >= SESSION_RETRY_MS, "  con SESSION_RETRY_MS di attesa fra i due");
-
-    // Due fallimenti rapidi: soglia raggiunta nella stessa accensione, slot chiuso.
-    impostaOra(2026, 9, 10, 12, 0);
-    g_msFinto = 81000000;
-    boot(tab, 1);
-    g_fallisciA = true;
-    giro();
-    ok(std::strcmp(g_eventi, "SRaarF") == 0 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
-       "due fallimenti rapidi: due tentativi, soglia raggiunta, slot chiuso");
-    g_fallisciA = false;
-
-    // Fallimento lento: un solo tentativo, il ritento al ciclo successivo.
-    impostaOra(2026, 9, 10, 12, 0);
-    g_msFinto = 82000000;
-    boot(tab, 1);
-    g_durataRunMs = FAST_FAILURE_MAX_MS;
-    g_fallisciPrimi = 1;
-    giro();
-    ok(std::strcmp(g_eventi, "SRarF") == 0 && tab[0].state.retrying, "fallimento lento: un solo tentativo, ritento prenotato");
+    ok(std::strcmp(g_eventi, "SRarF") == 0 && tab[0].state.retrying,
+       "fallimento rapido: un tentativo, radio giù e frame, ritento prenotato");
+    ok(g_msFinto - prima == (uint32_t)DISPLAY_REFRESH_PIENO_S * 1000u, "  nessuna attesa dentro il passo");
     azzeraEventi();
     alProssimoPoll();
     giro();
-    ok(std::strcmp(g_eventi, "SRarF") == 0 && g_runA == 2 && !tab[0].state.retrying, "  e riesce al ciclo successivo");
+    ok(std::strcmp(g_eventi, "SRarF") == 0 && g_runA == 2 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
+       "  al ciclo successivo riesce, slot ancorato al ciclo 1");
 
-    // maxAttempts 0: un solo tentativo anche se rapido.
-    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA, 0);
-    impostaOra(2026, 9, 10, 12, 0);
-    g_msFinto = 83000000;
-    boot(tab, 1);
-    g_fallisciA = true;
-    giro();
-    ok(std::strcmp(g_eventi, "SRarF") == 0 && !tab[0].state.retrying, "maxAttempts 0: un solo tentativo");
-    g_fallisciA = false;
-
-    // Radio caduta al fallimento: niente attesa, il ritento resta al ciclo successivo.
-    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
+    // Radio caduta al fallimento: ritento prenotato.
     impostaOra(2026, 9, 10, 12, 0);
     g_msFinto = 84000000;
     boot(tab, 1);
     g_fallisciPrimi = 1;
     g_radioCadeAlFallimento = true;
     giro();
-    ok(std::strcmp(g_eventi, "SRarF") == 0 && tab[0].state.retrying, "radio caduta al fallimento: nessuna attesa, ritento prenotato");
+    ok(std::strcmp(g_eventi, "SRarF") == 0 && tab[0].state.retrying, "radio caduta al fallimento: ritento prenotato");
     WiFi.stato = WL_CONNECTED;
 
-    // Un rapido e un lento nello stesso passo: la seconda passata è solo del rapido.
+    // Due task falliti nello stesso passo: una sola passata, entrambi al ciclo dopo.
     impostaOra(2026, 9, 10, 12, 0);
     g_msFinto = 85000000;
     boot(tab, 2);
     g_fallisciPrimi = 1;
     g_fallisciB = true;
-    g_durataBMs = FAST_FAILURE_MAX_MS;
     giro();
-    ok(std::strcmp(g_eventi, "SRabarF") == 0 && g_runB == 1 && tab[1].state.retrying && !tab[0].state.retrying,
-       "un fallimento rapido e uno lento: si ritenta solo il rapido");
+    ok(std::strcmp(g_eventi, "SRabrF") == 0 && tab[0].state.retrying && tab[1].state.retrying,
+       "due fallimenti nello stesso passo: una sola passata, entrambi ritentano al ciclo dopo");
+    g_fallisciB = false;
   }
 
   // ---- senza sensore: ciclo interno ----------------------------------------

@@ -17,11 +17,13 @@
 #include "Log.h"
 
 /**
- * Impostazioni del percorso del mattino servito da routefinder (submodule
- * omonimo): partenza, arrivo, carburante, fascia oraria e sorgente del
- * riquadro in alto a sinistra, con persistenza in NVS. Logica pura, senza rete
- * nè display, così si verifica su host (test/test_routefinder.cpp).
- * Usato dal .ino (task route e source, drawTestBackground) e da Maintenance.h
+ * Riquadro in alto a sinistra: impostazioni del percorso servito da
+ * routefinder (submodule omonimo), fasce orarie di percorso e cinema con
+ * persistenza in NVS, e sorgente forzata dalla manutenzione, che resta in RAM e
+ * scade dopo SOURCE_OVERRIDE_MS. In automatico il riquadro mostra il percorso
+ * nella sua fascia, il cinema nella sua e il wallpaper altrove. Logica pura,
+ * senza rete nè display, così si verifica su host (test/test_routefinder.cpp).
+ * Usato dal .ino (task route e cinema, drawTestBackground) e da Maintenance.h
  * (pagina /route e controllo della fascia WiFi in /config).
  * @Mattia Alesi
  */
@@ -53,21 +55,37 @@
   #define ROUTE_WINDOW_END_MIN (9 * 60)
 #endif
 
+/** Fascia del cinema di default, con la stessa convenzione. */
+#ifndef CINEMA_WINDOW_START_MIN
+  #define CINEMA_WINDOW_START_MIN (18 * 60)
+#endif
+#ifndef CINEMA_WINDOW_END_MIN
+  #define CINEMA_WINDOW_END_MIN (21 * 60)
+#endif
+
 static_assert(ROUTE_WINDOW_START_MIN < ROUTE_WINDOW_END_MIN && ROUTE_WINDOW_END_MIN <= 24 * 60,
               "fascia del percorso non valida");
 static_assert(ROUTE_WINDOW_START_MIN >= WIFI_ACTIVE_HOUR_START * 60 &&
                   ROUTE_WINDOW_END_MIN <= (WIFI_ACTIVE_HOUR_END + 1) * 60,
               "la fascia del percorso deve stare dentro la fascia WiFi");
+static_assert(CINEMA_WINDOW_START_MIN < CINEMA_WINDOW_END_MIN && CINEMA_WINDOW_END_MIN <= 24 * 60,
+              "fascia del cinema non valida");
+static_assert(CINEMA_WINDOW_START_MIN >= WIFI_ACTIVE_HOUR_START * 60 &&
+                  CINEMA_WINDOW_END_MIN <= (WIFI_ACTIVE_HOUR_END + 1) * 60,
+              "la fascia del cinema deve stare dentro la fascia WiFi");
+static_assert(CINEMA_WINDOW_END_MIN <= ROUTE_WINDOW_START_MIN || ROUTE_WINDOW_END_MIN <= CINEMA_WINDOW_START_MIN,
+              "le fasce di percorso e cinema non devono sovrapporsi: condividono il buffer dell'immagine");
 
 namespace Routefinder
 {
-  /** Cosa mostra il riquadro in alto a sinistra. I valori sono quelli in NVS. */
+  /** Sorgente del riquadro in alto a sinistra. Auto segue le fasce; le altre
+   *  sono forzature temporanee dalla manutenzione. */
   enum class Source : uint8_t
   {
-    Auto      = 0,   // percorso dentro la fascia, cinema fuori
+    Auto      = 0,   // percorso e cinema nelle loro fasce, wallpaper altrove
     Cinema    = 1,
     Route     = 2,
-    Wallpaper = 3    // fallback PROGMEM great_wave
+    Wallpaper = 3    // wallpaper della partizione in flash
   };
 
   /** Carburante passato alla Routes API. I valori sono quelli in NVS. */
@@ -79,10 +97,12 @@ namespace Routefinder
     Electric = 3
   };
 
-  /** Immagine che il riquadro deve disegnare adesso. */
+  /** Immagine che il riquadro deve disegnare adesso, o contenuto del buffer
+   *  in RAM, dove Wallpaper vuol dire buffer vuoto. */
   enum class ShownImage : uint8_t { Route, Cinema, Wallpaper };
 
-  /** Coordinate in microgradi: niente float in NVS nè nella formattazione dell'URL. */
+  /** Coordinate in microgradi: niente float in NVS nè nella formattazione
+   *  dell'URL. Le fasce sono in minuti dalla mezzanotte, fine esclusa. */
   struct Settings
   {
     int32_t  originLatE6;
@@ -90,9 +110,10 @@ namespace Routefinder
     int32_t  destinationLatE6;
     int32_t  destinationLngE6;
     Fuel     fuel;
-    Source   source;
     uint16_t windowStartMin;
     uint16_t windowEndMin;
+    uint16_t cinemaStartMin;
+    uint16_t cinemaEndMin;
   };
 
   /**
@@ -108,8 +129,9 @@ namespace Routefinder
   inline constexpr Settings DEFAULTS = {
       toE6(ROUTEFINDER_ORIGIN_LAT),      toE6(ROUTEFINDER_ORIGIN_LON),
       toE6(ROUTEFINDER_DESTINATION_LAT), toE6(ROUTEFINDER_DESTINATION_LON),
-      Fuel::Gasoline, Source::Auto,
+      Fuel::Gasoline,
       (uint16_t)ROUTE_WINDOW_START_MIN, (uint16_t)ROUTE_WINDOW_END_MIN,
+      (uint16_t)CINEMA_WINDOW_START_MIN, (uint16_t)CINEMA_WINDOW_END_MIN,
   };
 
   namespace detail
@@ -119,6 +141,10 @@ namespace Routefinder
     inline constexpr uint16_t    SCHEMA        = 1;
 
     inline Settings settings = DEFAULTS;
+
+    // Forzatura in corso: solo in RAM, quindi un riavvio torna all'automatico.
+    inline Source   overrideSource  = Source::Auto;
+    inline uint32_t overrideStartMs = 0;
 
     /** Valore di `fuel` nella querystring del servizio, per enum. */
     inline constexpr const char* FUEL_PARAMS[] = {"gasoline", "diesel", "hybrid", "electric"};
@@ -140,19 +166,22 @@ namespace Routefinder
   inline const char* sourceLabel(Source s) { return detail::SOURCE_LABELS[(uint8_t)s < SOURCE_COUNT ? (uint8_t)s : 0]; }
 
   /**
-   * Motivo per cui la fascia del percorso non sta dentro la fascia WiFi, o
-   * nullptr. Il percorso ha bisogno della radio: fuori dalla fascia WiFi il
-   * task non partirebbe mai. Lo usa anche /config, perchè il vincolo lega i
-   * due namespace.
+   * Motivo per cui una delle due fasce non sta dentro la fascia WiFi, o
+   * nullptr. Percorso e cinema hanno bisogno della radio: fuori dalla fascia
+   * WiFi i loro task non partirebbero mai. Lo usa anche /config, perchè il
+   * vincolo lega i due namespace.
    */
-  inline const char* windowOutsideRadioHours(uint16_t startMin, uint16_t endMin, const Timings::Valori& t)
+  inline const char* windowsOutsideRadioHours(const Settings& s, const Timings::Valori& t)
   {
-    if (startMin < (uint32_t)t.wifiOraInizio * 60U || endMin > ((uint32_t)t.wifiOraFine + 1U) * 60U)
-      return "la fascia del percorso esce dalla fascia WiFi";
+    const uint32_t first = (uint32_t)t.wifiOraInizio * 60U;
+    const uint32_t last = ((uint32_t)t.wifiOraFine + 1U) * 60U;
+    if (s.windowStartMin < first || s.windowEndMin > last) return "la fascia del percorso esce dalla fascia WiFi";
+    if (s.cinemaStartMin < first || s.cinemaEndMin > last) return "la fascia del cinema esce dalla fascia WiFi";
     return nullptr;
   }
 
-  /** Motivo del rifiuto di `s`, o nullptr se è una configurazione valida. */
+  /** Motivo del rifiuto di `s`, o nullptr se è una configurazione valida. Le
+   *  due fasce non si sovrappongono perchè le immagini condividono il buffer. */
   inline const char* invalidReason(const Settings& s, const Timings::Valori& t)
   {
     if (!detail::latitudeInRange(s.originLatE6) || !detail::longitudeInRange(s.originLngE6))
@@ -160,10 +189,13 @@ namespace Routefinder
     if (!detail::latitudeInRange(s.destinationLatE6) || !detail::longitudeInRange(s.destinationLngE6))
       return "arrivo fuori range";
     if ((uint8_t)s.fuel >= FUEL_COUNT) return "carburante sconosciuto";
-    if ((uint8_t)s.source >= SOURCE_COUNT) return "sorgente sconosciuta";
     if (s.windowStartMin >= s.windowEndMin || s.windowEndMin > 24 * 60)
       return "l'inizio della fascia del percorso non precede la fine";
-    return windowOutsideRadioHours(s.windowStartMin, s.windowEndMin, t);
+    if (s.cinemaStartMin >= s.cinemaEndMin || s.cinemaEndMin > 24 * 60)
+      return "l'inizio della fascia del cinema non precede la fine";
+    if (s.windowStartMin < s.cinemaEndMin && s.cinemaStartMin < s.windowEndMin)
+      return "le fasce di percorso e cinema si sovrappongono";
+    return windowsOutsideRadioHours(s, t);
   }
 
   /** Scrive in NVS i soli campi cambiati, come Timings::save(). */
@@ -186,9 +218,10 @@ namespace Routefinder
     putInt("dest_lat", s.destinationLatE6);
     putInt("dest_lng", s.destinationLngE6);
     putByte("fuel", (uint8_t)s.fuel);
-    putByte("source", (uint8_t)s.source);
     putShort("win_start", s.windowStartMin);
     putShort("win_end", s.windowEndMin);
+    putShort("cine_start", s.cinemaStartMin);
+    putShort("cine_end", s.cinemaEndMin);
     prefs.end();
     return true;
   }
@@ -216,9 +249,10 @@ namespace Routefinder
       settings.destinationLatE6 = prefs.getInt("dest_lat", DEFAULTS.destinationLatE6);
       settings.destinationLngE6 = prefs.getInt("dest_lng", DEFAULTS.destinationLngE6);
       settings.fuel             = (Fuel)prefs.getUChar("fuel", (uint8_t)DEFAULTS.fuel);
-      settings.source           = (Source)prefs.getUChar("source", (uint8_t)DEFAULTS.source);
       settings.windowStartMin   = prefs.getUShort("win_start", DEFAULTS.windowStartMin);
       settings.windowEndMin     = prefs.getUShort("win_end", DEFAULTS.windowEndMin);
+      settings.cinemaStartMin   = prefs.getUShort("cine_start", DEFAULTS.cinemaStartMin);
+      settings.cinemaEndMin     = prefs.getUShort("cine_end", DEFAULTS.cinemaEndMin);
     }
     prefs.end();
     const char* reason = invalidReason(settings, Timings::get());
@@ -357,30 +391,72 @@ namespace Routefinder
     return local.tm_hour * 60 + local.tm_min;
   }
 
-  /** Vero dentro la fascia del percorso; falso senza orologio, perchè senza
-   *  ora non c'è modo di sapere se il traffico del mattino è quello giusto. */
-  inline bool isInsideRouteHours()
+  /** Vero se l'ora locale cade nella fascia [startMin, endMin); falso senza
+   *  orologio, perchè senza ora non si sa in quale fascia si è. */
+  inline bool isInsideWindow(uint16_t startMin, uint16_t endMin)
   {
     const int32_t minute = localMinuteOfDay();
-    const Settings& s = detail::settings;
-    return minute >= 0 && minute >= s.windowStartMin && minute < s.windowEndMin;
-  }
-
-  /** Vero quando il percorso è la sorgente del riquadro: in fascia con Auto,
-   *  sempre con Route. In quei momenti il cinema non si scarica. */
-  inline bool isRouteSourceActive()
-  {
-    const Source s = detail::settings.source;
-    return s == Source::Route || (s == Source::Auto && isInsideRouteHours());
+    return minute >= 0 && minute >= startMin && minute < endMin;
   }
 
   /**
-   * Età massima, in secondi, con cui un percorso si mostra con la sorgente
-   * corrente: un multiplo della cadenza con Auto, un'ora con Route.
+   * Forza la sorgente del riquadro per SOURCE_OVERRIDE_MS da adesso; Auto
+   * annulla la forzatura. Usato da Maintenance.h (pagina /route).
    */
+  inline void setOverride(Source source)
+  {
+    detail::overrideSource = (uint8_t)source < SOURCE_COUNT ? source : Source::Auto;
+    detail::overrideStartMs = millis();
+    if (detail::overrideSource != Source::Auto)
+      LOG("route", "riquadro forzato a %s per %lu min", sourceLabel(detail::overrideSource),
+          (unsigned long)(SOURCE_OVERRIDE_MS / 60000UL));
+  }
+
+  /** Sorgente in vigore: la forzatura finchè non scade, poi Auto. La scadenza
+   *  si misura su millis(), che avanza anche in light sleep e non chiede l'ora. */
+  inline Source activeSource()
+  {
+    if (detail::overrideSource == Source::Auto) return Source::Auto;
+    if ((uint32_t)(millis() - detail::overrideStartMs) >= SOURCE_OVERRIDE_MS)
+    {
+      LOG("route", "forzatura a %s scaduta: riquadro automatico", sourceLabel(detail::overrideSource));
+      detail::overrideSource = Source::Auto;
+      return Source::Auto;
+    }
+    return detail::overrideSource;
+  }
+
+  /** Millisecondi che restano alla forzatura in corso, 0 senza forzatura. */
+  inline uint32_t overrideRemainingMs()
+  {
+    if (activeSource() == Source::Auto) return 0;
+    return SOURCE_OVERRIDE_MS - (uint32_t)(millis() - detail::overrideStartMs);
+  }
+
+  /**
+   * Immagine che il riquadro deve mostrare adesso secondo la sorgente: quella
+   * forzata, oppure in automatico il percorso nella sua fascia, il cinema nella
+   * sua e il wallpaper altrove o senza orologio. Decide anche quale task di rete
+   * è attivo, quindi percorso e cinema non si scaricano mai fuori da qui.
+   */
+  inline ShownImage scheduledImage()
+  {
+    const Settings& s = detail::settings;
+    switch (activeSource())
+    {
+      case Source::Route:     return ShownImage::Route;
+      case Source::Cinema:    return ShownImage::Cinema;
+      case Source::Wallpaper: return ShownImage::Wallpaper;
+      case Source::Auto:      break;
+    }
+    if (isInsideWindow(s.windowStartMin, s.windowEndMin)) return ShownImage::Route;
+    if (isInsideWindow(s.cinemaStartMin, s.cinemaEndMin)) return ShownImage::Cinema;
+    return ShownImage::Wallpaper;
+  }
+
+  /** Età massima, in secondi, con cui un percorso si mostra: un multiplo della cadenza. */
   inline uint32_t maxRouteAgeS()
   {
-    if (detail::settings.source == Source::Route) return (uint32_t)ROUTE_FORCED_MAX_AGE_S;
     return (uint32_t)ROUTE_MAX_AGE_CADENCES * Timings::get().routeMin * 60U;
   }
 
@@ -392,17 +468,50 @@ namespace Routefinder
     return age >= 0 && age <= (int64_t)maxRouteAgeS();
   }
 
-  /**
-   * Cosa disegna il riquadro: il wallpaper se forzato, il percorso quando è la
-   * sorgente attiva e ce n'è uno abbastanza recente, altrimenti il cinema
-   * (che senza immagine valida ripiega a sua volta sul wallpaper).
-   */
-  inline ShownImage shownImage(bool hasRouteImage, uint32_t routeDownloadedAt)
+  /** Epoch di oggi all'inizio della fascia del cinema, 0 senza orologio.
+   *  mktime() con tm_isdst = -1 assorbe il cambio dell'ora legale. */
+  inline uint32_t cinemaWindowStartEpoch()
   {
-    const Source s = detail::settings.source;
-    if (s == Source::Wallpaper) return ShownImage::Wallpaper;
-    if (isRouteSourceActive() && hasRouteImage && isRouteFresh(routeDownloadedAt)) return ShownImage::Route;
-    return ShownImage::Cinema;
+    if (!Clock::valido()) return 0;
+    const time_t now = time(nullptr);
+    struct tm start;
+    localtime_r(&now, &start);
+    start.tm_hour = detail::settings.cinemaStartMin / 60;
+    start.tm_min = detail::settings.cinemaStartMin % 60;
+    start.tm_sec = 0;
+    start.tm_isdst = -1;
+    const time_t at = mktime(&start);
+    return at == (time_t)-1 ? 0 : (uint32_t)at;
+  }
+
+  /**
+   * Vero se un cinema scaricato a `downloadedAt` (epoch) e `downloadedMs`
+   * (millis) vale ancora: scaricato oggi dopo l'inizio della fascia cinema,
+   * oppure dopo l'inizio della forzatura in corso. Un'immagine della sera prima
+   * non vale più, anche se il buffer la contiene ancora.
+   */
+  inline bool isCinemaFresh(uint32_t downloadedAt, uint32_t downloadedMs)
+  {
+    if (!Clock::valido() || downloadedAt == 0) return false;
+    if (downloadedAt >= cinemaWindowStartEpoch()) return true;
+    return activeSource() == Source::Cinema && (int32_t)(downloadedMs - detail::overrideStartMs) >= 0;
+  }
+
+  /**
+   * Cosa disegna il riquadro: l'immagine programmata se il buffer in RAM la
+   * contiene ed è ancora valida, altrimenti il wallpaper.
+   * @param stored contenuto del buffer, Wallpaper se vuoto.
+   * @param downloadedAt epoch del download.
+   * @param downloadedMs millis() del download.
+   */
+  inline ShownImage shownImage(ShownImage stored, uint32_t downloadedAt, uint32_t downloadedMs)
+  {
+    const ShownImage scheduled = scheduledImage();
+    if (scheduled == ShownImage::Route && stored == ShownImage::Route && isRouteFresh(downloadedAt))
+      return ShownImage::Route;
+    if (scheduled == ShownImage::Cinema && stored == ShownImage::Cinema && isCinemaFresh(downloadedAt, downloadedMs))
+      return ShownImage::Cinema;
+    return ShownImage::Wallpaper;
   }
 }
 

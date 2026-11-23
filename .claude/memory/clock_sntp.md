@@ -50,8 +50,8 @@ solo se esiste.
 
 Soglie e server stanno in `Timings.h` con tutti gli altri tempi. `valido()` è
 l'**unica** definizione di "ora valida" del firmware: ci poggiano lo scheduler
-(`isInsideRadioHours`, la cadenza giornaliera, `printStatus`), la precondizione dei due
-task calendario e la guardia di `Tuya::runPublish()`.
+(`isInsideRadioHours`, `printStatus`), le fasce del riquadro di `Routefinder`, le
+precondizioni dei task calendario, percorso e cinema e la guardia di `Tuya::runPublish()`.
 
 ## I due agganci, uno per proprietario della radio
 
@@ -106,9 +106,12 @@ appartiene a nessuno dei due.
 
 ## Chi dipende dall'ora assoluta
 
-- `Scheduler::isInsideRadioHours()` e la cadenza `DAILY` del cinema: senza orologio
-  la fascia è **fail-open** e la giornaliera resta sospesa, perchè
-  `closeSlot()` non registra `tm_yday` con un'ora finta; il passo di rete rilegge l'ora quando entra in Running, dopo l'acquisizione della radio, così il giro in cui avviene la prima sincronizzazione registra già il giorno.
+- `Scheduler::isInsideRadioHours()`: senza orologio la fascia è **fail-open**; il passo
+  di rete valuta le precondizioni quando entra in Running, dopo l'acquisizione della
+  radio, così i task che chiedono l'ora girano già nel giro della prima sincronizzazione.
+- Le fasce di percorso e cinema (`Routefinder::scheduledImage()`): senza orologio il
+  riquadro mostra il wallpaper e i due task restano sospesi, perchè l'istante del
+  download ne decide la validità (vedi [[routefinder_morning_route]]).
 - **I due task calendario**, che lo dichiarano con `preconditionsMet` = `isClockValidForCalendars()`,
   cioè `Clock::valido()`. `Calendar::detail::nowUtcEpoch()` ritorna 0 a
   orologio non valido e le query filtrerebbero da `1970-01-01T00:00:00Z`:
@@ -121,8 +124,7 @@ appartiene a nessuno dei due.
   Unix, quindi senza ora vera il publish non parte (vedi [[tuya_module]]).
 
 **Non può andare in stallo**: senza ora l'unico task che può diventare dovuto è il
-meteo, perchè i giornalieri chiedono l'orologio in `isDue()` e gli altri nelle
-precondizioni. Per non dipendere dalla configurazione, nella fase Idle lo
+meteo, perchè tutti gli altri chiedono l'orologio nelle precondizioni. Per non dipendere dalla configurazione, nella fase Idle lo
 scheduler apre il passo di rete anche senza task dovuti quando l'ora non è valida
 e da `CLOCK_RECOVERY_CYCLES` (2) cicli nessun passo ha acceso la radio
 (`isClockRecoveryDue()`); Running rilegge l'ora, quindi a sincronizzazione
@@ -132,7 +134,7 @@ aspetta quindi l'ora fino a `TIME_SYNC_TIMEOUT_MS` dalla STA vista anche senza
 task configurati.
 
 **Modo di fallire su una rete che blocca NTP**: l'orologio non diventa mai
-valido, i due calendari, Tuya, il percorso e il cinema giornaliero non girano
+valido, i due calendari, Tuya, il percorso e il cinema non girano
 affatto e la lista eventi resta ai placeholder. È voluto: è meglio di
 appuntamenti vecchi presentati come prossimi. Il meteo resta operativo,
 perchè `wifiOn()` ignora il ritorno della sincronizzazione e la connessione

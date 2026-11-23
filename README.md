@@ -25,12 +25,15 @@ stante.
 
 Lo sketch principale compone uno schermo completo con:
 
-- **background cinema scaricato via HTTP** dalla webapp
-  [`webapp/`](webapp/) (collage locandine + orari della programmazione del giorno),
-  scaricato una volta al giorno e salvato in flash, dove sopravvive al reboot.
-  Finchè non c'è un'immagine scaricata si usa il fallback PROGMEM in
-  [`wallpaper/`](wallpaper/). Vedi [Background cinema](#background-cinema);
-- **percorso del mattino** al posto del cinema nella fascia 07:00-09:00: mappa con il
+- **riquadro in alto a sinistra** che segue l'ora del giorno: percorso del mattino,
+  programmazione cinema della sera e wallpaper nel resto della giornata;
+- **programmazione cinema scaricata via HTTP** dalla webapp
+  [`webapp/`](webapp/) (collage locandine + orari della programmazione del giorno)
+  nella fascia 18:00-21:00, ogni ora, in un buffer in RAM. Fuori dalla fascia, o
+  finchè non c'è un'immagine valida, il riquadro mostra il wallpaper, caricato una
+  volta per tutte nella partizione `wallpaper` della flash dalla pagina `/wallpaper`
+  della finestra di manutenzione. Vedi [Cinema e wallpaper](#cinema-e-wallpaper);
+- **percorso del mattino** nella fascia 07:00-09:00: mappa con il
   tracciato più veloce col traffico e il riquadro con tempo stimato, ritardo e
   distanza, calcolati dal servizio [`routefinder/`](routefinder/) con le API Google.
   Vedi [Routefinder](#routefinder-routefinderh);
@@ -50,8 +53,8 @@ Lo sketch principale compone uno schermo completo con:
   impostato da `Clock::begin()` in `setup()`);
 - **telemetria Tuya** del BME680 verso l'app Smart Life (opzionale);
 - **finestra di manutenzione** al boot (default 3 min): aggiornamento del
-  firmware e configurazione dei tempi da browser, sulla rete di casa, con
-  access point di riserva se la STA non sale.
+  firmware, configurazione dei tempi e del riquadro e caricamento del wallpaper da
+  browser, sulla rete di casa, con access point di riserva se la STA non sale.
 
 Il convertitore Python con GUI produce in modo rapido i formati immagine
 supportati, con preset dimensionali e anteprima automatica che si aggiorna ad
@@ -69,7 +72,7 @@ ogni modifica dei parametri.
 - [Moduli applicativi](#moduli-applicativi)
 - [Sketch principale](#sketch-principale)
 - [Flussi di boot e timeout](#flussi-di-boot-e-timeout)
-- [Background cinema](#background-cinema)
+- [Cinema e wallpaper](#cinema-e-wallpaper)
 - [Rate limit API esterne](#rate-limit-api-esterne)
 - [Icone meteo](#icone-meteo)
 - [Convertitore immagini Python](#convertitore-immagini-python)
@@ -246,8 +249,8 @@ Famiglie di simboli:
   `BOX_RADIUS`, `TITLE_INSET`, `BOX_PAD`, `TOP_BOX_Y`.
 - **`Layout::CINEMA_*`**: posizione e dimensioni del wallpaper, che occupa la
   colonna sinistra fino a `BANNER_Y - STACK_GAP`, `STRIDE`, `PLANE_SZ`,
-  `PLANES`, `TOTAL_SZ` per il fetch HTTP. L'URL lo compone lo sketch da queste
-  costanti.
+  `PLANES`, `TOTAL_SZ` per il fetch HTTP e per l'upload del wallpaper. Gli URL li
+  compone lo sketch da queste costanti.
 - **`Layout::BANNER_*`, `INDOOR_*`, `WEATHER_*`, `FORECAST_*`, `WX_*`, `SUN_*`,
   `SUNRISE_*`, `SUNSET_*`, `TRB_*`, `TC_*`**: riquadri, blocchi e baseline del banner meteo, espresse
   come `BANNER_Y + offset`, che a sua volta deriva da `SCREEN_H`.
@@ -467,8 +470,9 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 | Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
-| Banner cinema | `runCinemaFetch()` | [fetchCinemaImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp e salvato in flash da [CinemaStore](CinemaStore.h). Se manca, c'è il fallback PROGMEM |
-| Percorso del mattino | `runRouteFetch()` | [fetchRouteImage()](ePaper-weather-dashboard.ino), preceduta da [prewarmRouteServer()](ePaper-weather-dashboard.ino) | Stesso formato del cinema, scaricato da routefinder nello slot inattivo di [CinemaStore](CinemaStore.h); al suo posto nel riquadro secondo [Routefinder](Routefinder.h) |
+| Programmazione cinema | `runCinemaFetch()` | [buildCinemaUrl()](ePaper-weather-dashboard.ino) e [downloadImageToStore()](ePaper-weather-dashboard.ino), preceduti da [prewarmCinemaServer()](ePaper-weather-dashboard.ino) | Blob raw packed scaricato dalla webapp nel buffer in RAM di [CinemaStore](CinemaStore.h), mostrato nel riquadro nella fascia cinema |
+| Percorso del mattino | `runRouteFetch()` | [buildRouteUrl()](ePaper-weather-dashboard.ino) e [downloadImageToStore()](ePaper-weather-dashboard.ino), preceduti da [prewarmRouteServer()](ePaper-weather-dashboard.ino) | Stesso formato del cinema, scaricato da routefinder nello stesso buffer di [CinemaStore](CinemaStore.h), mostrato nella fascia percorso secondo [Routefinder](Routefinder.h) |
+| Wallpaper | nessuno: non è un task | upload dalla pagina `/wallpaper` di [Maintenance](Maintenance.h) in [WallpaperStore](WallpaperStore.h) | Immagine nella partizione `wallpaper`, mostrata fuori dalle due fasce o quando l'immagine programmata manca o non vale più |
 
 #### Isolamento dei produttori
 
@@ -707,7 +711,10 @@ SUBSCRIBE, PUBLISH in QoS 1, lettura di CONNACK, SUBACK, PUBACK e PUBLISH) sopra
 `esp-tls` del core e dichiara nel CONNECT un keepalive di `TUYA_KEEPALIVE_S` (1200 s, il
 massimo ammesso). Di notte, con la radio spenta, il dispositivo risulta offline dopo 30
 minuti: è atteso. **Costo**: l'heap di una sessione TLS (circa 40 KB) resta occupato
-durante i task che seguono Tuya nella tabella; il log `[Tuya] connessione tenuta aperta`
+fino allo spegnimento della radio, quindi Tuya è l'ultimo task della tabella, dopo i
+download che tengono l'immagine in RAM; nella finestra di manutenzione, dove la radio
+non si spegne, `downloadImageToStore()` chiama `Tuya::releaseSession()` prima del
+proprio TLS e il publish successivo riapre la sessione. Il log `[Tuya] connessione tenuta aperta`
 riporta l'heap libero a ogni publish. Il comportamento è coperto da `test/test_tuya.cpp`
 (vedi [test/README.md](test/README.md)); la rete, il TLS e il fatto che lo spegnimento
 della radio non faccia uscire nessun FIN si provano solo sul dispositivo, guardando nei
@@ -770,16 +777,18 @@ l'ora già valida e avvia comunque SNTP senza attendere, così la risincronizzaz
 oraria riprende. Con l'ora valida fuori dalla fascia WiFi il boot non apre nemmeno la
 finestra di manutenzione, e la radio resta spenta fino all'apertura della fascia.
 
-`valido()` è l'unica definizione di "ora valida": ci poggiano la fascia oraria, la
-cadenza giornaliera del cinema, la precondizione dei due task calendario e le guardie
-dei moduli. La soglia è `TIME_VALID_EPOCH_MIN` in [`Timings.h`](Timings.h). Si usa
+`valido()` è l'unica definizione di "ora valida": ci poggiano la fascia oraria, le
+fasce del riquadro e la validità di percorso e cinema, la precondizione dei task
+calendario, percorso e cinema e le guardie dei moduli. La soglia è `TIME_VALID_EPOCH_MIN` in [`Timings.h`](Timings.h). Si usa
 `configTzTime()` e non `configTime()`, perchè la seconda sovrascriverebbe la stringa
 POSIX e perderebbe il DST automatico.
 
 ### Maintenance (`Maintenance.h`)
 
 Finestra di manutenzione di **default 3 minuti** al boot (`maint_min`): un `WebServer`
-con `HTTPUpdateServer` su `/update` per il firmware e una pagina `/config` per i tempi.
+con `HTTPUpdateServer` su `/update` per il firmware, una pagina `/config` per i tempi,
+una `/route` per il riquadro in alto a sinistra e una `/wallpaper` per caricarne il
+wallpaper.
 
 **Sta sulla rete di casa, non su un access point dedicato.** A boot la STA sale in
 background; appena ha un indirizzo il server è raggiungibile all'IP o come
@@ -797,17 +806,34 @@ l'ultima richiesta.
 
 | Route | Metodo | Cosa fa |
 |---|---|---|
-| `/` | GET | stato: uptime, heap, secondi residui della finestra e dump dello scheduler (prossima scadenza, esiti e fallimenti per task) |
+| `/` | GET | stato: uptime, heap, secondi residui della finestra, sorgente del riquadro, immagine in RAM (percorso, cinema o nessuna), wallpaper con la sua CRC e dump dello scheduler (prossima scadenza, esiti e fallimenti per task) |
 | `/config` | GET | form dei tempi, con minimo e predefinito accanto a ogni campo |
 | `/config` | POST | valida i campi ricevuti e li salva su NVS |
 | `/config/reset` | POST | cancella gli override e torna ai valori compilati |
-| `/route` | GET | form del percorso: partenza, arrivo, carburante, sorgente del riquadro, fascia |
-| `/route` | POST | valida e salva su NVS, in blocco come `/config` |
+| `/route` | GET | form del riquadro: partenza, arrivo e carburante del percorso, sorgente forzata con i minuti residui, fasce di percorso e cinema |
+| `/route` | POST | valida e salva su NVS, in blocco come `/config`; la sorgente non si salva, avvia o annulla una forzatura |
+| `/wallpaper` | GET | stato del wallpaper (assente, o presente con la CRC) e form di caricamento, con la misura attesa |
+| `/wallpaper` | POST | upload multipart del file `.bin` nella partizione `wallpaper` |
 | `/update` | GET / POST | pagina di upload e POST gestito da `HTTPUpdateServer` |
 
 Tutte le pagine hanno la stessa testa e in basso i collegamenti a `/`, `/config`,
-`/route` e `/update`. Fa eccezione l'esito dell'upload, generato da `HTTPUpdateServer`:
-in caso di successo torna a `/` da sè dopo il riavvio.
+`/route` (Riquadro), `/wallpaper` e `/update`. Fa eccezione l'esito dell'upload del
+firmware, generato da `HTTPUpdateServer`: in caso di successo torna a `/` da sè dopo il
+riavvio.
+
+**Wallpaper.** `/wallpaper` accetta solo un file di esattamente `CINEMA_TOTAL_SZ` byte
+(67 760 sul 097c, 82 544 sul 122c), nel formato di `/cinema/arduino`, che genera
+[`tools/wallpaper_bin.py`](tools/wallpaper_bin.py) (vedi
+[Cinema e wallpaper](#cinema-e-wallpaper)). Il callback di upload scrive la flash
+durante il parsing della richiesta, come quello del firmware: autorizzazione e origine
+si controllano al primo blocco, prima che lo slot venga cancellato, e il form ha
+`action` relativa. Un file identico a quello presente, cioè con la stessa CRC, non si
+convalida e la pagina lo segnala come invariato. Il wallpaper vale dal frame successivo,
+senza riavvio.
+
+```
+curl -u admin:PASSWORD -F "wallpaper=@wallpaper/great_wave_097c.bin" http://epd-dashboard.local/wallpaper
+```
 
 **Tempi da riga di comando.** I nomi dei campi POST di `/config` sono le **chiavi NVS**
 elencate in [Cadenze configurabili](#cadenze-configurabili-timingsh-modificabili-da-config):
@@ -853,8 +879,11 @@ raggiungibile per indirizzo IP.
 
 ### Routefinder (`Routefinder.h`)
 
-Il riquadro in alto a sinistra mostra il **percorso del mattino** al posto del cinema.
-L'immagine la calcola il servizio [`routefinder/`](routefinder/) (submodule, FastAPI su
+Il modulo decide cosa mostra il riquadro in alto a sinistra e quando si scaricano
+percorso e cinema, ed è logica pura, verificata su host da `test/test_routefinder.cpp`.
+Nella fascia percorso il riquadro mostra il **percorso del mattino**, nella fascia cinema
+la programmazione cinema (vedi [Cinema e wallpaper](#cinema-e-wallpaper)), altrove, o
+senza orologio, il wallpaper. L'immagine del percorso la calcola il servizio [`routefinder/`](routefinder/) (submodule, FastAPI su
 render.com come la webapp): percorso più veloce col traffico dalla Google Routes API,
 alternativa a minor consumo per il carburante scelto, mappa Google con il tracciato in
 rosso e un riquadro in alto a destra con tempo stimato, ritardo dovuto al traffico,
@@ -868,29 +897,41 @@ Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespa
 |---|---|---|
 | Partenza, arrivo | `ROUTEFINDER_ORIGIN_*` (o `LAT`/`LON`), `ROUTEFINDER_DESTINATION_*` | "lat, lng" come li copia Google Maps; arrivo a 0,0 = percorso sospeso |
 | Carburante | Benzina | Benzina, Diesel, Ibrido, Elettrico |
-| Riquadro | Automatica | Automatica (percorso in fascia, cinema fuori), Cinema, Percorso, Wallpaper (`great_wave`) |
-| Fascia | 07:00-09:00 | ai minuti, fine esclusa, dentro la fascia WiFi |
+| Fascia percorso | 07:00-09:00 | `win_start` / `win_end`, ai minuti, fine esclusa |
+| Fascia cinema | 18:00-21:00 | `cine_start` / `cine_end`, stessa convenzione |
+
+Le due fasce non possono sovrapporsi, perchè le due immagini condividono il buffer in
+RAM, e devono stare dentro la fascia WiFi, perchè i loro task chiedono la radio: una
+combinazione che viola uno dei due vincoli si rifiuta in blocco, e anche `/config`
+rifiuta una fascia WiFi che non le contiene più (`Routefinder::windowsOutsideRadioHours()`).
+I default sono `ROUTE_WINDOW_*_MIN` e `CINEMA_WINDOW_*_MIN`, sovrascrivibili da `Env.h`
+e verificati con `static_assert`.
+
+**Sorgente del riquadro.** È Automatica, cioè segue le fasce. Da `/route` la si può
+forzare a Cinema, Percorso o Wallpaper per `SOURCE_OVERRIDE_MS` (1 h), misurata su
+`millis()`, che avanza anche in light sleep e non chiede l'ora; poi torna Automatica, e
+Automatica annulla subito una forzatura. La forzatura sta solo in RAM, quindi un
+riavvio torna ad Automatica, e la sua ora riparte da capo solo se si sceglie una
+sorgente diversa da quella in vigore: risalvare il form per cambiare il carburante non
+la allunga. La sorgente in vigore decide anche quale task di rete è attivo (`Routefinder::scheduledImage()`),
+quindi **routefinder si contatta solo nella fascia percorso o durante una forzatura a
+Percorso**, e il cinema solo nella fascia cinema o durante una forzatura a Cinema.
 
 La cadenza è `route_min` in `/config` (5 min, cioè a ogni ciclo, pavimento 5): ogni
-frame della fascia ha il traffico ricalcolato, e il servizio, con una cache di 60 s,
-va sempre in miss. **routefinder si contatta solo dentro la fascia percorso**,
-qualunque sia la sorgente: con la sorgente forzata a Percorso, fuori fascia il
-riquadro mostra l'ultimo percorso finchè ha meno di un'ora, poi il cinema. Il ping
-di sveglia a `/health` parte solo se il servizio non ha risposto negli ultimi
+frame della fascia ha il traffico ricalcolato, perchè fra un download e il successivo
+la cache di 60 s del servizio è sempre scaduta. Il ping di sveglia chiede lo stesso URL
+del download, token compreso, e parte solo se il servizio non ha risposto negli ultimi
 `RENDER_SPINDOWN_MS` (15 min, dopo i quali render.com spegne l'istanza), cioè in
-pratica al primo ciclo della fascia.
+pratica al primo ciclo della fascia; la stessa cache, con singleflight, fa sì che il
+download che segue il ping non costi una seconda chiamata alla Routes API.
 
-**Cinema e percorso condividono la flash.** Il percorso si scrive nello slot inattivo
-di [CinemaStore](CinemaStore.h), con un magic suo e l'istante del download: è possibile
-perchè **in fascia il cinema non si scarica mai** (`cinemaReady()`), quindi l'immagine
-cinema attiva resta intatta e torna a schermo a fine fascia senza download. Un `cine_h`
-dentro la fascia slitta alla sua fine grazie al recupero in giornata della cadenza
-giornaliera. Nessuna modifica a `partitions.csv`.
-
-**Freschezza.** Con la sorgente Automatica il percorso si mostra solo se ha meno di
-3 × `route_min`, con la sorgente Percorso al massimo un'ora; poi torna il cinema. Un
-tempo stimato vecchio è un'informazione sbagliata, e i termini Google non consentono di
-conservare a lungo i contenuti della mappa.
+**Cosa disegna il riquadro** (`Routefinder::shownImage()`): l'immagine programmata se il
+buffer in RAM la contiene ed è ancora valida, altrimenti il wallpaper. Il percorso vale
+fino a 3 × `route_min` dal download (`ROUTE_MAX_AGE_CADENCES`): un tempo stimato vecchio
+è un'informazione sbagliata, e i termini Google non consentono di conservare a lungo i
+contenuti della mappa. Il cinema vale se è stato scaricato oggi dopo l'inizio della
+fascia cinema, oppure dopo l'inizio della forzatura a Cinema in corso: l'immagine della
+sera prima non si mostra, anche se il buffer la contiene ancora.
 
 ---
 
@@ -908,7 +949,8 @@ void setup()
 {
   Serial.begin(115200);
   Timings::begin();                          // cadenze da NVS, riportate entro i limiti
-  Routefinder::begin();                      // impostazioni del percorso, validate contro la fascia WiFi
+  Routefinder::begin();                      // impostazioni e fasce del riquadro, validate contro la fascia WiFi
+  CinemaStore::begin(Layout::CINEMA_PLANE_SZ);   // buffer in RAM di percorso e cinema, prima che l'heap si frammenti
   initDisplay();
   Clock::begin();                            // POSIX TZ Europe/Rome + DST
   Weather::begin();
@@ -916,7 +958,7 @@ void setup()
   Calendar::Google::begin();
   Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
-  CinemaStore::begin();                      // immagine cinema e percorso salvati in flash, se ci sono
+  WallpaperStore::begin();                   // wallpaper dalla partizione in flash, già dal primo frame
   if (!(Clock::valido() && !Scheduler::isInsideRadioHours()))
     Maintenance::begin();                    // finestra su rete di casa, AP di riserva; mai di notte con l'ora nota
   Scheduler::begin(TASK_TABLE, TASK_COUNT, hooks);   // radio, sensore e frame come hook
@@ -955,13 +997,15 @@ sempre in quest'ordine:
 
 Le cadenze sono multipli del ciclo e si contano in cicli dallo slot precedente, mai in
 millisecondi, quindi non scivolano: meteo e calendari a 10 minuti cadono un frame
-sì e uno no, percorso e Tuya a ogni frame. Un fetch fallito in modo rapido (meno di
-`FAST_FAILURE_MAX_MS`) ritenta una volta nella stessa accensione della radio, dopo
-`SESSION_RETRY_MS` e prima del frame; uno lento, un timeout, ritenta al ciclo successivo
-(nel primo passo dopo il boot ritentano entrambi); lo slot resta ancorato al ciclo in
-cui si è aperto. Il primo ciclo di ogni
-giornata dentro la fascia rende dovuti tutti i periodici, così il primo frame del
-mattino ha dati nuovi.
+sì e uno no, percorso e Tuya a ogni frame, cinema ogni ora. Un fetch fallito ritenta
+una sola volta, al ciclo successivo e mai nella stessa accensione della radio, così il
+frame non aspetta mai un ritento; lo slot resta ancorato al ciclo in cui si è aperto, e
+al secondo fallimento si chiude e il task attende la cadenza piena. Lo slot di un task
+riparte pulito, dovuto subito e senza ritenti nè fallimenti ereditati
+(`Scheduler::restartSlot()`), a ogni nuova attivazione: quando la sua precondizione
+torna vera, per esempio all'ingresso nella fascia percorso o cinema, e al primo ciclo
+di ogni giornata dentro la fascia WiFi, che così ha dati nuovi nel primo frame del
+mattino e non si trascina i ritenti della sera prima.
 
 **La scadenza del sensore ha la precedenza su tutto**, perchè BSEC tollera solo il
 6,25% di scarto (vedi [Indoor](#indoor-indoorh)): lo sleep dura fino alla scadenza
@@ -983,13 +1027,13 @@ La sequenza dei task di rete sta nella tabella `TASK_TABLE`, l'unico posto dove 
 | `meteo` | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta al ciclo successivo invece di attendere la cadenza piena. |
 | `google` | `goog_min` | **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | `outl_min` | Stessa precondizione di `google`. |
-| `tuya` | `tuya_min` | Telemetria BME680 sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Prima del cinema, così l'handshake TLS è altro tempo di copertura del boot di render.com. |
-| `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso fuori dalla fascia percorso o dalla sorgente percorso, senza orologio, arrivo o token. All'ingresso nella fascia parte al primo ciclo. Ping di sveglia solo se l'istanza dorme. |
-| `cinema` | giornaliera, `cine_h` | Ultimo perchè può pagare il cold start di render.com: il tempo di rete degli altri è la copertura di quel boot. Il ping di sveglia parte all'inizio del passo di rete. Sospeso senza la partizione `wallpaper` e mentre il percorso è la sorgente del riquadro. |
+| `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso quando il percorso non è l'immagine programmata del riquadro (fuori dalla fascia percorso e da una forzatura a Percorso), senza orologio, arrivo o token. All'ingresso nella fascia lo slot riparte e il task gira al primo ciclo. Dopo meteo e calendari, come il cinema, perchè può pagare lo spin-up di render.com e il tempo di rete degli altri ne è la copertura; ping di sveglia solo se l'istanza dorme. |
+| `cinema` | `cine_min`, solo in fascia cinema | Programmazione cinema dalla webapp. Sospeso quando il cinema non è l'immagine programmata (fuori dalla fascia cinema e da una forzatura a Cinema) e senza orologio, perchè l'istante del download ne decide la validità. Stesso ruolo del percorso rispetto allo spin-up e allo stesso ping; i due non girano mai nello stesso ciclo, perchè le fasce non si sovrappongono. |
+| `tuya` | `tuya_min` | Telemetria BME680 sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Ultimo perchè la sua sessione TLS (~40 KB) resta aperta fino allo spegnimento della radio, e aperta prima dei download occuperebbe l'heap accanto all'immagine in RAM e alla sessione del download. |
 
-Ingresso e uscita dalla fascia percorso, scadenza del percorso e cambio di sorgente da
-`/route` non hanno risvegli propri: `drawTestBackground()` sceglie l'immagine del
-riquadro a ogni frame, quindi il cambio compare al ciclo successivo.
+Ingresso e uscita dalle fasce, scadenza del percorso, scadenza di una forzatura e cambio
+di sorgente da `/route` non hanno risvegli propri: `drawTestBackground()` sceglie
+l'immagine del riquadro a ogni frame, quindi il cambio compare al ciclo successivo.
 
 Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_common.h`
 con la geometria di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
@@ -997,7 +1041,7 @@ affiancate, 16 px fra zone impilate:
 
 | Zona              | Coordinate                | Contenuto                                               |
 |-------------------|---------------------------|---------------------------------------------------------|
-| Wallpaper         | `x=10..620, y=10..450`    | Background cinema scaricato via HTTP (610w × 440h BWR)  |
+| Riquadro          | `x=10..620, y=10..450`    | Percorso, cinema o wallpaper (610w × 440h BWR)          |
 | Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=179, poi 6 eventi da 43 px (Outlook + Google merged) |
 | Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
 | Banner Meteo      | `x=200..500, y=466..662`  | 300w × 196h, blocco corrente 160w + colonna sole 140w, orario del corrente accanto al titolo |
@@ -1010,9 +1054,8 @@ il banner sta a `y=562..758`. Vedi la tabella nella sezione
 
 Anteprima del frame disegnata come la disegna il firmware, dalle costanti di
 `Layout_common.h` e dei `Layout_<pannello>.h`, con dati di esempio e il
-wallpaper di fallback ritagliato all'area cinema. Il fallback è più basso
-dell'area del 12.2", quindi lì resta una fascia bianca sotto l'immagine, come in
-campo senza rete:
+wallpaper del pannello, lo stesso file `wallpaper/great_wave_<pannello>.bin` che si
+carica da `/wallpaper`, a piena misura del riquadro su entrambi i pannelli:
 
 ![Anteprima layout 960w × 672h](preview.svg)
 
@@ -1025,7 +1068,9 @@ campo senza rete:
 > [`tools/layout_preview.py`](tools/layout_preview.py) e non si modificano a
 > mano: dopo ogni modifica del layout si rigenerano con
 > `python tools/layout_preview.py`, che legge anche font GFX, icone e wallpaper
-> veri e richiede Pillow.
+> veri e richiede Pillow. Il wallpaper lo legge dai `.bin` di
+> [`wallpaper/`](wallpaper/): se manca si genera prima con
+> [`tools/wallpaper_bin.py`](tools/wallpaper_bin.py).
 
 I `#define` in testa allo sketch sono:
 - `ENABLE_GxEPD2_GFX 1` → abilita Adafruit_GFX per testo e linee del banner
@@ -1085,12 +1130,13 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
 | `wifi_h_fin` | `23` | `23` max | `1` | ora | Fine della fascia, inclusiva fino a `23:59`. |
-| `cine_h` | `7` | `0` | `1` | ora | Ora del fetch giornaliero del wallpaper cinema. Deve cadere dentro la fascia WiFi; dentro la fascia percorso il fetch slitta alla sua fine. |
+| `cine_min` | `60` | `60` | `5` | min | Cadenza della programmazione cinema, solo dentro la fascia cinema. Il pavimento è il TTL della cache del server (`CACHE_TTL_SECONDS` di `webapp/render.yaml`): sotto, si riscarica la stessa immagine. |
 | `route_min` | `5` | `5` | `5` | min | Cadenza del percorso del mattino, a ogni ciclo, solo dentro la fascia percorso. |
 
 Vincoli incrociati, verificati sia a compile-time sui default sia a runtime
-su ogni modifica: inizio fascia ≤ fine fascia; ora cinema dentro la fascia; fascia
-percorso dentro la fascia WiFi (`Routefinder::windowOutsideRadioHours()`).
+su ogni modifica: inizio fascia ≤ fine fascia; fasce di percorso e cinema dentro la
+fascia WiFi (`Routefinder::windowsOutsideRadioHours()`). Le due fasce si impostano da
+`/route`, non da `/config`: vedi [Routefinder](#routefinder-routefinderh).
 
 `SCHEMA` vale 2 da quando le cadenze sono multipli del ciclo: un NVS con lo schema
 precedente si azzera al boot e tutto riparte dai default.
@@ -1103,15 +1149,15 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | Costante | Valore | Effetto |
 |---|---|---|
 | `CYCLE_S` / `CYCLE_MIN` | `300` s / `5` min | Ciclo dello scheduler, pari al periodo ULP di BSEC: sensore, fetch dovuti, frame. Passo delle cadenze dei task. |
-| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena; il secondo tentativo si fa nella stessa accensione della radio, dopo `SESSION_RETRY_MS`, se il primo è fallito in meno di `FAST_FAILURE_MAX_MS`; un fallimento lento, cioè un timeout, ritenta al ciclo successivo. `0` in tabella significa un solo tentativo per slot, comunque vada. |
+| `FETCH_MAX_TENTATIVI` | `2` | Fallimenti consecutivi oltre i quali un task consuma lo slot e attende la cadenza piena; il secondo tentativo cade sempre al ciclo successivo, mai nella stessa accensione della radio, così nessun fallimento ritarda il frame. `0` in tabella significa un solo tentativo per slot, comunque vada. |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` ms | Attesa massima di `WL_CONNECTED` in `wifiOn()`. Una connessione fallita riprova al ciclo successivo. |
 | `RADIO_STA_ATTESA_MS` | `15000` ms | Nella finestra di manutenzione: attesa massima della STA dall'inizio del passo di rete, poi il frame parte con i placeholder `--` e i task restano al ciclo successivo. Deriva da `MAINT_STA_TIMEOUT_S`, così scade insieme al ripiego sull'AP. |
 | `TIME_SYNC_TIMEOUT_MS` | `20000` ms | Unico budget dell'ora, per entrambi i proprietari della radio: `wifiOn()` lo spende dopo la connessione, lo scheduler lo aspetta dalla STA vista nella finestra di manutenzione. Poi partono i task che non richiedono l'ora. Non sotto i 10 s: lwIP ritarda la prima richiesta SNTP fino a 5 s. |
-| `SESSION_RETRY_MS` | `5000` ms | Distanza fra un tentativo fallito e il secondo nella stessa accensione della radio e nello stesso ciclo, prima del frame. Con la radio dello scheduler l'attesa è un `delay()` unico; nella finestra di manutenzione il giro riprende senza bloccare il web server. |
-| `FAST_FAILURE_MAX_MS` | `10000` ms | Durata massima di un tentativo fallito perchè lo si ritenti nella stessa accensione: sotto è un guasto di connessione o di protocollo (il tetto della connessione TCP è 5 s), sopra è un timeout che, ripetuto subito, raddoppierebbe il tempo di radio e di norma fallirebbe uguale. Nel primo passo dopo il boot, nella finestra di manutenzione, la soglia non vale e si ritenta ogni fallimento. |
 | `RENDER_SPINDOWN_MS` | 15 min | Inattività dopo la quale render.com spegne un servizio free: il ping di sveglia parte solo se l'ultima risposta del server è più vecchia. |
-| `CINEMA_HTTP_TIMEOUT_MS` | `45000` ms | Timeout HTTP e di lettura per piano del download cinema: margine per il cold start di render.com, misurato in ~22 s. |
-| `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia; l'handshake ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. |
+| `CINEMA_HTTP_TIMEOUT_MS`, `ROUTE_HTTP_TIMEOUT_MS` | `75000` ms | Timeout HTTP del download di cinema e percorso, e attesa massima senza dati durante la lettura del corpo: lo spin-up del free tier render.com dura circa un minuto ([render.com/docs/free](https://render.com/docs/free)) e il ping di sveglia lo anticipa solo dei secondi degli altri fetch. |
+| `CINEMA_PREWARM_TIMEOUT_MS` | `1500` ms | Attesa della **risposta** al ping di sveglia dei due server render.com; l'handshake ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. |
+| `ROUTE_MAX_AGE_CADENCES` | `3` | Età oltre la quale un percorso non si mostra, in multipli di `route_min`: poi il riquadro torna al wallpaper. |
+| `SOURCE_OVERRIDE_MS` | 1 h | Durata di una sorgente del riquadro forzata da `/route`, misurata su `millis()`; poi torna Automatica. Limita anche le chiamate a routefinder fuori dalla fascia percorso. |
 | `TLS_HANDSHAKE_TIMEOUT_S` | `15` s | Tetto dell'handshake di ogni connessione HTTPS, applicato da `Net.h`. Il default del core è 120 s, e un server bloccato fermerebbe tutti i produttori successivi. |
 | `WIFI_FAST_CONNECT_TIMEOUT_MS` | `5000` ms | Tentativo di connessione su canale e BSSID dell'ultima connessione, prima del ripiego sulla scansione completa. |
 | `INDOOR_SAMPLE_MAX_AGE_MS` | 2 × 300 s + 1 s | Età oltre la quale il campione del sensore non si mostra nè si pubblica: tollera un campione perso. |
@@ -1154,10 +1200,9 @@ ogni giro Maintenance::servi()                 // macchina a stati + handleClien
                           l'ora non è valida (al più ogni CLOCK_RECOVERY_CYCLES)
               Acquiring   STA connessa (al più RADIO_STA_ATTESA_MS dall'inizio del passo),
                           poi ora valida (al più TIME_SYNC_TIMEOUT_MS dalla STA vista)
-              Running     meteo -> google -> outlook -> tuya -> route -> cinema,
-                          con l'ora già nota; un task fallito ritenta una volta dopo
-                          SESSION_RETRY_MS nella stessa accensione, se il fallimento è
-                          stato rapido (in questo primo passo, qualunque fallimento)
+              Running     meteo -> google -> outlook -> route -> cinema -> tuya,
+                          con l'ora già nota, in una sola passata; un task fallito
+                          ritenta al ciclo successivo, il frame non lo aspetta
               Done        concluso: il frame può partire
             frame, solo a passo concluso
 ```
@@ -1165,9 +1210,9 @@ ogni giro Maintenance::servi()                 // macchina a stati + handleClien
 Il **primo frame** non parte per un timer dal boot: aspetta che il passo di rete sia
 concluso, cioè che ogni task dovuto abbia avuto il suo esito. Dopo un'interruzione di
 alimentazione l'ora è persa e va riottenuta via SNTP, e i task che la richiedono
-(calendari, Tuya, percorso, cinema giornaliero) devono girare prima del frame, non dopo.
+(calendari, Tuya, percorso, cinema) devono girare prima del frame, non dopo.
 Con la rete a posto arriva con i dati veri; senza STA entro `RADIO_STA_ATTESA_MS` arriva
-con i placeholder `--` e il wallpaper PROGMEM e i task restano al ciclo successivo; se
+con i placeholder `--` e il wallpaper della flash e i task restano al ciclo successivo; se
 l'ora non arriva entro `TIME_SYNC_TIMEOUT_MS` dalla STA vista partono i task che non la
 richiedono. Un boot di notte con l'ora da sincronizzare apre la finestra, aspetta l'ora
 e, scoperta la notte, non fa nè fetch nè frame. Il log scrive al primo frame i tempi di
@@ -1203,9 +1248,9 @@ Ogni esito è loggato con durata e prossimo slot:
 
 ```
 [sched] meteo: ok in 1240 ms, prossimo fra 2 cicli
-[sched] google: fallito in 3100 ms (tentativo 1/2), ritento nella stessa accensione
+[sched] google: fallito in 3100 ms (tentativo 1/2), ritento al prossimo ciclo
 [sched] outlook: saltato, radio non connessa (slot intatto)
-[sched] cinema: ok in 4230 ms, prossimo domani dalle 07
+[sched] cinema: ok in 4230 ms, prossimo fra 12 cicli
 [sched] sleep 276030 ms (prossimo: sensore)
 ```
 
@@ -1213,134 +1258,182 @@ Ogni esito è loggato con durata e prossimo slot:
 
 | Tipo di fallimento | Comportamento | Quando si riprova |
 |---|---|---|
-| Qualunque fetch, 1° fallimento rapido (meno di `FAST_FAILURE_MAX_MS`) | Cache del modulo invariata, log con durata e tentativo | Dopo `SESSION_RETRY_MS`, nella stessa accensione della radio e prima del frame, se la STA è ancora su |
-| Qualunque fetch, 1° fallimento lento (un timeout) | Cache del modulo invariata, log con durata e tentativo | Al ciclo successivo |
-| Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task, contata dal ciclo in cui lo slot si era aperto |
+| Qualunque fetch, 1° fallimento | Cache del modulo invariata, log con durata e tentativo; il frame del ciclo si disegna senza aspettare | Al ciclo successivo, mai nella stessa accensione della radio |
+| Qualunque fetch, 2° fallimento | Slot consumato, log "soglia raggiunta" | Alla cadenza piena del task, contata dal ciclo in cui lo slot si era aperto, o prima se lo slot riparte: precondizione tornata vera o primo ciclo della giornata |
 | Meteo con corrente ma senza previsioni | `slots[0]` aggiornato, previsioni vecchie conservate; conta come fallimento ai fini dello slot ma il frame del ciclo lo mostra | Al ciclo successivo |
 | Radio caduta a giro iniziato | Esito `saltato`: **lo slot resta intatto e il tentativo non viene speso**, perchè è un guasto a monte | Al primo giro con la radio su |
 | `wifiOn()` fallito | Nessun tentativo speso, il frame del ciclo si disegna comunque con i dati in cache | Al ciclo successivo |
 | Calendario (eventi 401) | Reset del token in cache del calendario: il refresh si ripara da solo, cache degli eventi preservata | Al ciclo successivo |
 | Calendario senza eventi futuri | Cache **azzerata**: è una risposta valida, non un errore, e il frame del ciclo la mostra | Alla cadenza piena |
-| Cinema (HTTP / timeout) | Lo slot in scrittura si scarta e resta a schermo l'immagine precedente in flash, o il fallback PROGMEM se non ce n'è una | Fino a 2 tentativi in due cicli consecutivi, poi domani a `cine_h` |
-| Percorso (HTTP / timeout / 401) | Lo slot del percorso si scarta; il riquadro mostra il cinema finchè non arriva un percorso recente | Al ciclo successivo, poi alla cadenza `route_min` |
+| Cinema o percorso, errore prima del corpo (connessione, HTTP diverso da 200, `Content-Length` sbagliato) | Il buffer in RAM non si apre: l'immagine precedente resta valida e a schermo finchè la sua validità lo consente | Al ciclo successivo, poi alla cadenza (`cine_min` o `route_min`) |
+| Cinema o percorso, corpo interrotto | L'immagine nel buffer non vale più: il riquadro mostra il wallpaper fino al download successivo | Al ciclo successivo, poi alla cadenza |
+| Buffer in RAM non allocabile (heap insufficiente) | Download non avviato, log `buffer non allocabile`; il riquadro mostra il wallpaper | L'allocazione si ritenta prima di ogni download: il riquadro non si disattiva |
+| Wallpaper assente o partizione mancante | Dove il riquadro mostrerebbe il wallpaper compare la scritta `No img. Check <ip>/wallpaper`, con l'ultimo indirizzo noto (`Net::lastKnownIp()`) o `epd-dashboard.local` se la rete non è mai salita | Al caricamento da `/wallpaper`; senza partizione, dopo un flash via seriale con `partitions.csv` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
 | BME680 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
-| Orologio mai sincronizzato (SNTP irraggiungibile) | I task che chiedono l'ora (calendari, Tuya, percorso, cinema giornaliero) restano **sospesi** e la lista eventi mostra i placeholder `--`; il frame si disegna comunque a ogni ciclo. Anche senza task dovuti lo scheduler riaccende la radio ogni `CLOCK_RECOVERY_CYCLES` cicli per riprendere l'ora | Al primo SNTP riuscito i task sospesi girano nello stesso giro, senza aver consumato nessuno slot |
+| Orologio mai sincronizzato (SNTP irraggiungibile) | I task che chiedono l'ora (calendari, Tuya, percorso, cinema) restano **sospesi**, la lista eventi mostra i placeholder `--` e il riquadro il wallpaper; il frame si disegna comunque a ogni ciclo. Anche senza task dovuti lo scheduler riaccende la radio ogni `CLOCK_RECOVERY_CYCLES` cicli per riprendere l'ora | Al primo SNTP riuscito i task sospesi girano nello stesso giro, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.
 Un fallimento di Calendar non blocca Weather; un fallimento di Weather non blocca Indoor. L'ordine
 dei task è di priorità, non una catena di dipendenze: ognuno parte
 indipendentemente e fallisce indipendentemente con il proprio backoff. Il dispositivo
 non si blocca mai: qualunque combinazione di failure produce comunque un refresh del
-display con i dati disponibili (cache precedente o `--`, wallpaper PROGMEM al posto del
-cinema).
+display con i dati disponibili (cache precedente o `--`, wallpaper al posto di percorso
+e cinema).
 
 ### Tempi caratteristici da aspettarsi
 
 Stime composte dalle costanti sopra, con un refresh pieno da ~24 s:
 
-- **Boot → primo refresh con WiFi e tutti i fetch OK**: l'attesa di STA e ora (dopo un'interruzione di alimentazione l'ora va riottenuta via SNTP, fino a `TIME_SYNC_TIMEOUT_MS`), i fetch HTTP in sequenza e un refresh pieno. Un fetch fallito si ritenta dopo `SESSION_RETRY_MS`, prima del frame: nel primo passo sempre, a regime solo se è stato rapido.
+- **Boot → primo refresh con WiFi e tutti i fetch OK**: l'attesa di STA e ora (dopo un'interruzione di alimentazione l'ora va riottenuta via SNTP, fino a `TIME_SYNC_TIMEOUT_MS`), i fetch HTTP in sequenza e un refresh pieno. Un fetch fallito non allunga l'attesa: si ritenta al ciclo successivo.
 - **Boot → primo refresh senza WiFi**: `RADIO_STA_ATTESA_MS` (15 s) + un refresh pieno, ~39 s.
-- **Boot → primo refresh con cinema in cold start di render.com**: fino a `CINEMA_HTTP_TIMEOUT_MS` (45 s) + un refresh pieno se il pre-warm non è bastato. Il caso tipico è più corto: il cold start misura 22,4 s e i fetch che precedono il cinema ne coprono buona parte.
+- **Boot → primo refresh con percorso o cinema in spin-up di render.com** (solo dentro la loro fascia): fino a `CINEMA_HTTP_TIMEOUT_MS` o `ROUTE_HTTP_TIMEOUT_MS` (75 s) + un refresh pieno se il ping di sveglia non è bastato. Lo spin-up del free tier dura circa un minuto e i fetch che precedono il download ne coprono solo una parte.
 - **Refresh successivo a regime**: un partial da ~1,3 s (639 ms più rampe e power off) quando il piano rosso è invariato, altrimenti un refresh pieno da ~24 s; uno per ciclo. La quota di partial dipende da quanto spesso cambia il rosso (temperature e icone meteo, eventi di oggi, percorso al mattino): una simulazione dà il 65-77%, ma è un modello e non una misura. Il log riporta a ogni frame l'esito e i contatori del giorno.
-- **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo della fascia percorso, sorgente cambiata da `/route`, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo.
+- **Latenza di un nuovo dato sul display**: nessuna oltre il ciclo stesso, perchè il frame segue i fetch del suo ciclo. Un cambio che non viene da un fetch (bordo di una fascia, sorgente cambiata da `/route` o forzatura scaduta, percorso scaduto) compare al ciclo successivo, al più 5 minuti dopo; un wallpaper caricato da `/wallpaper`, al frame successivo.
 - **Usura del pannello**: con la fascia 7-23 sono 192 frame al giorno, che senza il refresh differenziale sono 192 refresh pieni (con il differenziale solo quelli in cui il rosso cambia o la catena di partial è al tetto; il salto a frame invariato toglie in più quelli in cui non cambia niente di ciò che si vede). L'ESL originale dichiarava "up to 10 years @ 1 update/day" ([GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md) §0.5), un dato sul budget delle batterie e non sull'endurance del film; la leva per ridurli è la fascia WiFi.
 
 ---
 
-## Background cinema
+## Cinema e wallpaper
 
-Il wallpaper occupa la colonna sinistra fino al banner (`Layout::CINEMA_W` ×
-`Layout::CINEMA_H` px a partire da (`CINEMA_X`, `CINEMA_Y`) = (10, 10): 610w ×
-440h sul 097c, 610w × 536h sul 122c) e mostra un collage locandine + orari
-scaricato via HTTP dalla webapp [`webapp/`](webapp/) (vedi
-[webapp/README.md](webapp/README.md) per l'API).
+Il riquadro in alto a sinistra occupa la colonna sinistra fino al banner
+(`Layout::CINEMA_W` × `Layout::CINEMA_H` px a partire da (`CINEMA_X`, `CINEMA_Y`) =
+(10, 10): 610w × 440h sul 097c, 610w × 536h sul 122c) e mostra il percorso, la
+programmazione cinema o il wallpaper, secondo le fasce e la sorgente decise da
+[Routefinder](#routefinder-routefinderh). Percorso e cinema si scaricano in un buffer
+in RAM; il wallpaper sta in una partizione della flash e si carica dalla finestra di
+manutenzione. La programmazione cinema è un collage locandine + orari servito dalla
+webapp [`webapp/`](webapp/) (vedi [webapp/README.md](webapp/README.md) per l'API).
 
-### Flusso
+### Cinema in RAM
 
-1. **Boot**: [`CinemaStore::begin()`](CinemaStore.h) cerca la partizione `wallpaper`
-   e rimette a schermo l'ultima immagine scaricata, già dal primo frame. Senza
-   immagine valida [`drawTestBackground()`](ePaper-weather-dashboard.ino) usa il
-   fallback PROGMEM `img_great_wave_desc` (610w × 440h BWR, sorgente
-   `wallpaper/great_wave.jpg`). Il fallback si genera con
-   [`epd_image_converter.pyw`](#convertitore-immagini-python):
-   `drawTestBackground()` ne taglia le righe all'altezza `CINEMA_H`, mentre
-   un'immagine più larga sconfina nella colonna destra. Sul 122c il fallback è più
-   basso dell'area e sotto resta una fascia bianca.
-2. **Fetch**: `fetchCinemaImage()` è l'**ultimo** task di rete del giro, dopo meteo
-   e calendari, perchè è l'unico che può pagare il cold start di render.com e il
-   tempo degli altri è la copertura di quel boot. Fa un `HTTP GET` all'URL che
-   compone da `CINEMA_ORIGIN` e dalle costanti del layout:
+1. **Buffer**: [`CinemaStore::begin()`](CinemaStore.h), in `setup()` prima del display
+   e della radio, quando l'heap ha ancora i blocchi contigui più grandi, alloca nella
+   RAM interna i due piani dell'immagine con `heap_caps_malloc()`, separati perchè due
+   blocchi da metà immagine si trovano più facilmente di uno solo. Non si liberano
+   mai, così l'heap non si frammenta, e se l'allocazione fallisce si ritenta prima di
+   ogni download: il riquadro non si disattiva. Un solo buffer serve percorso e
+   cinema, perchè le fasce non si sovrappongono e una forzatura ne attiva uno solo.
+   Sta in RAM e non in flash perchè si riscarica a ogni cadenza, che consumerebbe la
+   flash, e perchè la validità dell'immagine è comunque legata alla fascia.
+2. **Task**: `cinema` gira ogni `cine_min` (default e pavimento 60 min, il TTL della
+   cache del server) solo quando il cinema è l'immagine programmata del riquadro, cioè
+   nella fascia cinema (default 18:00-21:00, da `/route`) o durante una forzatura a
+   Cinema, e con l'orologio valido. All'ingresso nella fascia lo slot riparte, quindi
+   il primo download cade al primo ciclo della fascia. Il task gira dopo meteo e
+   calendari, il cui tempo di rete copre lo spin-up di render.com. L'URL lo compone
+   `buildCinemaUrl()` da `CINEMA_ORIGIN` e dalle costanti del layout:
    ```
    https://cinema-epd.onrender.com/cinema/arduino?width=610&height=440&colors=bwr&dither=floyd   (097c)
    https://cinema-epd.onrender.com/cinema/arduino?width=610&height=536&colors=bwr&dither=floyd   (122c)
    ```
-   `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio: lo usa anche il
-   ping `/health`. Larghezza, altezza e piani non possono divergere dall'immagine
-   salvata, perchè vengono dalle stesse costanti.
-3. **Slot in flash**: prima della GET `CinemaStore::beginWrite()` cancella i settori
-   dello slot libero (17 sul 097c, 21 sul 122c), così l'erase, che ferma la cache
-   della flash per circa mezzo secondo, avviene prima che la connessione TLS esista.
-4. **Lettura**: `Net::BodyStream::readBytes()` a blocchi da 1 KB su stack, scritti in
-   flash con `CinemaStore::writeChunk()`, attendendo le pause fra i blocchi del corpo
-   fino a `CINEMA_HTTP_TIMEOUT_MS` senza dati. Il formato binario è header-less (vedi
+   `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio. Larghezza, altezza e
+   piani non possono divergere dal buffer, perchè vengono dalle stesse costanti.
+3. **Download**: `downloadImageToStore()`, comune a cinema e percorso, chiude prima
+   l'eventuale sessione Tuya rimasta aperta nella finestra di manutenzione, poi fa la
+   GET con `CINEMA_HTTP_TIMEOUT_MS`. Il buffer si apre con `CinemaStore::beginWrite()`
+   solo dopo status 200 e `Content-Length` pari a `CINEMA_TOTAL_SZ`, quindi un errore
+   prima del corpo lascia valida l'immagine precedente.
+4. **Lettura**: `Net::BodyStream::readBytes()` a blocchi da 1 KB su stack, copiati nei
+   piani con `CinemaStore::writeChunk()`, che passa dal piano nero al piano colore a
+   metà strada, attendendo le pause fra i blocchi del corpo fino a
+   `CINEMA_HTTP_TIMEOUT_MS` senza dati. Il formato binario è header-less (vedi
    [webapp/README.md → Formato binario `/cinema/arduino`](webapp/README.md#formato-binario-cinemaarduino)):
    zero parsing lato ESP32, il body HTTP è già nella rappresentazione attesa dal driver.
-5. **Commit**: a download completo `CinemaStore::commitWrite()` scrive per ultima
-   l'intestazione dello slot (magic, sequenza, misure) e lo rende attivo; da quel
-   momento `drawTestBackground()` mostra l'immagine cinema a ogni refresh, letta dalla
-   flash mappata. Su qualunque errore `abortWrite()` lascia attivo lo slot precedente.
+   Un corpo interrotto invalida l'immagine (`abortWrite()`), e il riquadro mostra il
+   wallpaper fino al ritento.
+5. **Commit**: `CinemaStore::commitWrite()` convalida l'immagine solo se completa e le
+   associa epoch e `millis()` del download, che ne decidono la validità
+   (`Routefinder::isCinemaFresh()`): scaricata oggi dopo l'inizio della fascia cinema,
+   o dopo l'inizio della forzatura in corso.
 6. **Esito allo scheduler**: la funzione ritorna `true`/`false`. Quando ritentare, e
    quando smettere, lo decide lo scheduler.
 
-### Trigger giornaliero (`cine_h`, default 07:00)
+**Ping di sveglia dal firmware.** Il free tier di render.com sospende il servizio dopo
+15 minuti di inattività, lo risveglia alla prima richiesta in circa un minuto e ne perde
+il file system locale, cache delle locandine compresa
+([render.com/docs/free](https://render.com/docs/free)). Il pre-warm lo fa il
+dispositivo, che è l'unico a sapere quando serve: `prewarmCinemaServer()`, come
+`onRoundStart()` del task e solo se il server non ha risposto negli ultimi
+`RENDER_SPINDOWN_MS`, apre il passo di rete chiedendo **lo stesso URL del download** e
+ne abbandona la risposta dopo `CINEMA_PREWARM_TIMEOUT_MS`. Il server prepara così
+l'immagine e la mette in cache mentre l'ESP32 fa meteo e calendari, e il download la
+trova pronta; `/health` sveglierebbe solo il processo, senza ricostruire la cache. Su
+TLS il fire-and-forget puro non esiste: la richiesta parte solo a handshake completo,
+che ha il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. Il codice HTTP del ping si logga
+soltanto: `-11` (timeout di lettura) è l'esito nominale, 200 indica un server già
+caldo. `prewarmRouteServer()` fa lo stesso per routefinder, con il token. Il
+meccanismo non dipende da scheduler esterni, quindi è immune a DST e a deriva di cron.
 
-Il fetch è un task a cadenza **giornaliera**: parte al primo giro utile dopo il boot e
-poi una volta al giorno alla prima finestra radio dell'ora `cine_h` locale
-(Europe/Rome, default `7`, allineato all'inizio della fascia WiFi). Il download scrive
-lo slot libero e, a fetch riuscito, lo rende attivo con la programmazione del giorno;
-un fetch fallito lascia a schermo quella precedente.
+### Wallpaper in flash
 
-Il gate è `tm_hour >= cine_h` con `tm_yday` diverso dall'ultimo giorno servito. Il
-confronto è `>=` e non `==`, così se all'ora prevista la radio era giù il fetch si
-recupera alla prima occasione utile della stessa giornata. Senza orologio sincronizzato
-la cadenza giornaliera resta sospesa.
+[`WallpaperStore.h`](WallpaperStore.h) tiene il wallpaper nella partizione dati
+`wallpaper` di [`partitions.csv`](partitions.csv), non nel firmware: un aggiornamento
+OTA non lo ritrasmette, e lo si riscrive solo quando cambia, dalla pagina `/wallpaper`
+della finestra di manutenzione (vedi [Maintenance](#maintenance-maintenanceh)).
 
-**Cold-start mitigation dal firmware.** Render.com free tier dorme dopo 15 min di
-inattività, e il boot successivo costa 22,4 s misurati. Il pre-warm lo fa il
-dispositivo, che è l'unico a sapere quando serve: `prewarmCinemaServer()` apre il giro
-di fetch con una GET a `/health` e ne abbandona la risposta; il giro esegue poi meteo
-e calendari e scarica l'immagine **per ultima**. Render fa così il proprio boot
-mentre l'ESP32 è occupato altrove, e il fetch cinema lo trova caldo o quasi. Pingare
-`/health` basta perchè le cache su disco sopravvivono al suspend: dopo il boot
-`/cinema/arduino` risponde in 0,5 s, quindi a costare è il processo, non la pipeline di
-rendering. Il meccanismo non dipende da scheduler esterni, quindi è immune a DST e a
-deriva di cron.
+- **Due slot** da metà partizione (21 settori, 86 016 byte). Ogni slot ha
+  un'intestazione da 20 byte (magic `WAL1`, sequenza, CRC32 dei due piani, larghezza,
+  altezza, numero di piani) davanti ai due piani, nel formato di `/cinema/arduino`.
+- **Caricamento**: si scrive sempre lo slot inattivo, cancellandone prima i settori
+  necessari, e l'intestazione per ultima, perchè è lei a renderlo valido: un upload
+  interrotto lascia valido il wallpaper precedente. Un file con la stessa CRC di quello
+  attivo non si convalida e l'esito è "invariato".
+- **Boot**: `WallpaperStore::begin()` sceglie lo slot valido con la sequenza più alta e
+  lo mappa in memoria, quindi il wallpaper è a schermo già dal primo frame e
+  `drawTestBackground()` lo legge direttamente dalla flash mappata, senza copie in heap. Uno
+  slot senza magic `WAL1`, o con misure diverse da quelle del pannello montato, si
+  ignora.
+- **Senza wallpaper valido** il riquadro mostra al centro la scritta
+  `No img. Check <ip>/wallpaper`, con l'ultimo indirizzo con cui il dispositivo è stato
+  raggiungibile (`Net::lastKnownIp()`, ricordato da `wifiOn()` e dalla finestra di
+  manutenzione) o `epd-dashboard.local` se la rete non è mai salita.
+
+Il file si genera con [`tools/wallpaper_bin.py`](tools/wallpaper_bin.py), che da
+un'immagine qualunque scrive `wallpaper/<nome>_<pannello>.bin` per ogni pannello: crop
+centrato senza deformare alla misura `CINEMA_W` × `CINEMA_H` letta dai `Layout_*.h`,
+dithering Floyd-Steinberg a tre colori e impacchettamento della webapp
+(`webapp/dithering.py`, `webapp/arduino_format.py`), così il wallpaper ha la stessa
+resa del cinema. Le dipendenze (numpy, Pillow) sono quelle del venv di routefinder:
+
+```
+routefinder/.venv/Scripts/python.exe tools/wallpaper_bin.py wallpaper/great_wave.jpg
+```
+
+(`routefinder/.venv/bin/python` su macOS). Nel repository ci sono
+`wallpaper/great_wave_097c.bin` (67 760 byte) e `wallpaper/great_wave_122c.bin`
+(82 544 byte), che legge anche [`tools/layout_preview.py`](tools/layout_preview.py) per
+le anteprime. Il file si carica da `/wallpaper` o con `curl -F`, vedi
+[Maintenance](#maintenance-maintenanceh).
 
 ### Dimensionamento e partizione
 
-| Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` | Settori per slot |
+| Variante | `CINEMA_PLANE_SZ` | `CINEMA_PLANES` | `CINEMA_TOTAL_SZ` | Settori cancellati per upload |
 |----------|------------------:|----------------:|------------------:|-----------------:|
 | 097c (610w × 440h, BWR)  | 33 880 byte | 2 | **67 760 byte** (~66 KB) | 17 |
 | 122c (610w × 536h, BWR)  | 41 272 byte | 2 | **82 544 byte** (~81 KB) | 21 |
 
-L'immagine non occupa heap: sta nella partizione dati `wallpaper` di
-[`partitions.csv`](partitions.csv), 168 KB divisi in due slot da 21 settori, ognuno
-con un'intestazione di 16 byte davanti ai due piani. Se il csv venisse tolto,
-`CinemaStore` usa la partizione `spiffs` dello schema "Minimal SPIFFS". Senza nessuna
-delle due (per esempio un dispositivo aggiornato via OTA da una tabella `no_fs`, che
-l'OTA non cambia) il task `cinema` resta sospeso e il riquadro mostra il fallback
-PROGMEM finchè non si riflasha via seriale.
+Il buffer di percorso e cinema occupa `CINEMA_TOTAL_SZ` byte di heap, in due blocchi da
+`CINEMA_PLANE_SZ`, per tutta la vita del firmware. Il wallpaper non occupa heap: sta
+nella partizione `wallpaper`, 168 KB divisi in due slot da 21 settori. Senza la
+partizione (per esempio un dispositivo aggiornato via OTA da una tabella che non ce
+l'ha, che l'OTA non cambia) percorso e cinema funzionano comunque, ma altrove il
+riquadro mostra l'invito a caricare il wallpaper e `/wallpaper` non può salvarlo finchè
+non si riflasha via seriale con `partitions.csv`.
 
-Il Serial monitor stampa qualcosa come, sul 097c:
+Il Serial monitor stampa qualcosa come, sul 097c (`<n>` sono byte di heap):
 ```
-[cinema] partizione wallpaper, slot da 86016 byte, immagine nello slot 0
-[cinema] fetching https://cinema-epd.onrender.com/cinema/arduino?width=610&height=440&colors=bwr&dither=floyd
-[cinema] download completato e salvato in flash
+[CinemaStore] piani da 33880 byte allocati, heap libero <n>, blocco max <n>
+[wallpaper] partizione da 172032 byte, wallpaper presente
+[img] cinema fetching https://cinema-epd.onrender.com/cinema/arduino?width=610&height=440&colors=bwr&dither=floyd
+[img] cinema: download completato in 4230 ms, heap libero <n>
 ```
 
-Se compare `HTTP status XXX, resta l'immagine precedente`, il display continua a
-mostrare l'ultima immagine salvata, o il fallback se non ce n'è una.
+Un download fallito scrive una riga con la durata e la memoria, che separa uno spin-up
+lento da una rete giù o da un heap esaurito, per esempio
+`[img] cinema: HTTP status 503 dopo 1830 ms, heap libero <n>, blocco max <n>`. Con un
+errore prima del corpo il riquadro continua a mostrare l'immagine precedente finchè è
+valida; con un corpo interrotto, o senza immagine valida, mostra il wallpaper.
 
 ---
 
@@ -1356,14 +1449,16 @@ limiti pubblici documentati:
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 10 000 richieste/min per progetto e 600/min per utente; soglia giornaliera di 1 000 000 richieste oltre la quale è prevista la fatturazione ([fonte](https://developers.google.com/workspace/calendar/api/guides/quota)) |
 | TuyaLink (MQTT)           | `TUYA_PUBLISH_MIN`           | 5 min  | Il vincolo documentato è la **licenza per device**: una licenza per dispositivo, con due licenze gratuite per account a scopo di debug e le successive a pagamento ([fonte](https://developer.tuya.com/en/docs/iot/lisence-management?id=Kb4qlem97idl0)). Il pavimento non è del fornitore ma del sensore: sotto i 5 min si ripubblica lo stesso campione. |
 
-Il fetch cinema (endpoint render.com) avviene **una volta al giorno alle
-`CINEMA_DAILY_FETCH_HOUR` local** (default 07:00) e non ha rate limit (è il tuo
-servizio). I fetch di rete sono vincolati alla finestra oraria
-`WIFI_ACTIVE_HOUR_START..END` (default 07:00–23:59): fuori da questa fascia la radio
+Il fetch cinema (endpoint render.com) avviene **ogni `CINEMA_FETCH_MIN`** (60 min)
+**solo nella fascia cinema** (default 18:00-21:00, cioè 3 download al giorno più i ping
+di sveglia) e non ha rate limit (è il tuo servizio). I fetch di rete sono vincolati alla finestra oraria
+`WIFI_ACTIVE_HOUR_START..END` (default 07:00-23:59): fuori da questa fascia la radio
 resta spenta e non si contattano API esterne, Tuya compreso. Il percorso
 (`ROUTE_FETCH_MIN`, 5 min) si chiede alla Routes API solo nella fascia percorso:
 24 richieste al giorno con la fascia 07:00-09:00, contro 5 000 gratuite al mese dello
-SKU Compute Routes Pro.
+SKU Compute Routes Pro. Una forzatura a Percorso da `/route` ne aggiunge al più 12, una
+per ciclo per `SOURCE_OVERRIDE_MS`; il ping di sveglia non ne aggiunge, perchè
+routefinder tiene il calcolo in cache per 60 s e il download arriva prima.
 
 ---
 
@@ -1406,6 +1501,11 @@ nome" che propone la cartella dell'immagine sorgente. Lo script appartiene alla
 libreria; `tools/epd_image_converter.pyw` è un symlink che lo rende lanciabile anche
 da qui (su Windows serve `core.symlinks=true` al clone, altrimenti il link si
 materializza come file di testo con il percorso).
+
+Il wallpaper del riquadro non passa da qui: non è un `.h` compilato nel firmware ma un
+`.bin` caricato nella partizione `wallpaper`, e lo genera
+[`tools/wallpaper_bin.py`](tools/wallpaper_bin.py) con lo stesso dithering della webapp
+(vedi [Wallpaper in flash](#wallpaper-in-flash)).
 
 ### Funzionalità principali
 
@@ -1455,8 +1555,8 @@ Windows) oppure `python tools/epd_image_converter.pyw`.
 3. Schema partizione: la tabella vera è [`partitions.csv`](partitions.csv),
    nella cartella dello sketch, che il core usa al posto dello schema scelto
    a menu (IDE Arduino, VS Code e `build.ps1`): due slot OTA da 1856 KB per
-   l'aggiornamento via web, la partizione `wallpaper` per l'immagine cinema e
-   la coredump. Nel menu *Tools → Partition Scheme* va comunque scelto
+   l'aggiornamento via web, la partizione `wallpaper` con i due slot del
+   wallpaper caricato da `/wallpaper` e la coredump. Nel menu *Tools → Partition Scheme* va comunque scelto
    **"Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)"** per gli altri
    parametri dello schema, ma il suo limite di 1920 KB supera gli slot: il
    controllo di dimensione si riporta a 1900544 byte con
@@ -1465,7 +1565,9 @@ Windows) oppure `python tools/epd_image_converter.pyw`.
    L'Arduino IDE 2 non ha un override: lì il controllo resta a 1920 KB.
 
    La tabella si scrive solo via seriale: il primo flash dopo un cambio del
-   csv va fatto dal cavo, perchè l'aggiornamento via web non la tocca.
+   csv va fatto dal cavo, perchè l'aggiornamento via web non la tocca. Il
+   wallpaper non è nel firmware: dopo il primo flash si carica da `/wallpaper`
+   (vedi [Wallpaper in flash](#wallpaper-in-flash)).
 4. Compilare e flashare. Serial monitor a `115200 baud`.
 
 ---

@@ -1,42 +1,20 @@
 ---
-name: Fallback PROGMEM e immagine in flash via descriptor unico
-description: Perchè GxEPDImage::showImage legge uguale la PROGMEM e la partizione mappata su ESP32, come drawTestBackground taglia le righe alla pagina e a CINEMA_H, e il vincolo di dimensione e formato del wallpaper di fallback
+name: Wallpaper in partizione e descriptor unico (WallpaperStore)
+description: Wallpaper nella partizione "wallpaper" e non nel firmware (un OTA non lo ritrasmette), due slot con intestazione WAL1 e CRC scritta per ultima, upload da /wallpaper con esito "invariato" per un file identico, tools/wallpaper_bin.py per pannello, scritta "No img. Check <ip>/wallpaper" senza wallpaper; perchè showImage legge uguale RAM e partizione mappata; righe tagliate alla pagina e a CINEMA_H
 type: project
 ---
 
-`drawTestBackground()` (`ePaper-weather-dashboard.ino`) sceglie fra due descrittori senza altri rami:
-- `CinemaStore::image()` → immagine scaricata, nella partizione `wallpaper` mappata con `esp_partition_mmap` (vedi [[esp32_cinema_consumer]]);
-- `&img_great_wave_desc` → fallback in `PROGMEM` (Flash readonly), quando la prima è `nullptr`.
+**Dove sta il wallpaper (scelta dell'utente: un OTA non deve ricaricarlo se non è cambiato, soluzione più efficiente in memoria).** Nella partizione dati `wallpaper` di `partitions.csv` (0x2A000), gestita da `WallpaperStore.h`, e non in PROGMEM. Confronto che regge la scelta:
+- in PROGMEM costava circa 67 KB in ogni immagine firmware, ritrasmessi a ogni OTA e presenti in entrambi gli slot OTA, con la partizione inutilizzata;
+- in partizione costa 0 B nel firmware, si scrive solo quando cambia, e `partitions.csv` resta invariato, quindi nessun flash via seriale;
+- uno slot singolo libererebbe 86 KB solo ripartizionando via seriale e perderebbe l'atomicità.
 
-**Why (deduzione architetturale, non documentata esplicitamente nel driver):**
-- Su AVR (Arduino UNO, Mega) `PROGMEM` vive in spazio Harvard separato dalla RAM: per leggere serve `pgm_read_byte()` con un opcode dedicato.
-- Su ESP32 (memoria piatta von Neumann, mappa lineare) `pgm_read_byte(p)` è definito come `(*(const uint8_t*)(p))`, cioè una normale dereferenza, indipendentemente da dove punta `p` (Flash mappata, IRAM, DRAM, PSRAM).
-- Quindi `GxEPDImage::showImage` può usare `pgm_read_byte()` in modo uniforme: legge correttamente sia da `.h` PROGMEM sia dalla partizione dati mappata, che passa dalla stessa cache della flash.
+**Formato.** Due slot da metà partizione (21 settori, che bastano anche al 122c), si scrive sempre l'inattivo e l'intestazione per ultima: un upload interrotto lascia valido il wallpaper precedente. Intestazione di 20 B: magic `WAL1`, sequenza, CRC32 dei piani (`esp_rom_crc32_le`, calcolata in streaming), larghezza, altezza, piani; uno slot con misure diverse da `Layout::CINEMA_*` non vale, e il contenuto con il magic `WPD1` di un firmware precedente si ignora. Il corpo è identico a quello di `/cinema/arduino`: due piani 1bpp nero e rosso a `CINEMA_W` x `CINEMA_H` del pannello, quindi il 122c ha un wallpaper a piena altezza (610x536). Lo slot attivo è mappato con `esp_partition_mmap`; si smappa prima di cancellare o scrivere.
 
-**Conseguenze pratiche:**
-- Aggiungere immagini PROGMEM hardcoded (es. slideshow) richiede solo un nuovo `Descriptor` con i puntatori giusti; nessuna modifica al driver.
-- Se in futuro il firmware girasse su un AVR (improbabile ma possibile come retrofit didattico), questo trucco si rompe: serve duplicare `showImage` in versione "PROGMEM-only" e "RAM-only".
-- L'immagine fallback PROGMEM costa solo Flash, già inclusa nel firmware: nessun runtime overhead. Quanto costa lo dice il formato, non una misura: un piano a 1 bpp ha stride `ceil(larghezza/8)` byte, 77 a 610 px, quindi 77 x altezza.
+**Caricamento.** Pagina `/wallpaper` della manutenzione ([[maintenance_window]]): upload multipart, autorizzazione e origine controllate al primo blocco (`UPLOAD_FILE_START`), poi `beginWrite()` (erase di circa un secondo), `writeChunk()` a ogni blocco, `commitWrite()` alla fine con misura esatta `CINEMA_TOTAL_SZ`. Un file con la stessa CRC del wallpaper attivo non si convalida e l'esito è "invariato". Il file lo genera `tools/wallpaper_bin.py` da un'immagine, uno per pannello (`wallpaper/<nome>_<pannello>.bin`), con crop e con il dithering floyd `bwr` e l'impacchettamento della webapp (`webapp/dithering.py`, `webapp/arduino_format.py`); misure da `layout_preview.read_constants()`; gira con `routefinder/.venv`. `tools/layout_preview.py` disegna le anteprime da quei `.bin`.
 
-**Righe per pagina.** `drawTestBackground()` restringe le righe [`CINEMA_Y`, `CINEMA_Y` + min(altezza, `CINEMA_H`)) alla pagina corrente con `Graphics::clipToPage()` e passa a `showImage` un `Descriptor` ridotto: stessi dati spostati di riga × stride (`data1`/`data2` solo se presenti), altezza ridotta, y della prima riga utile. Ogni riga si decodifica una volta per frame e nessun dato si copia; il salto interno di `showImage`, basato sul page hint del driver, con questo descrittore non scarta più niente.
+**Senza wallpaper valido** (dispositivo nuovo o partizione vuota) `drawTestBackground()` scrive al centro del riquadro, in `FONT_SMALL` con `Graphics::drawCentered()`, `No img. Check <ip>/wallpaper` con l'ultimo IP noto (`Net::lastKnownIp()`, ricordato da `wifiOn()` e dalla manutenzione, con l'IP dell'access point solo se la rete di casa non ne ha mai dato uno; senza IP `epd-dashboard.local`). Nessun fallback nel firmware, per scelta dell'utente. La pagina è raggiungibile solo nella finestra di manutenzione, che si apre al boot.
 
-**Guardia del descrittore.** Il wallpaper in `wallpaper/` definisce il proprio `_desc` solo
-dentro `#ifdef _GxEPDImage_H_`, cioè la include guard dell'header che definisce il namespace
-(`GxEPD2_SOLUM_ESL/src/GxEPDImage.h`), non quella di un driver: gli array raw restano sempre
-disponibili, il descrittore solo se il tipo esiste. La guardia la emette `GxEPD2_SOLUM_ESL/tools/epd_image_converter.pyw`,
-quindi va corretta lì oltre che nel file generato. Nominare un driver specifico romperebbe la build
-su tutte le altre varianti di display.
+**Descriptor unico.** `drawTestBackground()` sceglie fra il buffer in RAM di percorso e cinema (`CinemaStore`, [[esp32_cinema_consumer]]), quando `Routefinder::shownImage()` lo conferma, e `WallpaperStore::image()`. Su ESP32 (memoria piatta) `pgm_read_byte(p)` è `(*(const uint8_t*)(p))`, una normale dereferenza ovunque punti `p` (DRAM, flash mappata), quindi `GxEPDImage::showImage` legge uguale l'heap e la partizione mappata, senza copie. Su un AVR il trucco si romperebbe.
 
-**Il fallback deve combaciare con l'area del wallpaper.** Il descrittore in `wallpaper/` va
-generato dall'utente con `epd_image_converter.pyw` a `Layout::CINEMA_W x CINEMA_H` del 097c,
-cioè `610x440` (`img_great_wave.h`, sorgente `wallpaper/great_wave.jpg`). `showImage` **non clippa** e ricava lo stride dalla larghezza del
-descrittore: `drawTestBackground()` taglia le righe oltre `CINEMA_H`, ma le colonne oltre
-`CINEMA_W` sconfinano nel gutter, dove nessuno le sbianca. La larghezza giusta si ottiene
-fornendo l'immagine a misura, non con codice (scelta dell'utente). Il fallback è unico per i due
-pannelli: sul 122c (area 610x536) resta più basso e lascia una fascia bianca, accettata dall'utente. Nessuno
-`static_assert` sulla misura, per scelta dell'utente: è preferibile a un errore di compilazione.
-
-**Il fallback è a due piani** (`FORMAT_BWR_1BPP`, nero e rosso, `data2` a `nullptr`), come
-l'immagine scaricata; un fallback monocromatico (`FORMAT_BW_1BPP`, `data1` a `nullptr`)
-funzionerebbe allo stesso modo, perchè il formato viaggia dentro il `Descriptor` e
-`drawTestBackground()` sposta `data1` solo se presente.
+**Righe per pagina.** `drawTestBackground()` restringe le righe [`CINEMA_Y`, `CINEMA_Y` + min(altezza, `CINEMA_H`)) alla pagina corrente con `Graphics::clipToPage()` e passa a `showImage` un `Descriptor` ridotto: stessi dati spostati di riga × stride (`data1`/`data2` solo se presenti), altezza ridotta, y della prima riga utile. `showImage` **non clippa** le colonne, ma le immagini hanno sempre la misura esatta perchè download e upload rifiutano ogni altra lunghezza.
