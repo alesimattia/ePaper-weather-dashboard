@@ -87,8 +87,8 @@ niente e non si tocca; la sua compatibilità la prova un test del trait con pann
 `Layout.h`. Una temperatura NaN non supera mai la soglia (la guardia è la negazione di `>=`), e il
 giorno dei contatori entra come argomento e si azzera solo con ora valida.
 
-Sensore e temperatura in `decide()`: input `sensorPresent` = `Indoor::attivo()` (BME680 inizializzato
-in `begin()`). **Sensore assente → partial senza controllo della temperatura** (niente soglia nè
+Sensore e temperatura in `decide()`: input `sensorPresent` = `Indoor::attivo()` (sensore Indoor, BME680 o
+BME280, inizializzato in `begin()`). **Sensore assente → partial senza controllo della temperatura** (niente soglia nè
 isteresi; catena, gap e primo frame valgono comunque), scelta dell'utente: rischio accettato di nero
 sbiadito al freddo, perchè la LUT del partial non compensa la temperatura. Sensore collegato con
 campione non valido (BSEC non ancora stabilizzato, campione scaduto) → `SensorInvalid`, frame pieno.
@@ -127,8 +127,8 @@ N/(N+1) della catena e un frame rifiutato azzera la catena.
   partial al giorno non è determinabile dal datasheet nè dal log.
 - **Alone sul rosso**: nelle sonde il testimone rosso sta a 28 righe dalla fascia pilotata, e a 6-9 px
   da un testo nero che cambia nei blocchi meteo non è mai stato misurato.
-- **Soglia di temperatura**: non ha base misurata; il BME680 non misura il vetro e il sensore interno
-  del controller ha ±2 °C. Senza BME680 non c'è nessuna guardia: il partial al freddo non è mai stato
+- **Soglia di temperatura**: non ha base misurata; il sensore Indoor non misura il vetro e il sensore interno
+  del controller ha ±2 °C. Senza sensore non c'è nessuna guardia: il partial al freddo non è mai stato
   misurato sul vetro.
 - **Alimentazione**: il riferimento vive solo se il pannello resta alimentato fra i frame. Il netlist
   testuale della Waveshare V3 mostra una rete `EPD_3.3V` con un S8050 e R19 su IO4, forse un interruttore

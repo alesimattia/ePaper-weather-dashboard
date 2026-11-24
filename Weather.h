@@ -866,10 +866,11 @@ namespace Weather
     }
 
     /**
-     * Disegna il contenuto del riquadro Interno, quattro righe con i dati del
-     * sensore BME680: temperatura, umidità, qualità dell'aria con il
-     * pedice di accuratezza e pressione, tutto in nero perchè i valori cambiano
-     * a ogni ciclo e un testo rosso impedirebbe il refresh parziale.
+     * Disegna il contenuto del riquadro Interno con i dati del sensore:
+     * temperatura, umidità e pressione nelle prime tre righe con entrambi i
+     * sensori, e col BME680 la qualità dell'aria con il pedice di accuratezza
+     * in quarta. Tutto in nero perchè i valori cambiano a ogni ciclo e un testo
+     * rosso impedirebbe il refresh parziale.
      * Temperatura e umidità in FONT_LARGE, pressione in FONT_BODY perchè
      * secondaria, l'IAQ in FONT_BODY perchè "Mediocre 500" in FONT_LARGE non
      * entra, e in FONT_SMALL quando anche in FONT_BODY sborderebbe dal
@@ -910,6 +911,19 @@ namespace Weather
         Graphics::drawLeftAligned("%", endX + Layout::INDOOR_UNIT_GAP, Layout::INDOOR_ROW2_BASELINE, GxEPD_BLACK);
       }
 
+      // Pressione in FONT_BODY, secondaria rispetto a temperatura e umidità,
+      // con "mBar" in FONT_SMALL accanto al valore.
+      display.setFont(Layout::FONT_BODY);
+      if (s.valid) snprintf(buf, sizeof(buf), "%u", (unsigned)Indoor::shownPressure(s.pressure));
+      else         strcpy(buf, "--");
+      endX = drawIndoorRow(INDOOR_ICON_PRESSURE, buf, iconX, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
+      if (s.valid)
+      {
+        display.setFont(Layout::FONT_SMALL);
+        Graphics::drawLeftAligned("mBar", endX + Layout::INDOOR_UNIT_GAP, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
+      }
+
+#ifdef INDOOR_SENSOR_BME680
       // Qualità dell'aria: etichetta e indice, con l'accuratezza come pedice.
       // Se testo e pedice superano il margine destro del riquadro, il testo
       // ripiega su FONT_SMALL come le righe dei blocchi meteo.
@@ -927,25 +941,14 @@ namespace Weather
           display.setFont(Layout::FONT_SMALL);
       }
       else strcpy(buf, "--");
-      endX = drawIndoorRow(INDOOR_ICON_AIR_QUALITY, buf, iconX, Layout::INDOOR_ROW3_BASELINE, GxEPD_BLACK);
+      endX = drawIndoorRow(INDOOR_ICON_AIR_QUALITY, buf, iconX, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
       if (s.valid)
       {
         display.setFont(Layout::FONT_SMALL);
         Graphics::drawLeftAligned(accStr, endX + Layout::INDOOR_UNIT_GAP,
-                                  Layout::INDOOR_ROW3_BASELINE + Layout::INDOOR_SUBSCRIPT_DROP, GxEPD_BLACK);
+                                  Layout::INDOOR_ROW4_BASELINE + Layout::INDOOR_SUBSCRIPT_DROP, GxEPD_BLACK);
       }
-
-      // Pressione in FONT_BODY, secondaria rispetto a temperatura e umidità,
-      // con "mBar" in FONT_SMALL accanto al valore.
-      display.setFont(Layout::FONT_BODY);
-      if (s.valid) snprintf(buf, sizeof(buf), "%u", (unsigned)Indoor::shownPressure(s.pressure));
-      else         strcpy(buf, "--");
-      endX = drawIndoorRow(INDOOR_ICON_PRESSURE, buf, iconX, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
-      if (s.valid)
-      {
-        display.setFont(Layout::FONT_SMALL);
-        Graphics::drawLeftAligned("mBar", endX + Layout::INDOOR_UNIT_GAP, Layout::INDOOR_ROW4_BASELINE, GxEPD_BLACK);
-      }
+#endif
     }
 
     /**

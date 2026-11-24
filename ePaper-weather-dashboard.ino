@@ -160,7 +160,7 @@ static RenderServer g_route_server = {"route", ROUTEFINDER_ORIGIN "/health", fal
  * => basta questo piu' Maintenance.h per avere tutte le API dei moduli */
 #include "Weather.h"
 #include "Maintenance.h"
-// Telemetria BME680 verso il cloud Tuya (TuyaLink su MQTT). Non disegna nulla:
+// Telemetria del sensore Indoor verso il cloud Tuya (TuyaLink su MQTT). Non disegna nulla:
 // il pannello la interroga solo per il badge di guasto del riquadro Indoor.
 #include "Tuya.h"
 #include "Env.h"
@@ -952,8 +952,10 @@ void setup()
 	Calendar::Outlook::begin();
 	Calendar::Google::begin();
 	/**
-	 * Sensore ambientale BME680 via I2C (Bosch BSEC2 in ULP, sample ogni 5 min). 
-	 * Lo stato del calibratore, se presente in NonVolatileStorage, viene ripristinato qui dentro.
+	 * Sensore ambientale via I2C, scelto in Indoor.h: BME680 (Bosch BSEC2 in
+	 * ULP, sample ogni 5 min) oppure BME280 (forced mode, letto a ogni ciclo).
+	 * Col BME680 lo stato del calibratore, se presente in NonVolatileStorage,
+	 * viene ripristinato qui dentro.
 	 */
 	Indoor::begin();
 	/**
@@ -984,8 +986,12 @@ void setup()
 	hooks.radioOn = wifiOn;
 	hooks.radioOff = wifiOff;
 	hooks.sensorActive = Indoor::attivo;
-	hooks.msUntilSensorPoll = Indoor::msUntilNextPoll;
 	hooks.pollSensor = Indoor::poll;
+#ifdef INDOOR_SENSOR_BME680
+	// BSEC ha una scadenza propria, che diventa l'orologio del ciclo. Il
+	// BME280 non ne ha: senza questo hook il ciclo è interno e la notte libera.
+	hooks.msUntilSensorPoll = Indoor::msUntilNextPoll;
+#endif
 	hooks.drawFrame = Weather::render;
 	Scheduler::begin(TASK_TABLE, TASK_COUNT, hooks);
 }
@@ -1001,7 +1007,8 @@ void setup()
  * Scaduta la finestra, Maintenance::chiudi() spegne AP e WiFi e il ciclo torna al
  * comportamento energetico ordinario: a ogni ciclo del sensore la STA si accende
  * solo per i fetch dovuti e si spegne subito dopo, poi il frame, poi il light
- * sleep fino alla scadenza esatta del sensore. Di notte solo il sensore.
+ * sleep fino alla scadenza esatta del sensore. Di notte solo il sensore col
+ * BME680, nessun risveglio col BME280.
  */
 void loop()
 {
@@ -1016,8 +1023,8 @@ void loop()
 		 *
 		 * Mentre qualcuno usa le pagine lo scheduler aspetta: un fetch o un
 		 * refresh lascerebbero il web server muto per decine di secondi. Il
-		 * sensore no: costa ~50 ms, e BSEC perde l'accuratezza se il poll
-		 * ritarda oltre il 6,25% del suo periodo.
+		 * sensore no: costa ~50 ms col BME680 (~10 ms col BME280), e BSEC perde
+		 * l'accuratezza se il poll ritarda oltre il 6,25% del suo periodo.
 		 */
 		if (!Maintenance::clientAttivo())
 			Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_MAINTENANCE);

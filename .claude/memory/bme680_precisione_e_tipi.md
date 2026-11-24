@@ -1,8 +1,53 @@
 ---
-name: BME680 - precisione delle grandezze e tipi in cui si rappresentano
-description: BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet per T/RH/P/IAQ, quali decimali sono informazione e quali rumore, i tipi di Indoor::Sample che ne discendono e perchè sono i minimi, e le riduzioni che si applicano solo al display
+name: Sensore Indoor (BME680 o BME280) - selezione, precisione e tipi
+description: un #define in Indoor.h sceglie BME680 (BSEC) o BME280 (Adafruit forced); cosa si spegne col BME280 e come; guasto I2C silenzioso di Adafruit e controllo di range; BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet, i tipi di Indoor::Sample (campi IAQ solo BME680) e le riduzioni solo al display
 type: reference
 ---
+
+## Selezione del sensore (Indoor.h)
+
+- `#define INDOOR_SENSOR_BME280` oppure `INDOOR_SENSOR_BME680` in testa a `Indoor.h`;
+  zero o due → `#error`. I consumatori (`Weather.h`, `Tuya.h`, `.ino`, test stub di
+  `test_tuya.cpp`) testano direttamente `#ifdef INDOOR_SENSOR_BME680`; nessuna macro di
+  capacità. `tools/layout_preview.py` (`read_indoor_has_iaq()`) legge il define da
+  `Indoor.h` senza commenti.
+- Macro di cablaggio comuni: `INDOOR_I2C_ADDR` 0x77, `INDOOR_SDA_PIN` 21,
+  `INDOOR_SCL_PIN` 16, `INDOOR_I2C_CLOCK_HZ` 400 kHz; tag di log `INDOOR_TAG`.
+- `#include <bsec2.h>` dentro `#ifdef`: arduino-cli scopre le librerie con `g++ -E`
+  (prova in `.build/includes.cache`, voci `missing_include_h`), quindi col BME280
+  bsec2 e BME68x non entrano nella build. Misurato sul Mac: BME280 1476708 B flash /
+  78752 B DRAM, BME680 1526968 / 83504 (−50 KB flash, −4,7 KB DRAM).
+- Col BME280: campi `iaq`/`iaqAccuracy` di `Sample` assenti (uso non protetto = errore di
+  compilazione); riquadro con pressione in riga 3 (con entrambi i sensori) e riga 4
+  vuota (IAQ in riga 4 solo BME680); Tuya a 3 property; nessuna NVS; niente
+  `msUntilNextPoll()`, quindi l'hook `msUntilSensorPoll` non si registra e lo scheduler
+  tiene il ciclo interno e non sveglia di notte, vedi [[scheduler_task_table]].
+- Restano senza `#ifdef` perchè inutilizzati non costano: `shownIaq()`, `iaqLabel()`,
+  `INDOOR_ICON_AIR_QUALITY`, le costanti `BSEC_*` di `Timings.h` (da cui deriva `CYCLE_S`).
+- Diagnostica `I2C_DEBUG` comune ai due: indirizzi 0x76/0x77 e registro chip ID 0xD0
+  uguali; per sensore `CHIP_ID` (0x61 / 0x60), `CALIB_REG`/`CALIB_LEN` (BME68X_COEFF1 23 B /
+  0x88 24 B = trim dig_T1..dig_P9). Il log distingue BMP280 (0x58), spesso venduto
+  come BME280.
+
+## BME280 con Adafruit BME280 2.3.0
+
+- `bme.begin(addr, &Wire)` dopo `Wire.begin(SDA, SCL)`: il `Wire.begin()` interno di BusIO
+  a bus avviato (core 3.3.12) fa solo `log_w` e non tocca pin nè clock. Poi
+  `setSampling(MODE_FORCED, X1, X1, X1, FILTER_OFF)` (enum membri della classe, vanno
+  qualificati `Adafruit_BME280::`); il default della libreria è normal x16 continuo.
+- **Guasto I2C silenzioso**: `read8/read16/read24` ignorano l'esito di
+  `write_then_read` e restituiscono il buffer non riempito (byte 0 = indirizzo del
+  registro). `takeForcedMeasurement()` ritorna true a bus morto (stato letto 0xF3, bit
+  0x08 a zero). La temperatura che ne esce è ~+180 °C: `poll()` scarta letture fuori
+  da −40..85 °C o 300..1100 hPa e chiama `expireIfStale()`. Umidità già limitata 0..100.
+- Forced X1: misura ~10 ms, nessun autoriscaldamento a 1/300 Hz, temperatura non
+  compensata. Datasheet: T ±0,5 °C a 25 °C, RH ±3 %RH, P assoluta ±1 hPa e relativa
+  ±0,12 hPa; risoluzione a x1: T 0,005 °C, P 2,62 Pa.
+- Col ciclo interno le letture distano esattamente `CYCLE_S`: `INDOOR_SAMPLE_MAX_AGE_MS`
+  (601 s) fa scadere il campione alla terza lettura persa, non alla seconda.
+- Rischio residuo noto: se il bit "measuring" non è ancora alto quando
+  `takeForcedMeasurement()` lo legge, si leggono i dati della misura precedente (al più un
+  ciclo di ritardo, mai un valore inventato).
 
 ## Il float di BSEC non dice niente sulla natura del dato
 
@@ -60,11 +105,11 @@ per tendenza.
 float    temperature;   // unico con decimale significativo
 uint8_t  humidity;      // 0-100, arrotondata
 uint16_t pressure;      // mBar, numericamente identici agli hPa
-uint16_t iaq;           // 0-500
-uint8_t  iaqAccuracy;   // 0-3
+uint16_t iaq;           // 0-500, solo con INDOOR_SENSOR_BME680
+uint8_t  iaqAccuracy;   // 0-3,   solo con INDOOR_SENSOR_BME680
 ```
 
-La struct misura **20 byte** (verificato con `static_assert`), contro i 28 che
+La struct misura **20 byte** col BME680 (verificato con `static_assert`), 16 col BME280, contro i 28 che
 occuperebbe con quattro float. Il guadagno di memoria è simbolico, perchè
 l'istanza è una sola. I tipi interi fissano la risoluzione che serve (1 %RH, 1 mBar,
 1 punto IAQ), non quella che il sensore supporta: per umidità e pressione scartano

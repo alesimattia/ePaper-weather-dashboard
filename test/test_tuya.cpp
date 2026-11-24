@@ -58,13 +58,19 @@ static EspFinto ESP;
 #define TUYA_REQUEST_ACK 1
 #endif
 
-// Env.h, Indoor.h e Net.h veri tirano dentro credenziali, BSEC e WiFiClientSecure:
+// Env.h, Indoor.h e Net.h veri tirano dentro credenziali, librerie dei sensori e WiFiClientSecure:
 // si sostituiscono dichiarando prima le loro guardie.
 #define ENV_H
 #define TUYA_DEVICE_ID "testdevice0123456789ab"
 #define TUYA_DEVICE_SECRET "testsecret_0123456"
 
 #define INDOOR_H
+// Sensore selezionato come in Indoor.h: di default il BME680 (5 property),
+// con -DINDOOR_SENSOR_BME280 il ramo a 3. La struct dello stub tiene i campi
+// IAQ in entrambi i casi, che Tuya.h col BME280 non legge.
+#ifndef INDOOR_SENSOR_BME280
+#define INDOOR_SENSOR_BME680
+#endif
 namespace Indoor
 {
   struct Sample
@@ -361,11 +367,19 @@ int main()
     ok(id == (TUYA_REQUEST_ACK ? 2 : 1), "PUBLISH: packet id non nullo e coerente con la sessione");
     const std::string payload((const char*)&publish.body[o + 2], publish.body.size() - o - 2);
 
+    // Le property IAQ ci sono solo col BME680. La scelta sta fuori dalla
+    // chiamata: snprintf può essere una macro, e una direttiva fra i suoi
+    // argomenti non è portabile.
+#ifdef INDOOR_SENSOR_BME680
+    const char* iaq = ",\"iaq_value\":{\"value\":50},\"iaq_acc\":{\"value\":1}";
+#else
+    const char* iaq = "";
+#endif
     char expected[400];
     std::snprintf(expected, sizeof(expected),
                   "{\"msgId\":\"1\",\"time\":%lu,\"data\":{\"temp_value\":{\"value\":22.5},\"hum_value\":{\"value\":45},"
-                  "\"press_value\":{\"value\":1013},\"iaq_value\":{\"value\":50},\"iaq_acc\":{\"value\":1}}%s}",
-                  ts, TUYA_REQUEST_ACK ? ",\"sys\":{\"ack\":1}" : "");
+                  "\"press_value\":{\"value\":1013}%s}%s}",
+                  ts, iaq, TUYA_REQUEST_ACK ? ",\"sys\":{\"ack\":1}" : "");
     ok(payload == expected, "PUBLISH: payload identico a quello che il cloud ha accettato");
 
 #if TUYA_REQUEST_ACK

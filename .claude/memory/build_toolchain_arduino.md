@@ -66,7 +66,11 @@ li lascia in una cartella `build\` dentro lo sketch. Con un build path esplicito
 non viene usata, quindi una build da cartella vuota ricompila anche gli oggetti del core.
 
 **Librerie:** ArduinoJson 7.4.3, Adafruit GFX 1.12.6 + BusIO 1.17.4, bsec2 1.10.2610 (usa la
-precompilata `src\esp32`), BME68x 1.3.40408.
+precompilata `src\esp32`), BME68x 1.3.40408. Col BME280 selezionato in `Indoor.h` (il default)
+servono Adafruit BME280 Library 2.3.0 e Adafruit Unified Sensor 1.1.15, non ancora installate su
+questa macchina: `arduino-cli --config-file C:/tmp/arduino/arduino-cli.yaml lib install
+"Adafruit BME280 Library@2.3.0" "Adafruit Unified Sensor@1.1.15"`. Sul Mac ci sono già (in
+`~/Documents/Arduino/libraries`). Al cambio di sensore conviene una build pulita (`-Clean`).
 
 **La compilazione non esporta nessun binario** (decisione dell'utente, comune ad
 `A:\rd`): lo script non passa `--output-dir`, perchè su questa macchina non si flasha

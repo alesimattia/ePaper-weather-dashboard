@@ -1,11 +1,14 @@
 ---
 name: Modulo Tuya (TuyaLink su MQTT)
-description: Tuya.h pubblica il BME680 su TuyaLink con un client MQTT minimale su esp-tls; la connessione resta aperta dopo il PUBACK e si rilascia a radio spenta perchè Tuya segna offline sulla chiusura; formato accettato dal cloud, device model, catena TLS, diagnostica dai Device Logs, task dello scheduler, badge TUYA ERR
+description: Tuya.h pubblica il sensore Indoor (5 property col BME680, 3 senza IAQ col BME280) su TuyaLink con un client MQTT minimale su esp-tls; la connessione resta aperta dopo il PUBACK e si rilascia a radio spenta perchè Tuya segna offline sulla chiusura; formato accettato dal cloud, device model, catena TLS, diagnostica dai Device Logs, task dello scheduler, badge TUYA ERR
 type: project
 ---
 
 `Tuya.h` (header-only, namespace `Tuya` + `Tuya::detail`) pubblica le cinque
-grandezze di `Indoor::sample()` sul cloud Tuya via **TuyaLink**, il canale MQTT
+grandezze di `Indoor::sample()` sul cloud Tuya via **TuyaLink** (col BME280,
+`#ifdef INDOOR_SENSOR_BME680` spento, `buildPayload()` e il log "publish ok"
+hanno solo T, RH e P: `iaq_value` e `iaq_acc` restano nel device model senza
+aggiornarsi; test `test_tuya:-DINDOOR_SENSOR_BME280`), il canale MQTT
 che Tuya offre per hardware non suo. Il dispositivo si associa all'app Android
 Smart Life scansionando il QR code generato dalla console; il firmware non fa
 nessun pairing.

@@ -954,6 +954,45 @@ int main()
     ok(g_runA == 2 && g_frame == 2, "  secondo ciclo interno");
   }
 
+  // ---- sensore senza scadenza propria (BME280): ciclo interno, notte libera -
+  {
+    static Scheduler::Task tab[1];
+    tab[0] = taskPeriodico("a", &Timings::Valori::routeMin, runA);
+    impostaOra(2026, 9, 10, 12, 0);
+    g_msFinto = 60000000;
+    boot(tab, 1);
+    Scheduler::Hooks h = hooksFinti();
+    h.msUntilSensorPoll = nullptr;             // come il .ino col BME280
+    Scheduler::begin(tab, 1, h);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_poll == 1 && g_eventi[0] == 'S' && g_frame == 1,
+       "sensore senza scadenza: lettura in testa al ciclo, poi task e frame");
+    const char* chi = nullptr;
+    const uint32_t attesa = Scheduler::msUntilNextEvent(&chi);
+    ok(attesa == CICLO_MS - (uint32_t)DISPLAY_REFRESH_PIENO_S * 1000u && std::strcmp(chi, "ciclo") == 0,
+       "  ciclo interno: il prossimo a CYCLE_S dall'inizio del precedente");
+    avanzaMs(attesa);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_poll == 2 && g_frame == 2, "  secondo ciclo: nuova lettura e frame");
+
+    // Di notte il ciclo si apre senza lettura, e lo sleep arriva all'apertura.
+    impostaOra(2026, 9, 10, 3, 0);
+    avanzaMs(CICLO_MS);
+    azzeraEventi();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_poll == 2 && g_eventi[0] == 0, "  alle 03:00: nessuna lettura, radio nè frame");
+    const uint32_t notte = Scheduler::msUntilNextEvent(&chi);
+    ok(notte == Scheduler::msUntilLocalHour(7, false) && std::strcmp(chi, "apertura fascia") == 0,
+       "  nessun risveglio fino alle 07:00");
+
+    // Alla riapertura la lettura torna in testa al ciclo, prima del frame.
+    avanzaMs(notte);
+    azzeraEventi();
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);
+    ok(g_poll == 3 && g_eventi[0] == 'S' && std::strchr(g_eventi, 'F') != nullptr,
+       "  alle 07:00: lettura prima del frame");
+  }
+
   // ---- rollover di millis() ------------------------------------------------
   {
     static Scheduler::Task tab[1];

@@ -4,6 +4,8 @@ description: 300 s è un modo non un intervallo; tolleranza del 6,25% sul poll (
 type: reference
 ---
 
+Vale solo con `INDOOR_SENSOR_BME680` in `Indoor.h`; col BME280 BSEC non è nella build, vedi [[bme680_precisione_e_tipi]].
+
 **I 300 s del BME680 non sono un intervallo configurabile: sono un modo.** `bsec.updateSubscription(..., BSEC_SAMPLE_RATE_ULP)` in `Indoor.h` sottoscrive gli output a 1/300 Hz. Gli altri modi (`bsec_datatypes.h`) sono `LP` 3 s, `CONT` 1 s, `SCAN` 18 s, `DISABLED`. Non esiste un valore intermedio, e non ha senso esporre la cadenza del sensore fra i tempi configurabili: LP consuma ~10× e impone un polling ogni 3 s, incompatibile col light sleep di questo firmware.
 
 ## Due comportamenti del wrapper che non si vedono dall'API
@@ -16,7 +18,7 @@ type: reference
 
 **La cadenza si conta dall'ultima interrogazione, non dal campione.** `Indoor::poll()` registra l'istante di ogni chiamata e `Indoor::msUntilNextPoll()` restituisce 0 se il sensore non è mai stato interrogato, altrimenti il tempo a ultima chiamata + 300 s + `BSEC_MARGINE_POLL_MS`. È la scadenza del ciclo dello scheduler, che la legge dall'hook `msUntilSensorPoll` (vedi [[scheduler_task_table]]). Interrogare più spesso non anticipa nessun campione, per il punto 2; contare dal campione invece riaprirebbe il ciclo a ogni giro quando il campione non c'è, con il sensore guasto.
 
-**Il campione scade al secondo campione perso.** Se una chiamata non porta un campione nuovo e l'ultimo è più vecchio di `INDOOR_SAMPLE_MAX_AGE_MS` (2 × 300 s + 1 s), `valid` torna falso: il riquadro mostra "--" e Tuya si sospende, perchè `readyToPublish()` richiede `valid`. `poll()` non restituisce niente allo scheduler: il frame si disegna a ogni ciclo e legge da sè il campione. Lo scheduler la chiama solo con `Indoor::attivo()` vero, quindi `poll()` non controlla `bsecOk`.
+**Il campione scade al secondo campione perso.** Se una chiamata non porta un campione nuovo e l'ultimo è più vecchio di `INDOOR_SAMPLE_MAX_AGE_MS` (2 × 300 s + 1 s), `valid` torna falso: il riquadro mostra "--" e Tuya si sospende, perchè `readyToPublish()` richiede `valid`. `poll()` non restituisce niente allo scheduler: il frame si disegna a ogni ciclo e legge da sè il campione. Lo scheduler la chiama solo con `Indoor::attivo()` vero, quindi `poll()` non controlla `sensorOk`.
 
 **Senza sensore** (`Indoor::attivo()` falso, perchè `bsec.begin()` è fallito) il ciclo dello scheduler è interno e dura `CYCLE_S` dall'inizio del precedente; il riquadro Interno resta a `--`.
 

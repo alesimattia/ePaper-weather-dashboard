@@ -138,6 +138,12 @@ def read_small_icons():
             for name in re.findall(r"INDOOR_ICON_(\w+)\[", text)}
 
 
+def read_indoor_has_iaq():
+    """Vero se Indoor.h seleziona il BME680, l'unico dei due sensori con l'IAQ."""
+    text = strip_c_comments((ROOT / "Indoor.h").read_text(encoding="utf-8"))
+    return re.search(r"^\s*#define\s+INDOOR_SENSOR_BME680\b", text, flags=re.M) is not None
+
+
 def read_weather_icons():
     """Lato, piani delle icone e tabella dei codici di icons_weather.h, nella forma di
     WeatherIcons::forCondition() e labelFor()."""
@@ -663,7 +669,8 @@ class Frame:
         self.draw_left(text, time_x, baseline, BLACK)
 
     def draw_indoor(self):
-        """Weather::renderIndoorBox(): temperatura, umidità, qualità dell'aria e pressione."""
+        """Weather::renderIndoorBox(): temperatura, umidità e pressione, più la qualità dell'aria in
+        quarta riga quando Indoor.h seleziona il BME680."""
         L, c, icons = self.L, self.c, self.sources["small_icons"]
         icon_x = L["INDOOR_ICON_X"]
         text_x = icon_x + L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"]
@@ -682,6 +689,12 @@ class Frame:
         end = row("HUMIDITY", str(SAMPLE_INDOOR["hum"]), L["INDOOR_ROW2_BASELINE"])
         self.font("SMALL")
         self.draw_left("%", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW2_BASELINE"], BLACK)
+        self.font("BODY")
+        end = row("PRESSURE", str(shown_pressure(SAMPLE_INDOOR["press"])), L["INDOOR_ROW3_BASELINE"])
+        self.font("SMALL")
+        self.draw_left("mBar", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW3_BASELINE"], BLACK)
+        if not self.sources["indoor_has_iaq"]:
+            return
         # L'IAQ ripiega su FONT_SMALL quando con il pedice supera il margine destro del riquadro.
         accuracy = str(SAMPLE_INDOOR["acc"])
         subscript_w = L["INDOOR_UNIT_GAP"] + self.text_width(accuracy)
@@ -690,14 +703,10 @@ class Frame:
         self.font("BODY")
         if text_x + self.text_width(text) + subscript_w > L["INDOOR_X"] + L["INDOOR_W"] - L["BOX_PAD"]:
             self.font("SMALL")
-        end = row("AIR_QUALITY", text, L["INDOOR_ROW3_BASELINE"])
+        end = row("AIR_QUALITY", text, L["INDOOR_ROW4_BASELINE"])
         self.font("SMALL")
         self.draw_left(accuracy, end + L["INDOOR_UNIT_GAP"],
-                       L["INDOOR_ROW3_BASELINE"] + L["INDOOR_SUBSCRIPT_DROP"], BLACK)
-        self.font("BODY")
-        end = row("PRESSURE", str(shown_pressure(SAMPLE_INDOOR["press"])), L["INDOOR_ROW4_BASELINE"])
-        self.font("SMALL")
-        self.draw_left("mBar", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW4_BASELINE"], BLACK)
+                       L["INDOOR_ROW4_BASELINE"] + L["INDOOR_SUBSCRIPT_DROP"], BLACK)
 
     def draw_block(self, slot_index, block_x, block_w):
         """Weather::renderBlock(): orario, icona, percepita e riga sotto (etichetta o pioggia). Il
@@ -1027,6 +1036,7 @@ def generate(fonts_dir):
         "min_event_row_h": int(re.search(r"MIN_EVT_ROW_H\s*=\s*(\d+);", strip_c_comments(calendar)).group(1)),
         "small_icons": read_small_icons(),
         "weather_icons": read_weather_icons(),
+        "indoor_has_iaq": read_indoor_has_iaq(),
     }
     panels = panel_names()
     changed = []

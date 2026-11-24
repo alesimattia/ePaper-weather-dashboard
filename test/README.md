@@ -113,6 +113,9 @@ nello stesso ciclo, sia nella finestra di manutenzione (fallimento al boot con i
 frame subito, doppio fallimento, `maxAttempts` a 0, STA giù al ciclo del ritento)
 sia con la radio dello scheduler (nessuna attesa dentro il passo, radio caduta al
 fallimento, due task falliti nello stesso passo); ciclo interno senza sensore;
+sensore senza scadenza propria (BME280, `msUntilSensorPoll` assente): ciclo
+interno con la lettura in testa, nessuna lettura nè risveglio di notte, lettura
+prima del frame alla riapertura della fascia;
 rollover di `millis()` a 49,7 giorni; fascia fail-open con orologio non
 sincronizzato; cambio dell'ora legale.
 
@@ -153,10 +156,11 @@ username, password), SUBSCRIBE e PUBLISH, con il payload identico a quello che
 il cloud ha accettato nella prova dal vivo; CONNACK rifiutato, broker muto con
 i timeout rispettati, PUBACK per un altro packet id, connessione chiusa a metà,
 handshake fallito, campione non valido; letture di un byte alla volta con
-`WANT_READ` e pacchetti più grandi del buffer. Gira due volte, con
-`TUYA_REQUEST_ACK` a 1 e a 0, perchè i due rami hanno sequenze diverse. Il test
-dichiara da sè le guardie di `Env.h`, `Indoor.h` e `Net.h`, che veri
-tirerebbero dentro credenziali, BSEC e `WiFiClientSecure`.
+`WANT_READ` e pacchetti più grandi del buffer. Gira tre volte: con
+`TUYA_REQUEST_ACK` a 1 e a 0, perchè i due rami hanno sequenze diverse, e con
+`INDOOR_SENSOR_BME280`, che pubblica 3 property invece di 5. Il test dichiara da
+sè le guardie di `Env.h`, `Indoor.h` e `Net.h`, che veri tirerebbero dentro
+credenziali, librerie dei sensori e `WiFiClientSecure`.
 
 **`test_framecrc`**: il confronto del frame con quello già sul vetro
 ([`GxEPD2_SOLUM_FrameCrc.h`](../GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM_FrameCrc.h)), con
@@ -175,7 +179,7 @@ con driver finti (con o senza differenziale, con l'API completa o a metà).
 ## Cosa NON coprono
 
 Tutto ciò che richiede l'hardware: rendering del pannello, fetch HTTP reali,
-sensore BME680, radio, upload del firmware e del wallpaper con la scrittura della
+sensore (BME680 o BME280), radio, upload del firmware e del wallpaper con la scrittura della
 partizione ([`WallpaperStore.h`](../WallpaperStore.h)), e per Tuya la rete, il TLS e
 la verifica del certificato. Per quelli vale il collaudo sul
 dispositivo descritto nel [README](../README.md).

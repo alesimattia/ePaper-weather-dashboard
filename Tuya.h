@@ -22,9 +22,10 @@
 /**
  * Modulo header-only di telemetria verso il cloud Tuya, protocollo TuyaLink.
  *
- * Pubblica le cinque grandezze del BME680 lette da Indoor.h su un unico topic
- * MQTT, così che il dispositivo, una volta associato con il QR code generato
- * dalla console Tuya, mostri i dati nell'app Android Smart Life.
+ * Pubblica le grandezze del sensore lette da Indoor.h (cinque col BME680, le
+ * tre senza IAQ col BME280) su un unico topic MQTT, così che il dispositivo,
+ * una volta associato con il QR code generato dalla console Tuya, mostri i
+ * dati nell'app Android Smart Life.
  *
  * Flusso di una pubblicazione, sincrono e con una sessione MQTT per messaggio:
  *   1. autenticazione: username e password sono derivati dal DeviceSecret con
@@ -125,6 +126,7 @@
 #define TUYA_DP_PRESSURE "press_value"
 #endif
 
+/** IAQ e accuratezza esistono solo col BME680: col BME280 non si pubblicano. */
 #ifndef TUYA_DP_IAQ
 #define TUYA_DP_IAQ "iaq_value"
 #endif
@@ -355,9 +357,11 @@ namespace Tuya
       /**
        * La temperatura esce con un decimale perchè la sua property è Float:
        * %.1f lo emette anche sui valori tondi, e un float senza parte
-       * decimale è la forma che le piattaforme TSL rifiutano. Le altre quattro
-       * sono già intere in Sample e vanno come interi.
+       * decimale è la forma che le piattaforme TSL rifiutano. Le altre sono
+       * già intere in Sample e vanno come interi. Col BME280 mancano IAQ e
+       * accuratezza: il report ha solo le tre property del sensore.
        */
+#ifdef INDOOR_SENSOR_BME680
       int n = snprintf(payload, sizeof(payload),
                        "{\"msgId\":\"%lu\",\"time\":%lu,\"data\":{"
                        "\"%s\":{\"value\":%.1f},"
@@ -371,6 +375,17 @@ namespace Tuya
                        TUYA_DP_PRESSURE,     (unsigned)s.pressure,
                        TUYA_DP_IAQ,          (unsigned)s.iaq,
                        TUYA_DP_IAQ_ACCURACY, (unsigned)s.iaqAccuracy);
+#else
+      int n = snprintf(payload, sizeof(payload),
+                       "{\"msgId\":\"%lu\",\"time\":%lu,\"data\":{"
+                       "\"%s\":{\"value\":%.1f},"
+                       "\"%s\":{\"value\":%u},"
+                       "\"%s\":{\"value\":%u}}" TUYA_SYS_ACK_FIELD "}",
+                       (unsigned long)++msgSeq, sampleTs,
+                       TUYA_DP_TEMPERATURE,  toFloatDp(s.temperature),
+                       TUYA_DP_HUMIDITY,     (unsigned)s.humidity,
+                       TUYA_DP_PRESSURE,     (unsigned)s.pressure);
+#endif
 
       return n > 0 && (size_t)n < sizeof(payload);
     }
@@ -829,8 +844,9 @@ namespace Tuya
    * slot speso senza poter pubblicare sarebbe perso fino alla cadenza piena.
    *
    * I due controlli non stanno in runPublish() di proposito, perchè entrambe
-   * le condizioni si avverano da sè poco dopo il boot: BSEC in ULP produce il
-   * primo output dopo qualche minuto, e l'orologio si sincronizza alla prima
+   * le condizioni si avverano da sè poco dopo il boot: col BME680 BSEC in ULP
+   * produce il primo output dopo qualche minuto (col BME280 il primo campione
+   * arriva al primo ciclo), e l'orologio si sincronizza alla prima
    * wifiOn(), che nella finestra di manutenzione non viene chiamata. Senza
    * questa guardia il primo giro segnalerebbe un guasto Tuya che è solo un
    * orologio non ancora pronto, e lo pagherebbe con due refresh pieni da 24 s.
@@ -969,9 +985,14 @@ namespace Tuya
       // Unico punto che azzera il guasto: solo un PUBACK dimostra che il
       // dato è arrivato.
       failedLast = false;
+#ifdef INDOOR_SENSOR_BME680
       LOG("Tuya", "publish ok: T=%.1f RH=%u P=%u IAQ=%u acc=%u",
           s.temperature, (unsigned)s.humidity, (unsigned)s.pressure,
           (unsigned)s.iaq, (unsigned)s.iaqAccuracy);
+#else
+      LOG("Tuya", "publish ok: T=%.1f RH=%u P=%u",
+          s.temperature, (unsigned)s.humidity, (unsigned)s.pressure);
+#endif
       LOG("Tuya", "connessione tenuta aperta fino allo spegnimento della radio, heap libero %u",
           (unsigned)ESP.getFreeHeap());
     }

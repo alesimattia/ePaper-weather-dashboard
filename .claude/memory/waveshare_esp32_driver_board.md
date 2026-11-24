@@ -78,7 +78,7 @@ submodule; funziona comunque, il 33 è un'alternativa. Il `CLAUDE.md` del proget
 |---|---|---|
 | **CS_S (in uso)** | **32** | output-capable, sull'header, **una sola occorrenza nello schematico** cioè non usato da nient'altro, e adiacente al 35 |
 | CS_S alternative | 4 | libero e output-capable (16/17 pure, essendo WROOM senza PSRAM, ma tenerli di riserva) |
-| cablaggio consigliato del BME680 | 21, 22 | liberi sulla board e default `Wire` del core; il firmware ci mette SDA e SCL del BME680 (`BME680_SDA_PIN` / `BME680_SCL_PIN` in `Indoor.h`), ma è solo il cablaggio consigliato: l'I2C dell'ESP32 si instrada su qualunque pin I/O, quindi il sensore si sposta se servono questi pin |
+| cablaggio consigliato del sensore Indoor (BME680 o BME280) | 21, 16 | liberi sulla board; il firmware ci mette SDA e SCL del sensore (`INDOOR_SDA_PIN` 21 / `INDOOR_SCL_PIN` 16 in `Indoor.h`; il 16 è utilizzabile perchè il modulo non ha PSRAM), ma è solo il cablaggio consigliato: l'I2C dell'ESP32 si instrada su qualunque pin I/O, quindi il sensore si sposta se servono questi pin |
 | BUSY_S | 35 oppure 34 | **input-only**: giusti per un BUSY, inutilizzabili per un CS |
 | da evitare | 0, 2, 12 | pin di strapping (boot mode, flash voltage) |
 | liberi ma da tenere di riserva | 5, 18, 19, 23 | sono i pin VSPI: liberi su questa board, ma è il bus che si usa per aggiungere periferiche SPI (una SD, per esempio), quindi conviene non occuparli |

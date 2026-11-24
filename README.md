@@ -39,7 +39,8 @@ Lo sketch principale compone uno schermo completo con:
   distanza, calcolati dal servizio [`routefinder/`](routefinder/) con le API Google.
   Vedi [Routefinder](#routefinder-routefinderh);
 - **banner meteo** in basso, 3 riquadri in stile "fieldset" (titolo sul
-  bordo): **Interno** (BME680: T/RH/IAQ/pressione), **Meteo** (meteo corrente
+  bordo): **Interno** (T/RH/pressione, più l'IAQ col BME680; sensore BME680
+  o BME280 scelto in `Indoor.h`), **Meteo** (meteo corrente
   OWM + colonna sole con alba/tramonto, barra temp-range e mini-grafico
   della temperatura percepita), **Previsioni** (3 previsioni OWM). Ogni blocco
   meteo ha un'icona Material scelta dal codice condizione di OpenWeather, vedi
@@ -52,7 +53,7 @@ Lo sketch principale compone uno schermo completo con:
   in corso (end nel futuro) mantenuto fino al termine effettivo;
 - **localizzazione Europe/Rome** con **DST automatico** (POSIX TZ
   impostato da `Clock::begin()` in `setup()`);
-- **telemetria Tuya** del BME680 verso l'app Smart Life (opzionale);
+- **telemetria Tuya** del sensore Indoor verso l'app Smart Life (opzionale);
 - **finestra di manutenzione** al boot (default 3 min): aggiornamento del
   firmware, configurazione dei tempi e del riquadro e caricamento del wallpaper da
   browser, sulla rete di casa, con access point di riserva se la STA non sale.
@@ -153,11 +154,11 @@ sugli stessi due pin, purchè abbiano indirizzi diversi.
 
 | Bus | Tipo | Oggetto Arduino | SDA | SCL | Velocità | Stato su questa board |
 |---|---|---|---|---|---|---|
-| I2C0 | hardware | `Wire` | 21 di default, modificabile | 22 di default, modificabile | 100 kHz standard, 400 kHz fast | **in uso** per il BME680 su 21 e 16, cablaggio consigliato |
+| I2C0 | hardware | `Wire` | 21 di default, modificabile | 22 di default, modificabile | 100 kHz standard, 400 kHz fast | **in uso** per il sensore Indoor (BME680 o BME280) su 21 e 16, cablaggio consigliato |
 | I2C1 | hardware | `Wire1` | da scegliere, nessun default | da scegliere, nessun default | come I2C0 | **libero** |
 | I2C software | software | librerie dedicate | qualunque I/O | qualunque I/O | lenta | non serve |
 
-Il BME680 si sposta su altri pin cambiando `BME680_SDA_PIN` e `BME680_SCL_PIN`
+Il sensore si sposta su altri pin cambiando `INDOOR_SDA_PIN` e `INDOOR_SCL_PIN`
 in [`Indoor.h`](Indoor.h). Display e sensore usano periferiche diverse su pin
 diversi, quindi la posizione del sensore non influisce sulla velocità del
 pannello.
@@ -167,7 +168,7 @@ pannello.
 Stato:
 - **Occupato**: usato dalla board o dal pannello, non riassegnabile;
 - **Occupato sul 12.2"**: usato solo dalla variante a due controller, libero con il 9.7";
-- **Consigliato**: usato oggi dal BME680, spostabile su altri pin;
+- **Consigliato**: usato oggi dal sensore Indoor, spostabile su altri pin;
 - **Libero**: disponibile per nuove periferiche;
 - **Riservato**: libero, ma destinato a un uso previsto (il bus VSPI);
 - **Evitare**: pin di strapping;
@@ -186,11 +187,11 @@ Stato:
 | 13 | I/O | ADC2 | display: CLK dell'HSPI | Occupato | è il MOSI nativo dell'HSPI, usato come clock |
 | 14 | I/O | ADC2 | display: MOSI (DIN) dell'HSPI | Occupato | è il CLK nativo dell'HSPI, usato come dati |
 | 15 | I/O | ADC2 | display: CS (del master sul 12.2") | Occupato | strapping secondario (messaggi di boot) |
-| 16 | I/O | no | BME680: SCL (I2C0) | Consigliato | utilizzabile perchè il modulo non ha PSRAM |
+| 16 | I/O | no | sensore Indoor: SCL (I2C0) | Consigliato | utilizzabile perchè il modulo non ha PSRAM |
 | 17 | I/O | no | | **Libero** | libero perchè il modulo non ha PSRAM |
 | 18 | I/O | no | | Riservato | CLK nativo del VSPI |
 | 19 | I/O | no | | Riservato | MISO nativo del VSPI |
-| 21 | I/O | no | BME680: SDA (I2C0) | Consigliato | default SDA di `Wire` |
+| 21 | I/O | no | sensore Indoor: SDA (I2C0) | Consigliato | default SDA di `Wire` |
 | 22 | I/O | no | | **Libero** | default SCL di `Wire` |
 | 23 | I/O | no | | Riservato | MOSI nativo del VSPI |
 | 25 | I/O | ADC2 | display: BUSY (del master sul 12.2") | Occupato | risveglia l'MCU dal light sleep durante il refresh |
@@ -209,7 +210,7 @@ Stato:
 | un segnale digitale in ingresso e uscita | **4, 17**; con il 9.7" anche **32** |
 | un segnale di sola lettura (pulsante, BUSY) | **34**; con il 9.7" anche **35** |
 | un ingresso analogico, anche col WiFi acceso | **34** (ADC1); con il 9.7" anche **32** e **35** |
-| una periferica I2C | in parallelo al BME680 su 21 e 16, se ha un indirizzo diverso; oppure `Wire1` su due pin liberi |
+| una periferica I2C | in parallelo al sensore Indoor su 21 e 16, se ha un indirizzo diverso; oppure `Wire1` su due pin liberi |
 | una periferica SPI | VSPI: CLK 18, MISO 19, MOSI 23, CS 5; un CS per ogni periferica in più, su un pin libero |
 | se il bus VSPI non serve | anche 5, 18, 19 e 23 come I/O |
 
@@ -332,8 +333,9 @@ OAuth, credenziali Tuya) e la **posizione GPS** (dato personale, accoppiato
 alla chiave OWM). Il modello è [`Env_template.h`](Env_template.h). Le costanti di
 dominio non-sensibili stanno nei moduli consumer: `CLOCK_POSIX_TZ`
 (Europe/Rome con DST automatico) in `Clock.h`, `CAL_MSGRAPH_TENANT_ID` in
-`Calendar.h` e la configurazione hardware del BME680 (`BME680_I2C_ADDR`,
-`BME680_SDA_PIN`, `BME680_SCL_PIN`) in [`Indoor.h`](Indoor.h).
+`Calendar.h` e la configurazione hardware del sensore (il define
+`INDOOR_SENSOR_BME680` / `INDOOR_SENSOR_BME280`, `INDOOR_I2C_ADDR`,
+`INDOOR_SDA_PIN`, `INDOOR_SCL_PIN`) in [`Indoor.h`](Indoor.h).
 
 ```cpp
 #ifndef ENV_H
@@ -361,7 +363,7 @@ dominio non-sensibili stanno nei moduli consumer: `CLOCK_POSIX_TZ`
 #define GOOGLE_CLIENT_SECRET  "paste_client_secret_here"
 #define GOOGLE_REFRESH_TOKEN  "paste_refresh_token_here"
 
-/* --- TuyaLink (telemetria BME680 verso l'app Smart Life) --- */
+/* --- TuyaLink (telemetria del sensore Indoor verso l'app Smart Life) --- */
 #define TUYA_DEVICE_ID     "paste_device_id_here"
 #define TUYA_DEVICE_SECRET "paste_device_secret_here"
 
@@ -467,7 +469,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 
 | Sorgente | Adattatore nel .ino | Metodo che produce il dato | Cosa arriva sul display |
 |---|---|---|---|
-| Sensore BME680 (BSEC) | nessuno: [Indoor::poll()](Indoor.h) è direttamente l'hook `pollSensor` dello scheduler | [Indoor::poll()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, IAQ), mostrato nel riquadro indoor |
+| Sensore BME680 (BSEC) o BME280 | nessuno: [Indoor::poll()](Indoor.h) è direttamente l'hook `pollSensor` dello scheduler | [Indoor::poll()](Indoor.h) | `Indoor::Sample` (temperatura, umidità, pressione, più l'IAQ col BME680), mostrato nel riquadro indoor |
 | Meteo OpenWeather | `runWeatherFetch()` | [Weather::runFetch()](Weather.h), che chiama `fetchOneCall()` ([Weather.h](Weather.h)) | Condizioni correnti, slot di previsione, alba e tramonto |
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
@@ -488,7 +490,7 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 #### Produttori indiretti
 
 - [Clock::sincronizza()](Clock.h) con [Clock::valido()](Clock.h) fornisce l'ora SNTP. Non disegna niente, ma condiziona i due calendari (`isClockValidForCalendars()`) e i calcoli di data in calendario e meteo. [Clock::resyncIfStale()](Clock.h), chiamata da `wifiOn()`, la risincronizza ogni `CLOCK_RESYNC_INTERVAL_MS`: in light sleep l'RTC gira sull'oscillatore RC interno, che anticipa di qualche secondo all'ora. La correzione compare nel log come `SNTP: correzione X ms dopo Y min (Z ppm)`.
-- Il sensore è il primo passo di ogni ciclo dello scheduler, e la sua scadenza ([Indoor::msUntilNextPoll()](Indoor.h), 300 s più 1 s dall'ultima chiamata) è l'orologio del ciclo. Senza sensore (`Indoor::attivo()` falso) il ciclo è interno. Dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia.
+- Il sensore è il primo passo di ogni ciclo dello scheduler. Col BME680 la sua scadenza ([Indoor::msUntilNextPoll()](Indoor.h), 300 s più 1 s dall'ultima chiamata) è l'orologio del ciclo. Senza sensore (`Indoor::attivo()` falso), e col BME280 che non ha scadenza propria e non registra l'hook `msUntilSensorPoll`, il ciclo è interno: il BME280 si legge all'inizio di ogni ciclo dentro la fascia WiFi, e di notte il dispositivo dorme fino all'apertura. Col BME680, dopo `run()` le uscite si leggono per riferimento con `getOutputs()`, senza la callback della libreria che le copierebbe per valore insieme all'intero `Bsec2`; un campione è nuovo quando il loro `time_stamp` cambia.
 - [Weather::recordHistory()](Weather.h) accumula lo storico della temperatura. Alimenta il grafico di `drawTempChart()`.
 - [Tuya::runPublish()](Tuya.h) pubblica il campione appena letto nello stesso ciclo e non porta dati al pannello, nè comanda il refresh: il badge `TUYA ERR` lo legge `drawBanner()` da `Tuya::hasFailed()` al momento del disegno.
 
@@ -532,7 +534,7 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
   (`wifiOn()`/`wifiOff()` sono dello scheduler).
 - **Banner**: 3 riquadri fieldset alti 196 px in fondo allo schermo (raggio
   12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 180w
-  (T/RH/IAQ/pressione, badge `TUYA ERR` sul bordo inferiore), **Meteo** 300w
+  (T/RH/pressione e IAQ in quarta riga solo col BME680, badge `TUYA ERR` sul bordo inferiore), **Meteo** 300w
   (orario del meteo corrente accanto al titolo; a sinistra il blocco corrente
   con icona 88w × 88h, temperatura percepita in rosso ed etichetta; a destra la
   colonna sole con in cima il mini-grafico della temperatura percepita da 3 ore
@@ -592,16 +594,28 @@ Widget del mese e lista eventi Outlook + Google.
 
 ### Indoor (`Indoor.h`)
 
-Lettura del sensore **Bosch BME680** via I2C con fusione IAQ della libreria
-**Bosch BSEC2** in modalità **ULP**: un campione ogni 300 s, che è il modo con cui BSEC
-è sottoscritto e non un intervallo configurabile. Il modulo espone una cache
-(`Indoor::sample()`) con temperatura e umidità heat-compensated, pressione (hPa),
-indice IAQ (0-500) e livello di calibrazione (0-3), mostrata nel riquadro Interno.
+Lettura del sensore ambientale via I2C. Il sensore montato si sceglie in testa a
+[`Indoor.h`](Indoor.h) con uno solo dei due define (zero o due danno `#error`):
+
+- `INDOOR_SENSOR_BME680`: **Bosch BME680** con fusione IAQ della libreria
+  **Bosch BSEC2** in modalità **ULP**, un campione ogni 300 s, che è il modo con cui
+  BSEC è sottoscritto e non un intervallo configurabile;
+- `INDOOR_SENSOR_BME280`: **Bosch BME280** con la libreria **Adafruit BME280** in
+  forced mode, letto all'inizio di ogni ciclo dentro la fascia WiFi. Niente IAQ.
+
+Il ramo non scelto non entra nella build: col BME280 bsec2 e BME68x non vengono nè
+compilate nè collegate (circa 49 KB di flash e 4,6 KB di DRAM in meno), perchè
+arduino-cli scopre le librerie dagli `#include` visti dal preprocessore. Il modulo
+espone una cache (`Indoor::sample()`) con temperatura, umidità e pressione (hPa), più
+l'indice IAQ (0-500) e il livello di calibrazione (0-3) col BME680, mostrata nel
+riquadro Interno: pressione in terza riga con entrambi i sensori, IAQ in quarta solo
+col BME680.
 
 **Sensore BME680 (BSEC)**: `begin()` sottoscrive `IAQ`, `STABILIZATION_STATUS`,
 temperatura e umidità compensate dal calore e pressione grezza, a campionamento ULP.
 Risoluzione e accuratezza sono quelle del datasheet Bosch. Il campione si memorizza
-nei tipi minimi che bastano alla risoluzione utile (`Indoor::Sample` pesa 20 byte), e
+nei tipi minimi che bastano alla risoluzione utile (`Indoor::Sample` pesa 20 byte, 16
+col BME280 che non ha i campi IAQ), e
 il display lo arrotonda ulteriormente (`Indoor::shownTemperature()`, `shownPressure()`
 e `shownIaq()`), così le oscillazioni sotto quella risoluzione non cambiano il frame e
 il driver può saltare il refresh.
@@ -614,9 +628,9 @@ il driver può saltare il refresh.
 | IAQ | 1 punto su scala 0-500 | nessuna tolleranza numerica: la dichiara l'accuratezza IAQ (0-3) | `uint16_t` | 1 punto | 10 punti, con l'etichetta sul valore arrotondato (soglie 50, 100, 150, 200, 250, 350: multiple di 10) |
 | Accuratezza IAQ | 4 livelli (0-3) | non applicabile | `uint8_t` | 1 livello | 1 livello (pedice) |
 
-`Indoor::poll()` è il primo passo di ogni ciclo dello scheduler, e la sua scadenza
-(`Indoor::msUntilNextPoll()`, 300 s più 1 s di margine dall'ultima chiamata) è
-l'orologio del ciclo: BSEC non si lascia anticipare nè ritardare, quindi tutto il
+Col BME680 `Indoor::poll()` è il primo passo di ogni ciclo dello scheduler, e la sua
+scadenza (`Indoor::msUntilNextPoll()`, 300 s più 1 s di margine dall'ultima chiamata)
+è l'orologio del ciclo: BSEC non si lascia anticipare nè ritardare, quindi tutto il
 resto si conta in cicli. Il sensore si interroga anche di notte, l'unica attività
 fuori dalla fascia WiFi, e anche mentre un client usa le pagine di manutenzione.
 
@@ -667,25 +681,53 @@ con il dispositivo sempre alimentato e senza riavvii:
   BSEC 3.3.0.1 è pubblicato per BME688 e BME690, non ha un wrapper Arduino
   ufficiale, cambia API e non cambia i vincoli dell'ULP.
 
-**Config hardware** (`BME680_I2C_ADDR`, `BME680_SDA_PIN`, `BME680_SCL_PIN`) in
-[`Indoor.h`](Indoor.h): default 0x77 / SDA 21 / SCL 16. Se il sensore non è collegato o
-l'indirizzo è errato `begin()` logga `[BME680] init failed` e il modulo si comporta
-come un no-op: meteo, calendario e display continuano a girare.
+**Sensore BME280 (Adafruit)**: `begin()` porta il sensore in forced mode con
+oversampling x1 su temperatura, pressione e umidità e filtro IIR spento, il profilo
+"weather monitoring" del datasheet. `poll()` avvia una misura (circa 10 ms), poi legge
+le tre grandezze. In forced mode ogni 5 minuti il sensore non si scalda da sè: non c'è
+un riscaldatore come quello del gas del BME680, e la temperatura non va compensata.
+Servono le librerie Adafruit BME280 e Adafruit Unified Sensor (Adafruit BusIO c'è già,
+per Adafruit GFX).
+
+| Grandezza | Risoluzione a x1 | Accuratezza (datasheet Bosch) | Tipo memorizzato | Mostrato sul display |
+|---|---|---|---|---|
+| Temperatura | 0,005 °C | ±0,5 °C a 25 °C; ±1,0 °C su 0-65 °C | `float` | 0,5 °C |
+| Umidità | 0,008 %RH | ±3 %RH fra 20 e 80 %RH a 25 °C | `uint8_t` | 1 %RH (intero) |
+| Pressione | 2,62 Pa | assoluta ±1 hPa, relativa ±0,12 hPa | `uint16_t` | 2 mBar |
+
+Il sensore non ha una scadenza propria, quindi non registra l'hook
+`msUntilSensorPoll` dello scheduler: il ciclo è interno, della stessa durata
+`CYCLE_S`, e `poll()` gira all'inizio di ogni ciclo dentro la fascia WiFi. Di notte
+nessun risveglio fino all'apertura della fascia, e niente NVS. La libreria Adafruit
+non segnala gli errori I2C, e su un bus guasto restituisce byte non letti: `poll()`
+scarta ogni lettura fuori dal range operativo del datasheet (-40..85 °C,
+300..1100 hPa) e lascia scadere il campione invece di mostrare un valore inventato.
+Il campione scade dopo `INDOOR_SAMPLE_MAX_AGE_MS`, cioè alla terza lettura persa,
+perchè col ciclo interno le letture distano esattamente `CYCLE_S`.
+
+**Config hardware** (`INDOOR_I2C_ADDR`, `INDOOR_SDA_PIN`, `INDOOR_SCL_PIN`,
+`INDOOR_I2C_CLOCK_HZ`) in [`Indoor.h`](Indoor.h): default 0x77 / SDA 21 / SCL 16 /
+400 kHz, gli stessi per i due sensori. Molti moduli BME280 economici escono a 0x76.
+Se il sensore non è collegato o l'indirizzo è errato `begin()` logga `[BME680] init
+failed` (o `[BME280] init failed`) e il modulo si comporta come un no-op: meteo,
+calendario e display continuano a girare.
 
 Con `I2C_DEBUG` a 1 (default in [`Indoor.h`](Indoor.h), da riportare a 0 a
-regime) `begin()` diagnostica il bus prima di avviare BSEC: sonda 0x77 e 0x76
-(gli unici indirizzi del BME68x), controlla il chip ID e misura il clock massimo
-a cui il blocco di calibrazione si rilegge identico, salendo da 100 kHz a 1 MHz.
-Le righe `[BME680] i2c: ...` riportano i pin in uso e il livello di SDA e SCL a
-bus fermo (una linea a 0 è quella bloccata), e dicono se manca il dispositivo (cablaggio,
-alimentazione, CS e SDO della breakout), se il bus va in timeout (pull-up), se il
-chip non è un BME680, e quali valori dare a `BME680_I2C_ADDR` e
-`BME680_I2C_CLOCK_HZ`. Costa circa 100 ms al boot e, senza sensore, il firmware
-prosegue come sopra.
+regime) `begin()` diagnostica il bus prima di avviare il sensore: sonda 0x77 e 0x76
+(gli unici indirizzi di BME680 e BME280), controlla il chip ID e misura il clock
+massimo a cui il blocco di calibrazione si rilegge identico, salendo da 100 kHz a
+1 MHz. Le righe `[BME680] i2c: ...` (o `[BME280]`) riportano i pin in uso e il
+livello di SDA e SCL a bus fermo (una linea a 0 è quella bloccata), e dicono se
+manca il dispositivo (cablaggio, alimentazione, CS e SDO della breakout), se il bus
+va in timeout (pull-up), se il chip non è quello selezionato (0x61 BME680, 0x60
+BME280, 0x58 BMP280, che spesso si vende per BME280 ma non ha l'umidità), e quali
+valori dare a `INDOOR_I2C_ADDR` e `INDOOR_I2C_CLOCK_HZ`. Costa circa 100 ms al boot
+e, senza sensore, il firmware prosegue come sopra.
 
 ### Tuya (`Tuya.h`)
 
-Pubblica le cinque grandezze di `Indoor::sample()` sul cloud Tuya con
+Pubblica le grandezze di `Indoor::sample()` (cinque col BME680, le tre senza IAQ
+col BME280) sul cloud Tuya con
 **TuyaLink**, il canale MQTT che Tuya offre per hardware non suo, così che i
 dati compaiano nell'app Android **Smart Life**. Il dispositivo si associa
 scansionando il QR code generato dalla console: il firmware non fa nessun
@@ -961,7 +1003,7 @@ void setup()
   Weather::begin();
   Calendar::Outlook::begin();
   Calendar::Google::begin();
-  Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS)
+  Indoor::begin();                           // BME680 (BSEC2 ULP, stato da NVS) o BME280 (forced)
   Tuya::begin();                             // topic e client id; nessuna rete qui dentro
   WallpaperStore::begin();                   // wallpaper dalla partizione in flash, già dal primo frame
   if (!(Clock::valido() && !Scheduler::isInsideRadioHours()))
@@ -991,7 +1033,9 @@ void loop()
 
 **Il ciclo.** Lo scheduler ([Scheduler.h](Scheduler.h)) ha un solo orologio, il ciclo
 del sensore: un'interrogazione del BME680 ogni `CYCLE_S` (300 s, il periodo ULP di
-BSEC). Senza sensore il ciclo è interno e dura lo stesso. Ogni ciclo fa tre passi,
+BSEC). Senza sensore, e col BME280 che non ha una scadenza propria, il ciclo è
+interno e dura lo stesso; il BME280 si legge solo nei cicli dentro la fascia WiFi.
+Ogni ciclo fa tre passi,
 sempre in quest'ordine:
 
 1. **sensore**: `Indoor::poll()`;
@@ -1038,7 +1082,7 @@ La sequenza dei task di rete sta nella tabella `TASK_TABLE`, l'unico posto dove 
 | `outlook` | `outl_min` | Stessa precondizione di `google`. |
 | `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso quando il percorso non è l'immagine programmata del riquadro (fuori dalla fascia percorso e da una forzatura a Percorso), senza orologio, arrivo o token. All'ingresso nella fascia lo slot riparte e il task gira al primo ciclo. Dopo meteo e calendari, come il cinema: il suo `onRoundStart()` manda la sonda o la preparazione del server, e il tempo di rete degli altri copre la generazione dell'immagine. Con il server ancora in avvio il download si rinvia al ciclo dopo (vedi [Sonda, sveglia e preparazione](#sonda-sveglia-e-preparazione)). |
 | `cinema` | `cine_min`, solo in fascia cinema | Programmazione cinema dalla webapp. Sospeso quando il cinema non è l'immagine programmata (fuori dalla fascia cinema e da una forzatura a Cinema) e senza orologio, perchè l'istante del download ne decide la validità. Stessa sonda, preparazione e rinvio del percorso; i due non girano mai nello stesso ciclo, perchè le fasce non si sovrappongono. |
-| `tuya` | `tuya_min` | Telemetria BME680 sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione BSEC o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Ultimo perchè la sua sessione TLS (~40 KB) resta aperta fino allo spegnimento della radio, e aperta prima dei download occuperebbe l'heap accanto all'immagine in RAM e alla sessione del download. |
+| `tuya` | `tuya_min` | Telemetria del sensore Indoor sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Ultimo perchè la sua sessione TLS (~40 KB) resta aperta fino allo spegnimento della radio, e aperta prima dei download occuperebbe l'heap accanto all'immagine in RAM e alla sessione del download. |
 
 Ingresso e uscita dalle fasce, scadenza del percorso, scadenza di una forzatura e cambio
 di sorgente da `/route` non hanno risvegli propri: `drawTestBackground()` sceglie
@@ -1052,7 +1096,7 @@ affiancate, 16 px fra zone impilate:
 |-------------------|---------------------------|---------------------------------------------------------|
 | Riquadro          | `x=10..620, y=10..450`    | Percorso, cinema o wallpaper (610w × 440h BWR)          |
 | Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=179, poi 6 eventi da 43 px (Outlook + Google merged) |
-| Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, 4 righe BME680 (T/RH/IAQ/P), badge `TUYA ERR` sul bordo inferiore |
+| Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, righe T/RH/P più IAQ in quarta col BME680, badge `TUYA ERR` sul bordo inferiore |
 | Banner Meteo      | `x=200..500, y=466..662`  | 300w × 196h, blocco corrente 160w + colonna sole 140w, orario del corrente accanto al titolo |
 | Banner Previsioni | `x=510..950, y=466..662`  | 440w × 196h, 3 blocchi da 146w                          |
 
@@ -1103,7 +1147,7 @@ Le cadenze vivono in [`Timings.h`](Timings.h), insieme al **pavimento** di ciasc
 sono modificabili a runtime dalla pagina `/config` della finestra di manutenzione
 (persistenza NVS, effetto dal giro successivo senza riavvio). Il sampling BME680
 (BSEC ULP, 300 s) NON è configurabile: è il profilo BSEC2 fissato in
-[`Indoor.h`](Indoor.h).
+[`Indoor.h`](Indoor.h). Il BME280 si legge una volta per ciclo.
 
 ---
 
@@ -1135,7 +1179,7 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | `owm_min` | `10` | `10` | `5` | min | Cadenza One Call 3.0, un frame sì e uno no. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
 | `outl_min` | `10` | `5` | `5` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati, ma sotto un ciclo il fetch non verrebbe mostrato prima del successivo. |
 | `goog_min` | `10` | `5` | `5` | min | Cadenza Google Calendar API v3. |
-| `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il periodo di campionamento del BME680: sotto, si ripubblica lo stesso campione. |
+| `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il ciclo, cioè il periodo di campionamento del sensore: sotto, si ripubblica lo stesso campione. |
 | `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
 | `wifi_h_fin` | `23` | `23` max | `1` | ora | Fine della fascia, inclusiva fino a `23:59`. |
@@ -1176,7 +1220,7 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `CLOCK_RECOVERY_CYCLES` | `2` cicli | Con l'ora non valida e nessun task dovuto, cicli fra due accensioni della radio fatte dallo scheduler solo per riprendere l'ora. |
 | `DISPLAY_BUSY_SLEEP_SLICE_MS` | `5000` ms | Timer di sicurezza del light sleep durante l'attesa del BUSY del refresh; il risveglio vero è il fronte del BUSY. |
 | `PARTIAL_CHAIN_MAX` | `6` | Partial consecutivi al massimo, poi un refresh pieno che azzera il grigio che il partial lascia dove toglie il nero (la letteratura dice uno ogni 5-10). |
-| `PARTIAL_MIN_TEMP_C`, `PARTIAL_TEMP_HYSTERESIS_C` | `18` °C, `2` °C | Sotto la soglia il frame è pieno, perchè la LUT del partial ha frame fissi e non compensa il freddo; dopo un pieno per freddo il partial riparte sopra soglia più isteresi. Valore prudente, non misurato. Senza BME680 collegato la soglia non si applica e il partial si prova comunque; con il sensore collegato un campione non valido tiene il frame pieno. |
+| `PARTIAL_MIN_TEMP_C`, `PARTIAL_TEMP_HYSTERESIS_C` | `18` °C, `2` °C | Sotto la soglia il frame è pieno, perchè la LUT del partial ha frame fissi e non compensa il freddo; dopo un pieno per freddo il partial riparte sopra soglia più isteresi. Valore prudente, non misurato. Senza sensore collegato la soglia non si applica e il partial si prova comunque; con il sensore collegato un campione non valido tiene il frame pieno. |
 | `PARTIAL_MAX_GAP_MS` | 2 × 300 s + 1 s, in ms | Oltre questa distanza dall'ultimo frame il riferimento del differenziale non si usa (notte, riavvio, finestra di manutenzione). |
 | `MAINT_CLIENT_IDLE_MS` | `30000` ms | Nella finestra di manutenzione lo scheduler aspetta finchè l'ultima richiesta HTTP è più recente di così, o finchè un dispositivo è associato all'AP di emergenza. |
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
@@ -1185,7 +1229,7 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `TUYA_KEEPALIVE_S` | `1200` s | Keepalive dichiarato nel CONNECT: il broker tiene il dispositivo online per 1,5 volte questo valore dall'ultimo traffico. 1200 è il massimo ammesso da Tuya (30..1200); la cadenza `tuya_min` deve restare sotto i 30 minuti, altrimenti il dispositivo risulta offline fra un publish e il successivo. |
 | `SLEEP_MAX_S` | 24 h | Tetto di sicurezza di un light sleep. Con il sensore lo sleep dura fino alla sua scadenza esatta, senza pavimento; il tetto serve alla notte senza sensore, che dorme fino all'apertura della fascia. |
 | `BSEC_MARGINE_POLL_MS` | `1000` ms | Il poll del sensore cade questo margine dopo i 300 s, mai prima: lo 0,3% del periodo, dentro il 6,25% che BSEC tollera. |
-| `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). |
+| `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). Fissa `CYCLE_S` anche col BME280, che non ha vincoli propri. |
 | `BSEC_STATE_SAVE_INTERVAL_MS` | `6` h | Persistenza dello stato di calibrazione BSEC in NVS. |
 | `MAINT_STA_TIMEOUT_S` | `15` s | Attesa della rete di casa prima di ripiegare sull'AP di emergenza. |
 | Token margin OAuth | `60` s | `Calendar.h`: refresh anticipato del token Outlook/Google. |
@@ -1280,7 +1324,7 @@ Ogni esito è loggato con durata e prossimo slot:
 | Buffer in RAM non allocabile (heap insufficiente) | Download non avviato, log `buffer non allocabile`; il riquadro mostra il wallpaper | L'allocazione si ritenta prima di ogni download: il riquadro non si disattiva |
 | Wallpaper assente o partizione mancante | Il riquadro mostra il wallpaper predefinito del firmware ([wallpaper/img_great_wave.h](wallpaper/img_great_wave.h)) | Al caricamento da `/wallpaper`; senza partizione, dopo un flash via seriale con `partitions.csv` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
-| BME680 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
+| BME680 o BME280 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
 | Orologio mai sincronizzato (SNTP irraggiungibile) | I task che chiedono l'ora (calendari, Tuya, percorso, cinema) restano **sospesi**, la lista eventi mostra i placeholder `--` e il riquadro il wallpaper; il frame si disegna comunque a ogni ciclo. Anche senza task dovuti lo scheduler riaccende la radio ogni `CLOCK_RECOVERY_CYCLES` cicli per riprendere l'ora | Al primo SNTP riuscito i task sospesi girano nello stesso giro, senza aver consumato nessuno slot |
 
 **Principio di base**: ogni modulo applicativo è **completamente isolato**.

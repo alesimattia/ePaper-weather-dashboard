@@ -42,8 +42,9 @@
  * Ciclo del dispositivo: un'interrogazione del sensore, i fetch dovuti e un
  * frame. Coincide con il periodo ULP perchè BSEC è l'unico orologio che non si
  * può anticipare nè ritardare oltre il 6,25% (guida Bosch AN011), quindi tutto
- * il resto si conta in cicli. Le cadenze configurabili sono multipli di
- * CYCLE_MIN, che deve essere un numero intero di minuti.
+ * il resto si conta in cicli. Col BME280 (Indoor.h) il vincolo non c'è e il
+ * ciclo, interno, resta della stessa durata. Le cadenze configurabili sono
+ * multipli di CYCLE_MIN, che deve essere un numero intero di minuti.
  */
 #define CYCLE_S BSEC_PERIODO_ULP_S
 #define CYCLE_MIN (CYCLE_S / 60)
@@ -52,9 +53,10 @@
  *  essere più breve, perchè a ogni ciclo si disegna un frame. */
 #define DISPLAY_REFRESH_PIENO_S 24
 
-/** Tetto di sicurezza di un light sleep. Con il sensore attivo il sonno dura
- *  fino alla sua scadenza esatta, poco oltre un ciclo; il tetto serve solo
- *  alla notte senza sensore, che dorme fino all'apertura della fascia WiFi. */
+/** Tetto di sicurezza di un light sleep. Con il BME680 attivo il sonno dura
+ *  fino alla scadenza esatta di BSEC, poco oltre un ciclo; il tetto serve solo
+ *  alla notte senza sensore o col BME280, che dorme fino all'apertura della
+ *  fascia WiFi. */
 #define SLEEP_MAX_S (24UL * 60UL * 60UL)
 
 // ---------------------------------------------------------------------------

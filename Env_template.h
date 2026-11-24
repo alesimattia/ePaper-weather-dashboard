@@ -110,7 +110,8 @@
  *  1. platform.tuya.com -> Create Product -> categoria sensore, scegliendo
  *     "TuyaLink" come smart mode.
  *  2. Function Definition: creare le properties che il firmware pubblica
- *     (temperatura, umidità, pressione, IAQ, accuratezza IAQ) annotando
+ *     (temperatura, umidità, pressione; IAQ e accuratezza IAQ solo col
+ *     BME680, vedi Indoor.h) annotando
  *     identifier e scale di ognuna: vanno riportati nei #define di Tuya.h,
  *     e un disallineamento fra scale e moltiplicatore non dà nessun errore,
  *     solo valori sbagliati nell'app.

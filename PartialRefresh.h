@@ -65,7 +65,7 @@ namespace PartialRefresh
     bool     hasLastFrame;
     uint32_t msSinceLastFrame;
     uint8_t  chain;             // partial consecutivi dall'ultimo pieno
-    bool     sensorPresent;     // BME680 inizializzato; falso = non collegato
+    bool     sensorPresent;     // sensore Indoor inizializzato; falso = non collegato
     bool     sensorValid;
     float    temperatureC;
     bool     coldLatched;       // l'ultima decisione è stata TooCold
@@ -73,7 +73,7 @@ namespace PartialRefresh
 
   /**
    * Decide se un frame può provare il partial. Ordine delle condizioni: prima
-   * quelle che non dipendono dal sensore, poi il sensore. Senza BME680 collegato
+   * quelle che non dipendono dal sensore, poi il sensore. Senza sensore collegato
    * la temperatura non si controlla e il partial si prova comunque: in una stanza
    * fredda il nero può uscire sbiadito, perchè la LUT del partial non compensa il
    * freddo. Con il sensore collegato un campione non valido tiene il frame pieno.

@@ -18,8 +18,10 @@
  * BSEC accetta un'interrogazione del BME680 ogni BSEC_PERIODO_ULP_S, con uno
  * scarto massimo del 6,25% (guida Bosch AN011), e non si lascia nè anticipare
  * nè rimandare: è quindi lui a scandire il tempo, e tutto il resto si conta in
- * cicli. Senza sensore il ciclo è interno e dura lo stesso CYCLE_S. Ogni ciclo
- * esegue tre passi, sempre in quest'ordine:
+ * cicli. Senza sensore il ciclo è interno e dura lo stesso CYCLE_S. Lo è anche
+ * con un sensore senza scadenza propria, come il BME280, che non registra
+ * msUntilSensorPoll: si legge all'inizio di ogni ciclo dentro la fascia WiFi.
+ * Ogni ciclo esegue tre passi, sempre in quest'ordine:
  *
  *   1. sensore: l'interrogazione, così ciò che segue usa il campione nuovo;
  *   2. rete: il passo di rete, vedi sotto, con i task dovuti in questo ciclo
@@ -50,7 +52,8 @@
  *
  * Fuori dalla fascia WiFi resta solo il passo del sensore, il minimo che
  * conserva l'accuratezza di BSEC: niente radio e niente frame fino
- * all'apertura della fascia.
+ * all'apertura della fascia. Senza un sensore con scadenza propria non resta
+ * nemmeno quello, e si dorme fino all'apertura.
  *
  * La scadenza del sensore ha la precedenza su tutto: lo sleep dura fino a lei
  * esattamente, e la si controlla anche fra un task di rete e l'altro e prima
@@ -130,6 +133,10 @@ namespace Scheduler
    * Hook verso la piattaforma e i moduli, tutti obbligatori salvo indicazione.
    * Il sensore è opzionale: con sensorActive() falso o assente il ciclo è
    * interno, ogni CYCLE_S dall'inizio del precedente.
+   * Anche msUntilSensorPoll è opzionale e dice se il sensore ha una scadenza
+   * propria. Se c'è (BSEC) è l'orologio del ciclo e pollSensor() si chiama a
+   * ogni ciclo, anche di notte. Se manca (BME280) il ciclo è interno e
+   * pollSensor() si chiama solo all'inizio dei cicli dentro la fascia WiFi.
    */
   struct Hooks
   {
@@ -206,6 +213,10 @@ namespace Scheduler
 
     inline bool sensorIsActive() { return hooks.sensorActive && hooks.sensorActive(); }
 
+    /** Vero se il sensore è attivo e ha una scadenza propria, che diventa
+     *  l'orologio del ciclo al posto di CYCLE_S. */
+    inline bool sensorSetsCycle() { return sensorIsActive() && hooks.msUntilSensorPoll; }
+
     /** Vero se l'ora non è valida e da CLOCK_RECOVERY_CYCLES cicli nessun passo
      *  ha acceso la radio: SNTP si sincronizza solo con la radio accesa, e i
      *  task che chiedono l'ora non diventerebbero mai dovuti. */
@@ -263,14 +274,14 @@ namespace Scheduler
 
   /**
    * Millisecondi all'inizio del prossimo ciclo: la scadenza del sensore se è
-   * attivo, altrimenti CYCLE_S dall'inizio del ciclo corrente. 0 prima del
-   * primo ciclo dopo il boot.
+   * attivo e ne ha una, altrimenti CYCLE_S dall'inizio del ciclo corrente. 0
+   * prima del primo ciclo dopo il boot.
    */
   inline uint32_t msUntilNextCycle()
   {
     using namespace detail;
     if (!cycleStarted) return 0;
-    if (sensorIsActive()) return hooks.msUntilSensorPoll ? hooks.msUntilSensorPoll() : 0;
+    if (sensorSetsCycle()) return hooks.msUntilSensorPoll();
     return msRemaining(millis(), cycleStartMs + (uint32_t)CYCLE_S * 1000UL);
   }
 
@@ -333,7 +344,8 @@ namespace Scheduler
     }
 
     /**
-     * Apre un nuovo ciclo se la sua scadenza è arrivata: interroga il sensore e,
+     * Apre un nuovo ciclo se la sua scadenza è arrivata: interroga il sensore
+     * (sempre se ha una scadenza propria, altrimenti solo dentro la fascia) e,
      * dentro la fascia, prenota il frame. Il primo ciclo di un giorno dentro la
      * fascia riapre lo slot di tutti i task, così il primo frame del mattino ha
      * dati nuovi e nessun ritento della sera prima si trascina.
@@ -347,7 +359,10 @@ namespace Scheduler
       cycleStartMs = millis();
       netPhase = NetPhase::IDLE;
       frameGate = false;
-      if (sensorIsActive() && hooks.pollSensor) hooks.pollSensor();
+      // Un sensore senza scadenza propria si legge solo per i cicli che la
+      // useranno: di notte niente frame nè Tuya, quindi niente lettura.
+      if (sensorIsActive() && hooks.pollSensor && (sensorSetsCycle() || isInsideRadioHours()))
+        hooks.pollSensor();
       if (isInsideRadioHours())
       {
         framePending = true;
@@ -711,14 +726,15 @@ namespace Scheduler
 
   /**
    * Millisecondi al prossimo evento: la scadenza esatta del sensore quando è
-   * attivo, senza pavimento, perchè un poll in ritardo oltre il 6,25% blocca
-   * l'accuratezza di BSEC; senza sensore la fine del ciclo dentro la fascia e
-   * l'apertura della fascia fuori. Il tetto SLEEP_MAX_S è solo una guardia.
+   * attivo e ne ha una, senza pavimento, perchè un poll in ritardo oltre il
+   * 6,25% blocca l'accuratezza di BSEC; altrimenti (nessun sensore, o un
+   * sensore senza scadenza come il BME280) la fine del ciclo dentro la fascia
+   * e l'apertura della fascia fuori. Il tetto SLEEP_MAX_S è solo una guardia.
    */
   inline uint32_t msUntilNextEvent(const char** who)
   {
     uint32_t ms;
-    if (detail::sensorIsActive() || !detail::cycleStarted)
+    if (detail::sensorSetsCycle() || !detail::cycleStarted)
     {
       ms = msUntilNextCycle();
       *who = "sensore";
