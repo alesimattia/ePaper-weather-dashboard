@@ -77,9 +77,9 @@ Due dettagli non ovvi:
 
 ## Cosa coprono
 
-**`test_timings`**: default, compreso `cine_min` a 60; applicazione
+**`test_timings`**: default, compreso `cine_min` a 30; applicazione
 **transazionale** (fascia WiFi e cadenza del cinema cambiate insieme passano per
-intero); cadenza del cinema sotto il pavimento di 60 minuti respinta senza
+intero); cadenza del cinema sotto il pavimento di 30 minuti respinta senza
 toccare lo stato, come ogni vincolo incrociato; round-trip su NVS; clamp al boot
 di un valore diventato illegale perchè un aggiornamento ha alzato il pavimento,
 con riscrittura; cadenza fuori

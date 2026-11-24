@@ -23,7 +23,7 @@ int main()
 {
   using namespace Timings;
   Timings::begin();
-  ok(get().owmMin == 10 && get().cinemaMin == 60 && get().tuyaMin == 5,
+  ok(get().owmMin == 10 && get().cinemaMin == 30 && get().tuyaMin == 5,
      "default caricati");
   ok(CYCLE_MIN == 5 && CYCLE_S == BSEC_PERIODO_ULP_S, "ciclo di 5 minuti, pari al periodo ULP");
 
@@ -35,9 +35,9 @@ int main()
   ok(applica(a, &m), "fascia 2..5 + cinema ogni 120 min insieme: combinazione valida accettata");
   ok(get().wifiOraFine == 5 && get().cinemaMin == 120, "  e applicata per intero");
 
-  Valori b = get(); b.cinemaMin = 30;              // sotto il pavimento della cache del server
+  Valori b = get(); b.cinemaMin = 25;              // sotto il pavimento, ma multiplo del passo
   m = nullptr;
-  ok(!applica(b, &m) && get().cinemaMin == 120, "cinema sotto i 60 min respinto, stato invariato");
+  ok(!applica(b, &m) && get().cinemaMin == 120, "cinema sotto i 30 min respinto, stato invariato");
   std::printf("   motivo: %s\n", m ? m : "(nessuno)");
 
   Valori c = get(); c.wifiOraInizio = 20; c.wifiOraFine = 5;

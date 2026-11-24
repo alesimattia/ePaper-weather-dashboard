@@ -15,7 +15,7 @@ type: project
 - `applica()` rifiuta un valore fuori limiti o fuori passo con il motivo di `campoNonValido()`, che nomina chiave, limiti o passo;
 - `begin()` clampa ai limiti e porta un valore fuori passo al multiplo successivo, che resta entro il tetto perchè anche il tetto è multiplo; logga e riscrive in NVS, così `/config` mostra il valore in uso;
 - `/config` scrive `step` nell'`<input type=number>`.
-`incoerenza()` resta per i soli vincoli fra campi di `Timings` (fascia WiFi coerente); con una combinazione incoerente al boot si torna interamente ai default. Il vincolo "fasce di percorso e cinema dentro la fascia WiFi" sta in `Routefinder::windowsOutsideRadioHours()`, chiamato dalla POST di `/config`. Il cinema ha la cadenza `cine_min` (default e pavimento 60, la cache del server), non un'ora: la sua fascia sta in `Routefinder` ([[routefinder_morning_route]]).
+`incoerenza()` resta per i soli vincoli fra campi di `Timings` (fascia WiFi coerente); con una combinazione incoerente al boot si torna interamente ai default. Il vincolo "fasce di percorso e cinema dentro la fascia WiFi" sta in `Routefinder::windowsOutsideRadioHours()`, chiamato dalla POST di `/config`. Il cinema ha la cadenza `cine_min` (default e pavimento 30, il rinnovo della webapp in fascia serale), non un'ora: la sua fascia sta in `Routefinder` ([[routefinder_morning_route]]).
 
 **Aggiungere una cadenza** = un campo in `Valori`, una riga in `CAMPI` con `step`, una riga nella tabella dei task: scheduler e validazione non si toccano.
 

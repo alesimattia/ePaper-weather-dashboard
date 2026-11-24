@@ -103,12 +103,13 @@
 #endif
 #define ROUTE_FETCH_MIN_FLOOR CYCLE_MIN
 
-/** Cinema, solo dentro la fascia cinema. Pavimento pari alla cache del server
- *  (CACHE_TTL_SECONDS di webapp/render.yaml): sotto si riscarica la stessa immagine. */
+/** Cinema, solo dentro la fascia cinema. Default e pavimento pari a 30 min, l'intervallo con
+ *  cui la webapp rinnova la programmazione in fascia serale (DEFAULT_SCHEDULE in
+ *  webapp/cache_schedule.py): sotto si riscarica la stessa immagine. */
 #ifndef CINEMA_FETCH_MIN
-  #define CINEMA_FETCH_MIN 60
+  #define CINEMA_FETCH_MIN 30
 #endif
-#define CINEMA_FETCH_MIN_FLOOR 60
+#define CINEMA_FETCH_MIN_FLOOR 30
 
 /** Durata della finestra di manutenzione (pagina di aggiornamento firmware e
  *  configurazione) aperta a ogni boot. */
@@ -334,7 +335,7 @@ static_assert((unsigned long)TUYA_PUBLISH_MIN * 60UL < (unsigned long)TUYA_KEEPA
 static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CADENZA_MAX_MIN,
               "ROUTE_FETCH_MIN fuori dai limiti");
 static_assert(CINEMA_FETCH_MIN >= CINEMA_FETCH_MIN_FLOOR && CINEMA_FETCH_MIN <= CADENZA_MAX_MIN,
-              "sotto il pavimento il server cinema restituisce la stessa immagine dalla cache");
+              "sotto il pavimento la webapp restituisce la stessa programmazione");
 static_assert(OTA_WINDOW_MIN >= OTA_WINDOW_MIN_FLOOR && OTA_WINDOW_MIN <= CADENZA_MAX_MIN,
               "OTA_WINDOW_MIN fuori dai limiti");
 static_assert(WIFI_ACTIVE_HOUR_START <= WIFI_ACTIVE_HOUR_END && WIFI_ACTIVE_HOUR_END <= 23,

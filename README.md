@@ -997,7 +997,7 @@ sempre in quest'ordine:
 
 Le cadenze sono multipli del ciclo e si contano in cicli dallo slot precedente, mai in
 millisecondi, quindi non scivolano: meteo e calendari a 10 minuti cadono un frame
-sì e uno no, percorso e Tuya a ogni frame, cinema ogni ora. Un fetch fallito ritenta
+sì e uno no, percorso e Tuya a ogni frame, cinema ogni 30 minuti. Un fetch fallito ritenta
 una sola volta, al ciclo successivo e mai nella stessa accensione della radio, così il
 frame non aspetta mai un ritento; lo slot resta ancorato al ciclo in cui si è aperto, e
 al secondo fallimento si chiude e il task attende la cadenza piena. Lo slot di un task
@@ -1130,7 +1130,7 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
 | `wifi_h_fin` | `23` | `23` max | `1` | ora | Fine della fascia, inclusiva fino a `23:59`. |
-| `cine_min` | `60` | `60` | `5` | min | Cadenza della programmazione cinema, solo dentro la fascia cinema. Il pavimento è il TTL della cache del server (`CACHE_TTL_SECONDS` di `webapp/render.yaml`): sotto, si riscarica la stessa immagine. |
+| `cine_min` | `30` | `30` | `5` | min | Cadenza della programmazione cinema, solo dentro la fascia cinema. Il pavimento è l'intervallo con cui la webapp rinnova la programmazione in fascia serale: sotto, si riscarica la stessa immagine. |
 | `route_min` | `5` | `5` | `5` | min | Cadenza del percorso del mattino, a ogni ciclo, solo dentro la fascia percorso. |
 
 Vincoli incrociati, verificati sia a compile-time sui default sia a runtime
@@ -1316,8 +1316,8 @@ webapp [`webapp/`](webapp/) (vedi [webapp/README.md](webapp/README.md) per l'API
    cinema, perchè le fasce non si sovrappongono e una forzatura ne attiva uno solo.
    Sta in RAM e non in flash perchè si riscarica a ogni cadenza, che consumerebbe la
    flash, e perchè la validità dell'immagine è comunque legata alla fascia.
-2. **Task**: `cinema` gira ogni `cine_min` (default e pavimento 60 min, il TTL della
-   cache del server) solo quando il cinema è l'immagine programmata del riquadro, cioè
+2. **Task**: `cinema` gira ogni `cine_min` (default e pavimento 30 min, l'intervallo di
+   rinnovo della webapp in fascia serale) solo quando il cinema è l'immagine programmata del riquadro, cioè
    nella fascia cinema (default 18:00-21:00, da `/route`) o durante una forzatura a
    Cinema, e con l'orologio valido. All'ingresso nella fascia lo slot riparte, quindi
    il primo download cade al primo ciclo della fascia. Il task gira dopo meteo e
@@ -1449,8 +1449,8 @@ limiti pubblici documentati:
 | Google Calendar v3        | `CAL_GOOGLE_FETCH_MIN`       | 10 min | 10 000 richieste/min per progetto e 600/min per utente; soglia giornaliera di 1 000 000 richieste oltre la quale è prevista la fatturazione ([fonte](https://developers.google.com/workspace/calendar/api/guides/quota)) |
 | TuyaLink (MQTT)           | `TUYA_PUBLISH_MIN`           | 5 min  | Il vincolo documentato è la **licenza per device**: una licenza per dispositivo, con due licenze gratuite per account a scopo di debug e le successive a pagamento ([fonte](https://developer.tuya.com/en/docs/iot/lisence-management?id=Kb4qlem97idl0)). Il pavimento non è del fornitore ma del sensore: sotto i 5 min si ripubblica lo stesso campione. |
 
-Il fetch cinema (endpoint render.com) avviene **ogni `CINEMA_FETCH_MIN`** (60 min)
-**solo nella fascia cinema** (default 18:00-21:00, cioè 3 download al giorno più i ping
+Il fetch cinema (endpoint render.com) avviene **ogni `CINEMA_FETCH_MIN`** (30 min)
+**solo nella fascia cinema** (default 18:00-21:00, cioè 6 download al giorno più i ping
 di sveglia) e non ha rate limit (è il tuo servizio). I fetch di rete sono vincolati alla finestra oraria
 `WIFI_ACTIVE_HOUR_START..END` (default 07:00-23:59): fuori da questa fascia la radio
 resta spenta e non si contattano API esterne, Tuya compreso. Il percorso
