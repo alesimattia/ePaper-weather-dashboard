@@ -43,7 +43,10 @@
  * fallimento ritarda il frame. Lo slot riparte pulito a ogni nuova attivazione
  * del task, cioè quando la sua precondizione diventa vera e al primo ciclo
  * della giornata: un ritento lasciato in sospeso da una fascia, da un
- * forzamento o dalla notte non si trascina in quella dopo.
+ * forzamento o dalla notte non si trascina in quella dopo. Un task che ha
+ * avviato qualcosa che matura solo fra un ciclo, come il risveglio di un
+ * server, si rinvia al ciclo successivo: lo slot si apre lì e nessun
+ * tentativo si spende.
  *
  * Fuori dalla fascia WiFi resta solo il passo del sensore, il minimo che
  * conserva l'accuratezza di BSEC: niente radio e niente frame fino
@@ -66,8 +69,11 @@ namespace Scheduler
    *   FAILED        guasto imputabile al task: consuma un tentativo.
    *   SKIPPED       niente da fare, o guasto a monte (radio giù): lo stato
    *                 resta intatto e il tentativo non viene speso.
+   *   DEFERRED      avviato qualcosa che matura solo al ciclo successivo:
+   *                 lo slot si apre qui, il tentativo non viene speso e il
+   *                 task resta dovuto al ciclo dopo.
    */
-  enum class Outcome : uint8_t { OK, FAILED, SKIPPED };
+  enum class Outcome : uint8_t { OK, FAILED, SKIPPED, DEFERRED };
 
   /** Di chi è la radio durante il giro. */
   enum class RadioMode : uint8_t
@@ -113,6 +119,7 @@ namespace Scheduler
       bool     attempted         = false;  // vero se attemptCycle è significativo
       uint32_t attemptCycle      = 0;      // ciclo dell'ultimo tentativo
       bool     retrying          = false;
+      bool     deferred          = false;  // rinviato al ciclo successivo da un esito DEFERRED
       uint8_t  failedAttempts    = 0;      // falliti consecutivi dentro lo slot corrente
       bool     eligible          = false;  // esito dell'ultima valutazione della precondizione
       uint32_t outcomeCount = 0, okCount = 0, failedCount = 0;
@@ -271,23 +278,26 @@ namespace Scheduler
   inline uint32_t currentCycle() { return detail::cycle; }
 
   /**
-   * Riapre lo slot del task da zero: dovuto subito, senza ritenti nè fallimenti
-   * ereditati. Lo chiamano il fronte di salita della precondizione e il primo
-   * ciclo della giornata, cioè ogni nuova attivazione del task.
+   * Riapre lo slot del task da zero: dovuto subito, senza ritenti, rinvii nè
+   * fallimenti ereditati. Lo chiamano il fronte di salita della precondizione e
+   * il primo ciclo della giornata, cioè ogni nuova attivazione del task.
    */
   inline void restartSlot(Task& t)
   {
     t.state.neverRun = true;
     t.state.retrying = false;
+    t.state.deferred = false;
     t.state.failedAttempts = 0;
   }
 
   /**
    * Vero se il task va eseguito nel ciclo corrente: precondizione vera, al più
    * un tentativo per ciclo, e i cicli della cadenza trascorsi dallo slot
-   * precedente oppure un ritento in sospeso. Registra anche l'esito della
-   * precondizione e, sul suo fronte di salita, riapre lo slot: per questo non
-   * è const, e resta idempotente se chiamata più volte nello stesso giro.
+   * precedente oppure un ritento in sospeso. Un rinvio non tocca nessuna di
+   * queste condizioni, quindi il task rinviato resta dovuto al ciclo dopo.
+   * Registra anche l'esito della precondizione e, sul suo fronte di salita,
+   * riapre lo slot: per questo non è const, e resta idempotente se chiamata più
+   * volte nello stesso giro.
    */
   inline bool isDue(Task& t)
   {
@@ -318,6 +328,7 @@ namespace Scheduler
       t.state.slotCycle = t.state.openCycle;
       t.state.neverRun = false;
       t.state.retrying = false;
+      t.state.deferred = false;
       t.state.failedAttempts = 0;
     }
 
@@ -379,7 +390,8 @@ namespace Scheduler
    * Registra l'esito di un task e decide se lo slot si chiude o si ritenta al
    * ciclo successivo. Un'esecuzione riuscita ma con dati ancora incompleti
    * conta come fallimento ai fini dello slot: è il caso del meteo che ha la
-   * corrente ma non le previsioni.
+   * corrente ma non le previsioni. Un rinvio apre lo slot nel proprio ciclo, che
+   * resta l'ancora della cadenza anche quando l'esito arriva al ciclo dopo.
    */
   inline void recordOutcome(Task& t, Outcome outcome, uint32_t durationMs)
   {
@@ -390,9 +402,17 @@ namespace Scheduler
     }
 
     detail::ranTaskThisRound = true;
-    if (!t.state.retrying) t.state.openCycle = detail::cycle;
+    if (!t.state.retrying && !t.state.deferred) t.state.openCycle = detail::cycle;
     t.state.attempted = true;
     t.state.attemptCycle = detail::cycle;
+
+    if (outcome == Outcome::DEFERRED)
+    {
+      t.state.deferred = true;
+      LOG("sched", "%s: rinviato al prossimo ciclo dopo %lu ms", t.tag, (unsigned long)durationMs);
+      return;
+    }
+    t.state.deferred = false;
     t.state.outcomeCount++;
 
     const bool incomplete = (outcome != Outcome::FAILED) && t.hasIncompleteData && t.hasIncompleteData();
@@ -793,6 +813,7 @@ namespace Scheduler
       if (t.preconditionsMet && !t.preconditionsMet()) snprintf(when, sizeof when, "sospeso");
       else if (isDue(t)) snprintf(when, sizeof when, "ora");
       else if (t.state.retrying) snprintf(when, sizeof when, "ritento");
+      else if (t.state.deferred) snprintf(when, sizeof when, "rinvio");
       else
       {
         const uint32_t elapsed = detail::cycle - t.state.slotCycle;

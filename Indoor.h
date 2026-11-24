@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/gpio.h>
 #include <bsec2.h>
 #include <Preferences.h>
 #include "Timings.h"
@@ -22,7 +23,7 @@
  */
 #define BME680_I2C_ADDR   0x77
 #define BME680_SDA_PIN    21
-#define BME680_SCL_PIN    22
+#define BME680_SCL_PIN    16
 
 /** Clock dell'I2C. Il limite reale non è quello dei datasheet ma quello del
  *  cablaggio (pull-up e capacità dei fili): il valore va preso dal clock
@@ -322,11 +323,20 @@ namespace Indoor
      * sia il clock impostato), controlla il chip ID e lascia Wire al clock da
      * usare, cioè BME680_I2C_CLOCK_HZ se il bus lo regge, altrimenti il
      * massimo misurato. Ogni esito negativo è loggato con la sua causa.
+     * Prima della sonda logga i pin in uso e il livello di SDA e SCL a bus
+     * fermo: entrambi devono leggersi alti, una linea a 0 è quella bloccata.
+     * Il livello è digitale, quindi una linea a metà tensione può leggersi in
+     * un modo o nell'altro: in quel caso decide il tester.
      * Usata da begin() con I2C_DEBUG a 1.
      * @return false se non c'è un BME680 utilizzabile.
      */
     inline bool debugDetect(uint8_t& addr)
     {
+      LOG("BME680", "i2c: SDA GPIO%d, SCL GPIO%d, livelli a riposo SDA=%d SCL=%d (atteso 1 e 1)",
+          BME680_SDA_PIN, BME680_SCL_PIN,
+          gpio_get_level((gpio_num_t)BME680_SDA_PIN),
+          gpio_get_level((gpio_num_t)BME680_SCL_PIN));
+
       const uint8_t candidati[] = {
         BME680_I2C_ADDR,
         BME680_I2C_ADDR == BME68X_I2C_ADDR_HIGH ? BME68X_I2C_ADDR_LOW : BME68X_I2C_ADDR_HIGH};

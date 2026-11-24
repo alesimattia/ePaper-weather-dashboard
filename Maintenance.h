@@ -180,16 +180,12 @@ namespace Maintenance
          * access point durante un possibile upload.
          */
         Clock::sincronizza(0);
-        Net::rememberIp(WiFi.localIP());
         LOG("MAINT", "server su rete di casa: http://%s/ oppure http://%s.local/ per %lu s",
             WiFi.localIP().toString().c_str(), MAINT_HOSTNAME,
             (unsigned long)(finestraMs() / 1000UL));
       }
       else
       {
-        // L'indirizzo dell'access point si ricorda solo se la rete di casa non
-        // ne ha mai dato uno: è l'unico da cui caricare il wallpaper.
-        if (Net::lastKnownIp()[0] == '\0') Net::rememberIp(WiFi.softAPIP());
         LOG("MAINT", "STA non salita in %lu s: access point %s, http://%s/ per %lu s",
             (unsigned long)(attesaStaMs() / 1000UL), OTA_AP_SSID,
             WiFi.softAPIP().toString().c_str(), (unsigned long)(finestraMs() / 1000UL));
@@ -584,10 +580,10 @@ namespace Maintenance
     inline const char*                  wallpaperErrore    = nullptr;
     inline WallpaperStore::CommitResult wallpaperEsito     = WallpaperStore::CommitResult::Failed;
 
-    /** Descrive il wallpaper presente nella partizione. */
+    /** Descrive il wallpaper mostrato: quello della partizione o il predefinito del firmware. */
     inline void describeWallpaper(char* buf, size_t size)
     {
-      if (WallpaperStore::image() == nullptr) snprintf(buf, size, "assente");
+      if (WallpaperStore::image() == nullptr) snprintf(buf, size, "predefinito del firmware");
       else snprintf(buf, size, "presente, crc %08lx", (unsigned long)WallpaperStore::crc());
     }
 
@@ -836,7 +832,6 @@ namespace Maintenance
         {
           avviaMdns();
           Clock::sincronizza(0);   // stesso motivo di apri(ServerSta)
-          Net::rememberIp(WiFi.localIP());
           LOG("MAINT", "STA salita: raggiungibile anche su http://%s/",
               WiFi.localIP().toString().c_str());
         }

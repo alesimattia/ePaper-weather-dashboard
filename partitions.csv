@@ -1,8 +1,8 @@
 # Tabella delle partizioni del firmware, flash da 4 MB. Il core la usa al posto
-# dello schema scelto a menu, che resta su "Minimal SPIFFS" per gli altri
-# parametri; il controllo di dimensione della build va riportato agli slot da
-# 1856 KB con upload.maximum_size=1900544 (build.ps1, buildPreferences di
-# .vscode/arduino.json). Due slot OTA per l'aggiornamento dalla finestra di
+# dello schema scelto a menu, che è "Custom": non porta una tabella propria ma
+# ha un limite di 16 MB, quindi il controllo di dimensione della build va
+# riportato agli slot da 1856 KB con upload.maximum_size=1900544 (build.ps1,
+# buildPreferences di .vscode/arduino.json). Due slot OTA per l'aggiornamento dalla finestra di
 # manutenzione; "wallpaper" contiene i due slot del wallpaper (WallpaperStore.h),
 # caricato dalla pagina /wallpaper, da 21 settori l'uno, la misura del 12.2";
 # la coredump prende il resto della flash.

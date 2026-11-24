@@ -254,7 +254,7 @@ Zero librerie da installare, tutto in `esp32-libs/3.3.11`: `esp-tls` per il tras
 3. **Posizione in tabella: ultima**, dopo percorso e cinema. Con la connessione tenuta
    aperta fino allo spegnimento della radio, in qualunque altra posizione la sessione
    TLS inattiva starebbe accanto all'immagine in RAM (66-81 KB) e alla sessione del
-   download. La copertura dello spin-up di render.com la danno ping, meteo e calendari.
+   download. La generazione dell'immagine lato render.com la coprono preparazione, meteo e calendari.
 4. **Guardia difensiva su `s.valid` dentro `runPublish()`**, benchè `readyToPublish()` la
    copra già: pubblicare senza campione manderebbe cinque zeri al cloud,
    indistinguibili nell'app da una misura vera.

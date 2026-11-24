@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 #include "fuso_posix.h"
 
@@ -248,6 +249,22 @@ static Scheduler::Outcome runB()
   return g_fallisciB ? Scheduler::Outcome::FAILED : Scheduler::Outcome::OK;
 }
 
+/** Task a esiti programmati, come il download di cinema e percorso che si
+ *  rinvia mentre il server render.com si avvia: restituisce gli esiti di
+ *  sequenza() nell'ordine, poi OK. */
+static Scheduler::Outcome g_esiti[8];
+static int g_nEsiti = 0, g_iEsiti = 0, g_runD = 0;
+static Scheduler::Outcome runD()
+{
+  evento('d'); ++g_runD;
+  return g_iEsiti < g_nEsiti ? g_esiti[g_iEsiti++] : Scheduler::Outcome::OK;
+}
+static void sequenza(std::initializer_list<Scheduler::Outcome> esiti)
+{
+  g_nEsiti = g_iEsiti = g_runD = 0;
+  for (Scheduler::Outcome e : esiti) g_esiti[g_nEsiti++] = e;
+}
+
 static Scheduler::Hooks hooksFinti()
 {
   Scheduler::Hooks h;
@@ -393,6 +410,89 @@ int main()
     ok(g_runA == 5 && !tab[0].state.retrying && tab[0].state.slotCycle == 5,
        "  secondo fallimento: soglia raggiunta, slot chiuso al ciclo 5");
     g_fallisciA = false;
+  }
+
+  // ---- rinvio al ciclo successivo: slot aperto, nessun tentativo speso ------
+  {
+    using O = Scheduler::Outcome;
+    static Scheduler::Task tab[1];
+    const auto giro = []() { alProssimoPoll(); azzeraEventi(); Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER); };
+
+    // Cadenza del cinema: il rinvio apre lo slot, il download arriva al ciclo dopo.
+    tab[0] = taskPeriodico("d", &Timings::Valori::cinemaMin, runD);   // 30 min = 6 cicli
+    impostaOra(2026, 9, 10, 18, 0);
+    g_msFinto = 90000000;
+    sequenza({O::DEFERRED});
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: rinvio
+    ok(g_runD == 1 && tab[0].state.deferred && !tab[0].state.retrying && tab[0].state.failedAttempts == 0,
+       "rinvio: task in rinvio, nessun tentativo speso");
+    ok(tab[0].state.outcomeCount == 0 && !Scheduler::isDue(tab[0]),
+       "  il rinvio non conta fra gli esiti e nello stesso ciclo il task non è più dovuto");
+    PrintFinto stampa;
+    Scheduler::printStatus(stampa);
+    giro();                                                            // ciclo 2: download
+    ok(std::strcmp(g_eventi, "SRdrF") == 0 && g_runD == 2,
+       "  al ciclo dopo il task è dovuto e la radio si accende");
+    ok(!tab[0].state.deferred && tab[0].state.slotCycle == 1 && tab[0].state.okCount == 1,
+       "  download riuscito: slot ancorato al ciclo del rinvio");
+    for (int c = 3; c <= 6; ++c) giro();
+    ok(g_runD == 2, "  nessun download fino alla cadenza piena");
+    giro();                                                            // ciclo 7 = 1 + 6
+    ok(g_runD == 3, "  slot successivo a 6 cicli dal rinvio, non dal download");
+
+    // Rinvio e poi fallimento: il ritento c'è ancora.
+    g_msFinto = 91000000;
+    sequenza({O::DEFERRED, O::FAILED, O::OK});
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: rinvio
+    giro();                                                            // ciclo 2: fallisce
+    ok(tab[0].state.retrying && tab[0].state.failedAttempts == 1 && !tab[0].state.deferred,
+       "rinvio poi fallimento: il fallimento è il primo dello slot e il ritento resta");
+    giro();                                                            // ciclo 3: ritento ok
+    ok(g_runD == 3 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
+       "  ritento riuscito, slot ancorato al ciclo del rinvio");
+
+    // Rinvio durante un ritento: non spende tentativi, il secondo fallimento chiude lo slot.
+    g_msFinto = 92000000;
+    sequenza({O::FAILED, O::DEFERRED, O::FAILED});
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: fallisce
+    giro();                                                            // ciclo 2: rinvio
+    ok(tab[0].state.retrying && tab[0].state.deferred && tab[0].state.failedAttempts == 1,
+       "rinvio durante un ritento: il ritento resta e nessun tentativo si spende");
+    giro();                                                            // ciclo 3: fallisce
+    ok(g_runD == 3 && !tab[0].state.retrying && !tab[0].state.deferred && tab[0].state.slotCycle == 1,
+       "  secondo fallimento: soglia raggiunta, slot chiuso al ciclo in cui si era aperto");
+
+    // Radio giù al ciclo dopo il rinvio: il rinvio resta in sospeso.
+    g_msFinto = 93000000;
+    sequenza({O::DEFERRED});
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: rinvio
+    g_radioOk = false;
+    giro();                                                            // ciclo 2: radio giù
+    ok(g_runD == 1 && tab[0].state.deferred, "radio giù dopo un rinvio: il rinvio resta in sospeso");
+    g_radioOk = true;
+    giro();                                                            // ciclo 3: download
+    ok(g_runD == 2 && !tab[0].state.deferred && tab[0].state.slotCycle == 1,
+       "  il download parte al primo ciclo con la radio, slot ancorato al rinvio");
+
+    // Fronte di salita dopo un rinvio: slot nuovo, il rinvio vecchio non conta.
+    static bool idoneo = true;
+    tab[0].preconditionsMet = []() { return idoneo; };
+    g_msFinto = 94000000;
+    sequenza({O::DEFERRED});
+    boot(tab, 1);
+    Scheduler::runRound(Scheduler::RadioMode::MANAGED_BY_SCHEDULER);   // ciclo 1: rinvio
+    idoneo = false;
+    giro();                                                            // ciclo 2: sospeso
+    ok(g_runD == 1 && tab[0].state.deferred, "precondizione falsa dopo un rinvio: nessuna esecuzione");
+    idoneo = true;
+    giro();                                                            // ciclo 3: fronte di salita
+    ok(g_runD == 2 && !tab[0].state.deferred && tab[0].state.slotCycle == 3,
+       "  fronte di salita: slot nuovo aperto al ciclo 3, il rinvio vecchio azzerato");
+    tab[0].preconditionsMet = nullptr;
   }
 
   // ---- connessione fallita: stati intatti, frame comunque ------------------

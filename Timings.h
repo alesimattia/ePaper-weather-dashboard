@@ -169,12 +169,15 @@
  *  manutenzione ripiega sull'access point, così le due attese scadono insieme. */
 #define RADIO_STA_ATTESA_MS ((uint32_t)MAINT_STA_TIMEOUT_S * 1000UL)
 
-/** Timeout HTTP del download dell'immagine cinema e del percorso: lo spin-up del
- *  free tier render.com dura circa un minuto (render.com/docs/free) e il ping
- *  di sveglia lo anticipa solo dei secondi degli altri fetch. Vale anche come
- *  attesa massima senza dati durante la lettura del corpo. */
-#define CINEMA_HTTP_TIMEOUT_MS 75000UL
-#define ROUTE_HTTP_TIMEOUT_MS 75000UL
+/** Timeout HTTP del download dell'immagine cinema e del percorso, che vale anche
+ *  come attesa massima senza dati durante la lettura del corpo. Il download
+ *  parte solo a istanza render.com già su, quindi copre la generazione
+ *  dell'immagine e mai lo spin-up, che si attende fra due cicli: a cache vuota
+ *  la pipeline della webapp è stata misurata entro 9 s, e i suoi timeout verso
+ *  l'esterno sono di 15 s più 10 s. Tipizzati come il parametro di
+ *  HTTPClient::setTimeout(): un valore che non ci sta non compila. */
+#define CINEMA_HTTP_TIMEOUT_MS uint16_t{30000}
+#define ROUTE_HTTP_TIMEOUT_MS uint16_t{30000}
 
 /** Età oltre la quale un percorso non si mostra, in multipli della cadenza: un
  *  tempo stimato vecchio è un'informazione sbagliata, e i termini Google non
@@ -186,16 +189,22 @@
  *  dalla fascia percorso. */
 #define SOURCE_OVERRIDE_MS (60UL * 60UL * 1000UL)
 
-/** Attesa massima della RISPOSTA al ping di sveglia dei server render.com, non
- *  della connessione: l'handshake ha il suo tetto, TLS_HANDSHAKE_TIMEOUT_S,
- *  perchè senza handshake completo la richiesta non parte affatto. Va tenuto
- *  sotto 65535: setTimeout() prende un uint16_t. */
-#define CINEMA_PREWARM_TIMEOUT_MS 1500
+/** Attesa massima della RISPOSTA alle richieste abbandonate verso i server
+ *  render.com, la sonda su /health e la preparazione dell'immagine, non della
+ *  connessione: l'handshake ha il suo tetto, TLS_HANDSHAKE_TIMEOUT_S, perchè
+ *  senza handshake completo la richiesta non parte affatto. Tipizzato come il
+ *  parametro di HTTPClient::setTimeout(). */
+#define CINEMA_PREWARM_TIMEOUT_MS uint16_t{1500}
 
-/** Inattività dopo la quale render.com spegne un servizio del free tier: il
- *  ping di sveglia si manda solo se l'ultima risposta di quel server è più
- *  vecchia di così, cioè quando l'istanza dorme davvero. */
+/** Inattività dopo la quale render.com spegne un servizio del free tier: la
+ *  sonda si manda solo se l'ultimo contatto con quel server è più vecchio di
+ *  così, cioè quando l'istanza può dormire davvero. */
 #define RENDER_SPINDOWN_MS (15UL * 60UL * 1000UL)
+
+/** Durata dello spin-up di un servizio free di render.com, "about one minute"
+ *  (render.com/docs/free): un server svegliato da meno di così è ancora in
+ *  avvio e il download si rinvia al ciclo successivo. */
+#define RENDER_SPINUP_MS (60UL * 1000UL)
 
 /** Telemetria Tuya: attesa del CONNACK, che comprende l'handshake TLS, e del
  *  PUBACK in QoS 1, che vale anche come attesa del resto di un pacchetto
@@ -347,8 +356,9 @@ static_assert(BSEC_MARGINE_POLL_MS * 16UL < CYCLE_S * 1000UL,
               "il margine del poll BSEC deve restare ben dentro il 6,25% del periodo");
 static_assert(WIFI_FAST_CONNECT_TIMEOUT_MS < WIFI_CONNECT_TIMEOUT_MS,
               "il tentativo veloce deve lasciare tempo al ripiego sulla scansione completa");
-static_assert(CINEMA_PREWARM_TIMEOUT_MS < 65535,
-              "HTTPClient::setTimeout() prende un uint16_t");
+static_assert(RENDER_SPINUP_MS < CYCLE_S * 1000UL,
+              "un server svegliato in un ciclo deve risultare avviato al ciclo dopo, "
+              "altrimenti il download di cinema e percorso si rinvierebbe una seconda volta");
 static_assert(PARTIAL_CHAIN_MAX >= 1 && PARTIAL_CHAIN_MAX <= 15,
               "la catena di partial va da 1 a 15: la letteratura dice 5-10 e oltre il grigio si accumula");
 static_assert(PARTIAL_MIN_TEMP_C > 0.0f && PARTIAL_MIN_TEMP_C < 40.0f && PARTIAL_TEMP_HYSTERESIS_C >= 0.0f,

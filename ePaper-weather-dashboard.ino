@@ -112,9 +112,10 @@
 
 /**
  * Origine del server cinema, unico punto in cui compare il dominio: l'URL
- * dell'immagine, che serve anche al ping di sveglia, lo compone
- * buildCinemaUrl() dalle misure del layout. Non e' un tempo, quindi non sta in
- * Timings.h; il timeout del ping invece si' (CINEMA_PREWARM_TIMEOUT_MS).
+ * dell'immagine, che serve anche alla preparazione, lo compone
+ * buildCinemaUrl() dalle misure del layout, e la sonda usa <origine>/health.
+ * Non e' un tempo, quindi non sta in Timings.h; il timeout delle richieste
+ * abbandonate invece si' (CINEMA_PREWARM_TIMEOUT_MS).
  */
 #define CINEMA_ORIGIN      "https://cinema-epd.onrender.com"
 
@@ -123,23 +124,32 @@
 #define ROUTEFINDER_ORIGIN      "https://routefinder-7w0a.onrender.com"
 
 /**
- * Un server render.com del free tier, con l'ultimo contatto che decide se il
- * ping di sveglia serve (vedi prewarmServer()). Sta prima di ogni funzione del
- * file perchè il preprocessore di Arduino ne genera i prototipi in quel punto,
- * e quelli che lo nominano non compilerebbero.
+ * Un server render.com del free tier: l'ultimo contatto e l'ultima sveglia
+ * decidono se serve la sonda, se il download si rinvia e se mandare la
+ * preparazione (vedi wakeOrPrepare()). Gli istanti sono quelli di invio delle
+ * richieste, così l'età calcolata non è mai minore dell'inattività che misura
+ * render. Sta prima di ogni funzione del file perchè il preprocessore di
+ * Arduino ne genera i prototipi in quel punto, e quelli che lo nominano non
+ * compilerebbero.
  */
 struct RenderServer
 {
 	const char *flow;
+	const char *healthUrl;   // sonda e sveglia: aperto, senza lavoro nè API a pagamento a monte
 	bool contacted;          // falso finchè il server non ha risposto, o dopo RENDER_SPINDOWN_MS
-	uint32_t lastContactMs;  // millis() dell'ultima risposta HTTP, del ping o del download
+	uint32_t lastContactMs;  // millis() all'invio dell'ultima richiesta che ha avuto risposta
+	bool woken;              // sveglia senza risposta registrata, falso dopo RENDER_SPINDOWN_MS
+	uint32_t wokenMs;        // millis() all'invio della sveglia
 };
 
-static RenderServer g_cinema_server = {"cinema", false, 0};
-static RenderServer g_route_server = {"route", false, 0};
+static RenderServer g_cinema_server = {"cinema", CINEMA_ORIGIN "/health", false, 0, false, 0};
+static RenderServer g_route_server = {"route", ROUTEFINDER_ORIGIN "/health", false, 0, false, 0};
 
 #include <GxEPD2_3C.h>
 #include "Layout.h"   // dispatcher: include Layout_097c.h o Layout_122c.h in base al #define DISPLAY_VARIANT_*
+
+// Wallpaper predefinito in PROGMEM, mostrato finchè la partizione non ne ha uno caricato da /wallpaper
+#include "wallpaper/img_great_wave.h" //img_great_wave_desc
 
 /** Weather.h contiene logica, fetch OpenWeather One Call 3.0, cache,
  * rendering banner. Il .ino si limita ad accendere/spegnere il WiFi
@@ -316,7 +326,7 @@ static constexpr const char *cinemaColorsParam(uint8_t planes)
 /**
  * Compone l'URL dell'immagine cinema dalle misure del layout, così larghezza,
  * altezza e piani chiesti al server non possono divergere dal buffer. Serve al
- * download e al ping di sveglia.
+ * download e alla preparazione (wakeOrPrepare()).
  * @return false se l'URL non entra in `size`: un troncamento manderebbe al
  *         server un'altra misura.
  */
@@ -335,7 +345,7 @@ static bool buildCinemaUrl(char *url, size_t size)
 
 /**
  * Compone l'URL del percorso con partenza, arrivo e carburante di Routefinder e
- * la misura del riquadro. Serve al download e al ping di sveglia.
+ * la misura del riquadro. Serve al download e alla preparazione (wakeOrPrepare()).
  * @return false se l'URL non entra in `size`.
  */
 static bool buildRouteUrl(char *url, size_t size)
@@ -366,76 +376,158 @@ static bool isServerAwake(RenderServer &server)
 	return true;
 }
 
-/** Registra una risposta HTTP del server, cioè la prova che l'istanza è su. */
-static void noteServerContact(RenderServer &server)
+/**
+ * Registra una risposta HTTP del server, cioè la prova che l'istanza è su.
+ * @param sentMs millis() all'invio della richiesta, così l'età del contatto non
+ *        è mai minore dell'inattività che misura render.
+ */
+static void noteServerContact(RenderServer &server, uint32_t sentMs)
 {
 	server.contacted = true;
-	server.lastContactMs = millis();
+	server.lastContactMs = sentMs;
+}
+
+/** Vero se una sveglia senza risposta è registrata da meno di
+ *  RENDER_SPINDOWN_MS; oltre, il flag si azzera come quello del contatto. */
+static bool hasWakeRecord(RenderServer &server)
+{
+	if (!server.woken) return false;
+	if ((int32_t)(millis() - server.wokenMs) >= (int32_t)RENDER_SPINDOWN_MS)
+	{
+		server.woken = false;
+		return false;
+	}
+	return true;
+}
+
+/** Vero se il server è stato svegliato da meno di RENDER_SPINUP_MS: l'istanza
+ *  è ancora in avvio. */
+static bool isServerStarting(RenderServer &server)
+{
+	return hasWakeRecord(server) && millis() - server.wokenMs < RENDER_SPINUP_MS;
+}
+
+/** Vero se il server è stato svegliato da almeno RENDER_SPINUP_MS: l'istanza
+ *  è su anche se non ha ancora risposto. */
+static bool isServerStarted(RenderServer &server)
+{
+	return hasWakeRecord(server) && millis() - server.wokenMs >= RENDER_SPINUP_MS;
+}
+
+/** Registra la sveglia di un server. Una sveglia ancora valida non si riscrive,
+ *  così l'avvio si conta sempre dalla prima. */
+static void noteServerWake(RenderServer &server, uint32_t sentMs)
+{
+	if (hasWakeRecord(server)) return;
+	server.woken = true;
+	server.wokenMs = sentMs;
 }
 
 /**
- * Sveglia un'istanza render.com del free tier chiedendo l'immagine vera e
- * abbandonando la risposta. La usano i server del cinema e del percorso.
- *
- * Il free tier sospende il servizio dopo 15 min di inattività, lo risveglia
- * alla prima richiesta in circa un minuto e ne perde il file system locale,
- * cache delle locandine compresa (render.com/docs/free). Per questo il ping non
- * chiede /health, che sveglierebbe solo il processo, ma l'URL del download: il
- * server prepara l'immagine e la mette in cache mentre l'ESP32 fa gli altri
- * fetch, e il download vero la trova pronta. Sul percorso non costa una
- * chiamata in più alla Routes API, perchè routefinder tiene il calcolo in cache
- * per 60 s e il download arriva prima.
+ * Manda una GET a un server render.com e ne abbandona la risposta dopo
+ * CINEMA_PREWARM_TIMEOUT_MS. La usa wakeOrPrepare() per la sonda e per la
+ * preparazione.
  *
  * Su TLS il fire-and-forget puro non esiste: la richiesta arriva al router di
  * render solo a handshake completo, quindi la connessione va portata su per
  * intero, con il tetto comune TLS_HANDSHAKE_TIMEOUT_S. Quello che si abbandona
  * è la RISPOSTA: con setTimeout() breve la GET ritorna appena scaduta l'attesa
- * degli header, end() chiude il socket e l'istanza prosegue per conto suo.
- *
- * Nessun valore di ritorno: il codice HTTP viene solo loggato.
- * HTTPC_ERROR_READ_TIMEOUT (-11) è l'esito nominale, 200 significa che il
- * server era già caldo, un errore di connessione che il ping non è partito.
- * Gira come onRoundStart() del task che scaricherà davvero l'immagine, e solo
- * se l'istanza dorme: un server che ha risposto da meno di RENDER_SPINDOWN_MS
- * è sveglio.
+ * degli header, ed end() chiude il socket.
+ * @param what "sonda" o "preparazione", per il log.
+ * @return il codice HTTP; HTTPC_ERROR_READ_TIMEOUT (-11) se la richiesta è
+ *         partita senza risposta, un altro negativo se non è partita.
  */
-static void prewarmServer(RenderServer &server, const char *url, const char *token)
+static int prewarmServer(RenderServer &server, const char *what, const char *url, const char *token)
 {
-	if (isServerAwake(server))
-	{
-		LOGV("img", "%s pre-warm non necessario: il server ha risposto da meno di %lu min",
-			 server.flow, (unsigned long)(RENDER_SPINDOWN_MS / 60000UL));
-		return;
-	}
 	WiFiClientSecure client;
 	HTTPClient http;
 	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
 	if (!Net::beginHttps(http, client, url))
 	{
-		LOG("img", "%s pre-warm: http.begin fallita", server.flow);
-		return;
+		LOG("img", "%s %s: http.begin fallita", server.flow, what);
+		return HTTPC_ERROR_CONNECTION_REFUSED;
 	}
 	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
-	uint32_t t0 = millis();
-	int code = http.GET();
+	const uint32_t t0 = millis();
+	const int code = http.GET();
 	http.end();
-	// Un codice HTTP positivo è una risposta dell'istanza; il timeout di
-	// lettura (-11), esito nominale a istanza ferma, non lo è.
-	if (code > 0) noteServerContact(server);
-	LOG("img", "%s pre-warm -> %d in %lu ms, heap libero %lu", server.flow, code,
+	LOG("img", "%s %s -> %d in %lu ms, heap libero %lu", server.flow, what, code,
 		(unsigned long)(millis() - t0), (unsigned long)ESP.getFreeHeap());
+	return code;
+}
+
+/**
+ * Sonda, sveglia e preparazione di un server render.com del free tier, come
+ * onRoundStart() dei task di cinema e percorso: gira prima di tutti i run(),
+ * così meteo e calendari coprono il tempo della generazione.
+ *
+ * Il free tier spegne il servizio dopo 15 min senza traffico, lo riavvia alla
+ * prima richiesta in circa un minuto e ne perde il file system, cache comprese
+ * (render.com/docs/free). Una richiesta abbandonata durante l'avvio sveglia
+ * l'istanza ma non arriva all'app, e l'immagine non si prepara: sveglia e
+ * download stanno quindi in due cicli diversi, e nessuna attesa HTTP copre lo
+ * spin-up.
+ *
+ *   - server con un contatto recente: niente, il download lo trova su;
+ *   - server senza contatto recente: sonda su /health, che a istanza su
+ *     risponde in pochi decimi di secondo. Con 200 il server è sveglio e si
+ *     prepara subito; con -11 o con un altro codice la richiesta è arrivata a
+ *     render, che si avvia, e il download si rinvia (isDownloadDeferred());
+ *     un errore prima dell'invio non dice niente del server;
+ *   - server svegliato a un ciclo precedente: preparazione.
+ *
+ * La preparazione chiede l'URL vero dell'immagine e ne abbandona la risposta:
+ * a istanza su la richiesta arriva all'app, che finisce di generare l'immagine
+ * anche dopo la disconnessione, e il download la trova pronta. L'URL
+ * dell'immagine non fa da sonda perchè a cache vuota la generazione supera
+ * l'attesa della risposta anche a istanza su. Sul percorso la preparazione non
+ * costa una chiamata in più alla Routes API: routefinder tiene il calcolo in
+ * cache per 60 s e il download arriva prima.
+ */
+static void wakeOrPrepare(RenderServer &server, const char *imageUrl, const char *token)
+{
+	if (isServerAwake(server))
+	{
+		LOGV("img", "%s: contatto da meno di %lu min, nessuna sonda",
+			 server.flow, (unsigned long)(RENDER_SPINDOWN_MS / 60000UL));
+		return;
+	}
+	if (isServerStarting(server)) return;
+	if (!isServerStarted(server))
+	{
+		const uint32_t probeMs = millis();
+		const int code = prewarmServer(server, "sonda", server.healthUrl, nullptr);
+		if (code != HTTP_CODE_OK)
+		{
+			if (code > 0 || code == HTTPC_ERROR_READ_TIMEOUT) noteServerWake(server, probeMs);
+			return;
+		}
+		noteServerContact(server, probeMs);
+	}
+	const uint32_t prepareMs = millis();
+	if (prewarmServer(server, "preparazione", imageUrl, token) > 0) noteServerContact(server, prepareMs);
+}
+
+/**
+ * Vero se il download va rinviato al ciclo successivo: il server non ha
+ * risposto ed è stato svegliato da meno di RENDER_SPINUP_MS, quindi l'istanza
+ * è ancora in avvio. Lo usano runCinemaFetch() e runRouteFetch().
+ */
+static bool isDownloadDeferred(RenderServer &server)
+{
+	return !isServerAwake(server) && isServerStarting(server);
 }
 
 static void prewarmCinemaServer()
 {
 	char url[160];
-	if (buildCinemaUrl(url, sizeof(url))) prewarmServer(g_cinema_server, url, nullptr);
+	if (buildCinemaUrl(url, sizeof(url))) wakeOrPrepare(g_cinema_server, url, nullptr);
 }
 
 static void prewarmRouteServer()
 {
 	char url[256];
-	if (buildRouteUrl(url, sizeof(url))) prewarmServer(g_route_server, url, ROUTEFINDER_TOKEN);
+	if (buildRouteUrl(url, sizeof(url))) wakeOrPrepare(g_route_server, url, ROUTEFINDER_TOKEN);
 }
 
 /** Riga di log di un download fallito, con la durata e la memoria: è la
@@ -457,13 +549,15 @@ static void logDownloadFailure(const char *flow, const char *what, long value, u
  * errore prima del corpo lascia valida l'immagine precedente; un corpo
  * interrotto la perde, e il riquadro mostra il wallpaper fino al ritento.
  * Ogni risposta HTTP, anche un errore, conta come contatto con il server: è
- * ciò che evita il ping di sveglia al ciclo successivo.
- * @param server server render.com da cui si scarica, per il ping condizionato.
+ * ciò che evita la sonda al ciclo successivo.
+ * @param server server render.com da cui si scarica, per la sonda condizionata.
  * @param token valore dell'header X-Routefinder-Token, nullptr se non serve.
+ * @param timeoutMs dello stesso tipo del parametro di HTTPClient::setTimeout(),
+ *        così nessuna conversione lungo la catena può troncarlo.
  * @return true se l'immagine è stata scaricata per intero.
  */
 static bool downloadImageToStore(RenderServer &server, const char *url, const char *token,
-								 uint32_t timeoutMs, CinemaStore::Kind kind)
+								 uint16_t timeoutMs, CinemaStore::Kind kind)
 {
 	const char *flow = server.flow;
 	LOG("img", "%s fetching %s", flow, url);
@@ -478,8 +572,9 @@ static bool downloadImageToStore(RenderServer &server, const char *url, const ch
 	// HTTP/1.0, quindi il controllo sulla dimensione resta valido.
 	WiFiClientSecure client;
 	HTTPClient http;
-	// Margine per lo spin-up del free tier render.com quando il ping non è
-	// bastato. Vale anche come attesa massima senza dati durante il corpo.
+	// Attesa della generazione dell'immagine a istanza già su: lo spin-up non si
+	// attende mai qui (isDownloadDeferred()). Vale anche come attesa massima
+	// senza dati durante il corpo.
 	http.setTimeout(timeoutMs);
 	const uint32_t t0 = millis();
 	if (!Net::beginHttps(http, client, url))
@@ -489,7 +584,7 @@ static bool downloadImageToStore(RenderServer &server, const char *url, const ch
 	}
 	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
 	int code = http.GET();
-	if (code > 0) noteServerContact(server);
+	if (code > 0) noteServerContact(server, t0);
 	if (code != 200)
 	{
 		logDownloadFailure(flow, "HTTP status", code, t0);
@@ -589,6 +684,7 @@ static bool outlookReady() { return isClockValidForCalendars() && Calendar::Outl
 
 static Scheduler::Outcome runCinemaFetch()
 {
+	if (isDownloadDeferred(g_cinema_server)) return Scheduler::Outcome::DEFERRED;
 	char url[160];
 	if (!buildCinemaUrl(url, sizeof(url))) return Scheduler::Outcome::FAILED;
 	return downloadImageToStore(g_cinema_server, url, nullptr, CINEMA_HTTP_TIMEOUT_MS, CinemaStore::Kind::Cinema)
@@ -609,6 +705,7 @@ static bool cinemaReady()
 
 static Scheduler::Outcome runRouteFetch()
 {
+	if (isDownloadDeferred(g_route_server)) return Scheduler::Outcome::DEFERRED;
 	char url[256];
 	if (!buildRouteUrl(url, sizeof(url))) return Scheduler::Outcome::FAILED;
 	return downloadImageToStore(g_route_server, url, ROUTEFINDER_TOKEN, ROUTE_HTTP_TIMEOUT_MS, CinemaStore::Kind::Route)
@@ -650,10 +747,12 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
  * esecuzione dentro il passo di rete del ciclo, che viene dopo il sensore e
  * prima del frame, e non è arbitrario:
  *
- *   - percorso e cinema dopo meteo e calendari, perchè sono gli unici che
- *     possono pagare lo spin-up di render.com, e il tempo di rete degli altri
- *     è la copertura di quel risveglio; i loro onRoundStart() mandano il ping
- *     all'inizio del passo, solo se l'istanza dorme. Non girano mai nello
+ *   - percorso e cinema dopo meteo e calendari: i loro onRoundStart()
+ *     (wakeOrPrepare()) mandano all'inizio del passo la sonda o la
+ *     preparazione dell'immagine, e il tempo di rete degli altri copre la
+ *     generazione lato server. Con il server ancora in avvio il download si
+ *     rinvia al ciclo dopo (Outcome::DEFERRED), quindi lo spin-up di
+ *     render.com non si attende mai dentro il passo. Non girano mai nello
  *     stesso ciclo, perchè le loro fasce non si sovrappongono;
  *   - la telemetria Tuya per ultima: la sua sessione TLS resta aperta fino allo
  *     spegnimento della radio, e aperta prima del download occuperebbe l'heap
@@ -661,7 +760,7 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
  *
  * Le cadenze sono multipli del ciclo (Timings.h, campo `step`): meteo e
  * calendari a 10 minuti cadono un ciclo sì e uno no, Tuya e percorso a ogni
- * ciclo, il cinema ogni ora. Nessun task chiede ridisegni: il frame si disegna
+ * ciclo, il cinema ogni 30 minuti. Nessun task chiede ridisegni: il frame si disegna
  * a ogni ciclo della fascia WiFi e legge da sè i dati, badge di Tuya compreso.
  *
  * Tuya è l'unico task con maxAttempts a 0, cioè un tentativo per slot comunque
@@ -692,26 +791,11 @@ static Scheduler::Task TASK_TABLE[] = {
 static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0]);
 
 /**
- * Invito a caricare il wallpaper, al centro del riquadro, quando la partizione
- * non ne contiene uno valido: l'indirizzo è l'ultimo con cui il dispositivo è
- * stato raggiungibile, perchè a radio spenta non ce n'è uno corrente.
- */
-static void drawMissingWallpaperNotice()
-{
-	const int16_t centerY = Layout::CINEMA_Y + Layout::CINEMA_H / 2;
-	if (!Graphics::intersectsPage(centerY - Layout::CINEMA_H / 4, Layout::CINEMA_H / 2)) return;
-	char notice[64];
-	const char *ip = Net::lastKnownIp();
-	snprintf(notice, sizeof(notice), "No img. Check %s/wallpaper", ip[0] != '\0' ? ip : MAINT_HOSTNAME ".local");
-	display.setFont(Layout::FONT_SMALL);
-	Graphics::drawCentered(notice, Layout::CINEMA_X + Layout::CINEMA_W / 2, centerY, GxEPD_BLACK);
-}
-
-/**
  * Disegna, dentro il loop paged di Weather::renderFrame(), le sole righe del
  * riquadro che cadono nella pagina corrente: il percorso o il cinema in RAM
  * quando sono l'immagine programmata e ancora valida, altrimenti il wallpaper
- * della flash, e senza wallpaper l'invito a caricarlo. La scelta si rifà a ogni
+ * caricato nella partizione o, senza, quello predefinito del firmware
+ * (img_great_wave_desc). La scelta si rifà a ogni
  * frame, quindi un cambio di fascia, di forzatura o di validità compare al
  * ciclo successivo. Le righe si tagliano all'altezza CINEMA_H, e il
  * descrittore ridotto punta agli stessi dati, senza copie.
@@ -726,12 +810,7 @@ void drawTestBackground()
 	};
 	const GxEPDImage::Descriptor *source =
 		shown != Routefinder::ShownImage::Wallpaper ? &downloaded : WallpaperStore::image();
-	if (source == nullptr)
-	{
-		drawMissingWallpaperNotice();
-		return;
-	}
-	const GxEPDImage::Descriptor &image = *source;
+	const GxEPDImage::Descriptor &image = source ? *source : img_great_wave_desc;
 	int16_t top = Layout::CINEMA_Y;
 	int16_t height = (int16_t)(image.height < Layout::CINEMA_H ? image.height : Layout::CINEMA_H);
 	if (!Graphics::clipToPage(top, height)) return;
@@ -811,7 +890,6 @@ static bool wifiOn()
 		}
 		LOG("WiFi", "connected in %lu ms, canale %ld, IP=%s",
 			(unsigned long)(millis() - t0), (long)g_wifi_channel, WiFi.localIP().toString().c_str());
-		Net::rememberIp(WiFi.localIP());
 		/**
 		 * Orologio sincronizzato nello stesso punto in cui la radio diventa
 		 * disponibile: tutti i fetch del ramo normale stanno dentro questo

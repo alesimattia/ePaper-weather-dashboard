@@ -9,10 +9,11 @@
 #include "Log.h"
 
 /**
- * Wallpaper del riquadro in alto a sinistra, nella partizione dati "wallpaper"
- * di partitions.csv e non nel firmware: un aggiornamento OTA non lo ritrasmette
- * e lo si riscrive solo quando cambia, dalla pagina /wallpaper della
- * manutenzione. Il formato è quello di /cinema/arduino, i due piani a misura
+ * Wallpaper del riquadro in alto a sinistra caricato dalla pagina /wallpaper
+ * della manutenzione, nella partizione dati "wallpaper" di partitions.csv:
+ * sostituisce quello predefinito del firmware (wallpaper/img_great_wave.h),
+ * sopravvive agli aggiornamenti OTA e lo cancella solo un flash via seriale con
+ * EraseFlash=all. Il formato è quello di /cinema/arduino, i due piani a misura
  * Layout::CINEMA_W x CINEMA_H, che genera tools/wallpaper_bin.py.
  *
  * Due slot da metà partizione: si scrive sempre quello inattivo e la sua
@@ -110,7 +111,7 @@ namespace WallpaperStore
   /**
    * Trova la partizione, sceglie lo slot valido più recente e lo mappa. Senza
    * partizione, o con una partizione troppo piccola per due wallpaper, il
-   * riquadro resta senza wallpaper e mostra l'invito a caricarlo.
+   * riquadro mostra il wallpaper predefinito del firmware.
    */
   inline void begin()
   {
@@ -141,7 +142,7 @@ namespace WallpaperStore
     }
     mapActiveSlot();
     LOG("wallpaper", "partizione da %lu byte, wallpaper %s", (unsigned long)partition->size,
-        activeSlot < 0 ? "assente: caricarlo da /wallpaper" : "presente");
+        activeSlot < 0 ? "assente: uso il predefinito del firmware" : "presente");
   }
 
   /** Descrittore del wallpaper, nullptr se non ce n'è uno valido o se è in

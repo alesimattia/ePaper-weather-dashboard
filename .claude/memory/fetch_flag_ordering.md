@@ -1,6 +1,6 @@
 ---
 name: Politica di ritento e consumo dello slot
-description: Un tentativo per task per ciclo, ritento solo al ciclo successivo e mai nella stessa accensione (scelta dell'utente: il frame non aspetta mai); maxAttempts e consumo dello slot (0 = un tentativo per slot, solo Tuya); restartSlot sul fronte di salita della precondizione e al primo ciclo del giorno contro i ritenti ereditati; radio caduta = SKIPPED con slot intatto
+description: Un tentativo per task per ciclo, ritento solo al ciclo successivo e mai nella stessa accensione (scelta dell'utente: il frame non aspetta mai); maxAttempts e consumo dello slot (0 = un tentativo per slot, solo Tuya); restartSlot sul fronte di salita della precondizione e al primo ciclo del giorno contro i ritenti ereditati; radio caduta = SKIPPED con slot intatto; DEFERRED = rinvio di un ciclo che apre lo slot senza spendere tentativi
 type: project
 ---
 
@@ -23,4 +23,6 @@ Causa che risolve: senza una transizione per la sospensione, un task che usciva 
 
 **Errore da evitare:** non spostare il consumo dello slot prima del controllo della radio "per simmetria": un dispositivo senza rete brucerebbe gli slot.
 
-Verificato in `test/test_scheduler.cpp`, anche con due prove di mutazione: togliendo l'azzeramento del mattino o il fronte di salita i test relativi falliscono. Vedi [[scheduler_task_table]].
+**Rinvio ⇒ `Outcome::DEFERRED`** (percorso e cinema con il server render.com in avvio, [[esp32_cinema_consumer]]): in `recordOutcome()` apre lo slot (`openCycle` = ciclo del rinvio, se non in ritento nè già in rinvio), segna `attemptCycle` (una sola esecuzione per ciclo), NON spende tentativi nè conta negli esiti, `deferred` = true; log `rinviato al prossimo ciclo`. Il task resta dovuto al ciclo dopo senza nessun controllo in `isDue()`, perchè il rinvio non tocca `neverRun`, `retrying` e `slotCycle` (un `|| deferred` in `isDue()` è ridondante: mutante equivalente). L'esito successivo non riscrive `openCycle` e azzera `deferred`; `restartSlot()` e `closeSlot()` lo azzerano; `printStatus()` mostra "rinvio". Perchè non `SKIPPED`: lo slot si ancorerebbe al ciclo del download e ogni slot orario del cinema slitterebbe di un ciclo (18:05, 19:10, 20:15). Il limite al numero di rinvii non sta nello scheduler ma in `RenderServer`: una sveglia vale 15 min, quindi al più un rinvio ogni 15 min per server.
+
+Verificato in `test/test_scheduler.cpp`, anche con prove di mutazione: togliendo l'azzeramento del mattino o il fronte di salita i test relativi falliscono; nel blocco del rinvio falliscono togliendo l'ancoraggio di `openCycle`, l'azzeramento in `restartSlot()` o trattando `DEFERRED` come esito ordinario. Vedi [[scheduler_task_table]].
