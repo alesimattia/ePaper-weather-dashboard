@@ -1,6 +1,6 @@
 ---
 name: Waveshare E-Paper ESP32 Driver Board V3 (hardware di bring-up)
-description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper, HSPI con SCK e MOSI scambiati, MISO dummy perchè il FPC non ha SDO, header J3/J4 con piedinatura DevKitC e GPIO33 su J3 pin 8 (da confermare sulla serigrafia), quali GPIO restano liberi per un secondo controller, switch n.1 = resistenza di sense del booster (A=3R / B=0.47R), caveat di estrazione del PDF
+description: Caratteristiche verificate sullo schematico della board usata per pilotare i pannelli SOLUM - pinout dell'interfaccia e-paper e del connettore J1, EPD_3.3V distinto dal 3V3 dell'header, BS1 a massa via R11, HSPI con SCK e MOSI scambiati, MISO dummy, IO12 non collegato al pannello, header J3/J4 con GPIO33 su J3-8 (da confermare), GPIO per il secondo controller (CS 32, BUSY 22), switch n.1 = resistenza di sense con schematico e wiki in contrasto, caveat di estrazione del PDF
 type: reference
 ---
 
@@ -36,6 +36,14 @@ display.epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 `A:\tmp\GxEPD2-master\examples\GxEPD2_WS_ESP32_Driver\GxEPD2_WS_ESP32_Driver.ino` (righe 22, 178-190),
 che è la fonte autorevole per questa board e usa anche lui 4 MHz. Il firmware del progetto sta a
 10 MHz, il driver 12.2" ha 20 MHz come default in `selectSPI()`.
+
+## Alimentazione e strap del connettore J1 (netlist)
+
+- J1-15/16 (VDDIO, VCI) = **EPD_3.3V**, uscita di U3 RT9193, sempre acceso (R35 verso IO4 non montata, quindi niente circuito di reset "clever"). Il 3V3 di J3-1 è un'altra net: U2 ME6217, che alimenta l'ESP32. Una seconda coda va alimentata da EPD_3.3V (piazzole di C5/C6/C20).
+- J1-8 **BS1 a GND via R11 0R** (R10 verso EPD_3.3V non montata): bus a 4 fili fisso, non flottante.
+- J1 pin 1, 4, 19 senza net; 6/7 solo su R5/R6 (10K/NC); 21 PREVGH e 23 PREVGL con D4/D2 dal booster (Q1 BSS138, L1 10 µH); condensatori 1 µF/50 V su 5, 18, 20, 21, 22, 23, 24.
+- IO12 arriva solo a J3-13, non a J1: il MISO dell'HSPI non è collegato al pannello; resta pin di strapping.
+- Switch n.1: lo schematico dice ON:A = 0,47 Ω e OFF:B = 3 Ω (R7 0,47 sempre in serie, R8 2,2 cortocircuitata dallo switch), il wiki il contrario: decide la misura della resistenza di sense.
 
 ## MISO = GPIO12 è un dummy, e il perchè conta
 
@@ -79,7 +87,7 @@ submodule; funziona comunque, il 33 è un'alternativa. Il `CLAUDE.md` del proget
 | **CS_S (in uso)** | **32** | output-capable, sull'header, **una sola occorrenza nello schematico** cioè non usato da nient'altro, e adiacente al 35 |
 | CS_S alternative | 4 | libero e output-capable (16/17 pure, essendo WROOM senza PSRAM, ma tenerli di riserva) |
 | cablaggio consigliato del sensore Indoor (BME680 o BME280) | 21, 16 | liberi sulla board; il firmware ci mette SDA e SCL del sensore (`INDOOR_SDA_PIN` 21 / `INDOOR_SCL_PIN` 16 in `Indoor.h`; il 16 è utilizzabile perchè il modulo non ha PSRAM), ma è solo il cablaggio consigliato: l'I2C dell'ESP32 si instrada su qualunque pin I/O, quindi il sensore si sposta se servono questi pin |
-| BUSY_S | 35 oppure 34 | **input-only**: giusti per un BUSY, inutilizzabili per un CS |
+| **BUSY_S (in uso)** | **22** | ha il pull-down interno, che il driver attiva: un BUSY scollegato o lasciato aperto (cascade) si legge libero; 34..39 sono input-only senza pull e lo leggerebbero a caso |
 | da evitare | 0, 2, 12 | pin di strapping (boot mode, flash voltage) |
 | liberi ma da tenere di riserva | 5, 18, 19, 23 | sono i pin VSPI: liberi su questa board, ma è il bus che si usa per aggiungere periferiche SPI (una SD, per esempio), quindi conviene non occuparli |
 

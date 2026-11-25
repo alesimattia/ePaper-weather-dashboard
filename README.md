@@ -137,14 +137,15 @@ serve uno per ogni periferica sullo stesso bus).
 |---|---|---|---|---|---|---|---|---|
 | SPI0, SPI1 | hardware, interno | nessuno | 6-11 | 6-11 | 6-11 | 6-11 | | **occupato** dalla flash del modulo, non utilizzabile |
 | SPI2 (**HSPI**), pin nativi | hardware | `SPIClass(HSPI)` | 14 | 12 | 13 | 15 | 80 MHz | vedi la riga sotto |
-| SPI2 (**HSPI**), come lo usa il display | hardware | `hspi` nel `.ino` | **13** | 12 (fittizio) | **14** | 15 | circa 40 MHz, usato a 10 MHz | **occupato** dal display |
+| SPI2 (**HSPI**), come lo usa il display | hardware | `hspi` nel `.ino` | **13** | 12 (fittizio) | **14** | 15 | circa 40 MHz, usato a 10 MHz col 9.7" e a 4 MHz col 12.2" (`Layout::SPI_CLOCK_HZ`) | **occupato** dal display |
 | SPI3 (**VSPI**), pin nativi | hardware | `SPI` (globale del core) | 18 | 19 | 23 | 5 | 80 MHz | **libero**, riservato a una periferica SPI aggiuntiva |
 | SPI software | software | librerie dedicate | qualunque I/O | qualunque I/O | qualunque I/O | qualunque I/O | pochi MHz | non serve |
 
 Il display usa l'HSPI, ma la board scambia CLK e MOSI rispetto ai pin nativi:
 il clock è sul 13 invece che sul 14, i dati sul 14 invece che sul 13. Per questo
 il segnale passa dalla matrice GPIO; a 10 MHz il margine sui circa 40 MHz della
-matrice è ampio. Il pannello non ha un'uscita dati, quindi il MISO sul 12 non
+matrice è ampio. Il 12.2" scende a 4 MHz perchè SCK e MOSI arrivano anche alla
+breakout della coda corta con fili volanti. Il pannello non ha un'uscita dati, quindi il MISO sul 12 non
 riceve niente.
 
 #### Bus I2C
@@ -172,7 +173,6 @@ Stato:
 - **Libero**: disponibile per nuove periferiche;
 - **Riservato**: libero, ma destinato a un uso previsto (il bus VSPI);
 - **Evitare**: pin di strapping;
-- **Assente**: la board non lo porta su nessun connettore.
 
 | GPIO | Direzione | Analogico | Uso attuale | Stato | Attenzione |
 |---|---|---|---|---|---|
@@ -192,24 +192,24 @@ Stato:
 | 18 | I/O | no | | Riservato | CLK nativo del VSPI |
 | 19 | I/O | no | | Riservato | MISO nativo del VSPI |
 | 21 | I/O | no | sensore Indoor: SDA (I2C0) | Consigliato | default SDA di `Wire` |
-| 22 | I/O | no | | **Libero** | default SCL di `Wire` |
+| 22 | I/O | no | 12.2": BUSY del secondo controller (`PIN_BUSY_S`) | Occupato sul 12.2" | libero con il 9.7"; ha il pull-down interno che tiene libero un BUSY scollegato; default SCL di `Wire`, che il firmware non usa |
 | 23 | I/O | no | | Riservato | MOSI nativo del VSPI |
 | 25 | I/O | ADC2 | display: BUSY (del master sul 12.2") | Occupato | risveglia l'MCU dal light sleep durante il refresh |
 | 26 | I/O | ADC2 | display: RST | Occupato | |
 | 27 | I/O | ADC2 | display: DC | Occupato | |
 | 32 | I/O | ADC1 | 12.2": CS del secondo controller (`PIN_CS_S`) | Occupato sul 12.2" | libero con il 9.7" |
-| 33 | | | | Assente | |
+| 33 | I/O | ADC1 | | **Libero** | la netlist dello schematico lo mette su J3-8, da confermare sulla serigrafia |
 | 34 | solo ingresso | ADC1 | | **Libero** | senza pull-up interno |
-| 35 | solo ingresso | ADC1 | 12.2": BUSY del secondo controller (`PIN_BUSY_S`) | Occupato sul 12.2" | libero con il 9.7" |
-| 36, 39 | | | | Assente | |
+| 35 | solo ingresso | ADC1 | | **Libero** | senza pull-up interno |
+| 36, 39 | solo ingresso | ADC1 | | **Libero** | la netlist li mette su J3-3 e J3-4, da confermare sulla serigrafia; senza pull interni |
 
 #### Quale pin usare
 
 | Per collegare | Pin |
 |---|---|
-| un segnale digitale in ingresso e uscita | **4, 17**; con il 9.7" anche **32** |
-| un segnale di sola lettura (pulsante, BUSY) | **34**; con il 9.7" anche **35** |
-| un ingresso analogico, anche col WiFi acceso | **34** (ADC1); con il 9.7" anche **32** e **35** |
+| un segnale digitale in ingresso e uscita | **4, 17, 33**; con il 9.7" anche **22** e **32** |
+| un segnale di sola lettura (pulsante, BUSY) | **34, 35** (e 36, 39 se confermati), con resistenza esterna |
+| un ingresso analogico, anche col WiFi acceso | **33, 34, 35** (ADC1); con il 9.7" anche **32** |
 | una periferica I2C | in parallelo al sensore Indoor su 21 e 16, se ha un indirizzo diverso; oppure `Wire1` su due pin liberi |
 | una periferica SPI | VSPI: CLK 18, MISO 19, MOSI 23, CS 5; un CS per ogni periferica in più, su un pin libero |
 | se il bus VSPI non serve | anche 5, 18, 19 e 23 come I/O |
@@ -246,7 +246,10 @@ Famiglie di simboli:
   `GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT>`.
 - **`Layout::PIN_*`, `ROTATION`, `SCREEN_W/H`**: pin del driver, orientamento e
   geometria del frame visibile, presa dal driver. Il bus HSPI condiviso resta
-  nello sketch.
+  nello sketch, mentre il suo clock (`SPI_CLOCK_HZ`) e l'impulso di reset
+  (`RESET_DURATION_MS`) dipendono dal cablaggio del pannello e stanno nel Layout.
+  Sul 12.2" `SECOND_CONTROLLER_CASCADE` sceglie come si indirizza il secondo
+  controller.
 - **Token** di `Layout_common.h`: `MARGIN`, `GUTTER`, `STACK_GAP`,
   `BOX_RADIUS`, `TITLE_INSET`, `BOX_PAD`, `TOP_BOX_Y`.
 - **`Layout::CINEMA_*`**: posizione e dimensioni del wallpaper, che occupa la

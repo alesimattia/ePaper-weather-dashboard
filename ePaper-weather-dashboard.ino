@@ -34,8 +34,8 @@
  * moduli (Weather/Calendar/Graphics/icons) non cambia. Il define va prima
  * di #include "Layout.h" o di qualunque header che lo includa transitivamente.
  */
-#define DISPLAY_VARIANT_097C
-//#define DISPLAY_VARIANT_122C
+//#define DISPLAY_VARIANT_097C
+#define DISPLAY_VARIANT_122C
 
 /**
  * REFRESH DIFFERENZIALE B/N. 1 = un frame è un partial da ~0,64 s quando il
@@ -67,7 +67,7 @@
  * sonno di minuti). A 0 il driver non calcola nessun CRC e il percorso di
  * scrittura resta quello di prima.
  */
-#define DISPLAY_PARTIAL_REFRESH 1
+#define DISPLAY_PARTIAL_REFRESH 0
 
 /**
  * SALTO DEL REFRESH A FRAME INVARIATO. 1 = se il frame è identico a quello
@@ -269,12 +269,9 @@ static void waitBusyAsleep(const void*)
 void initDisplay()
 {
 	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS (HSPI bus, board-specific)
-	/**
-	 * 10 MHz è il massimo raccomandato per i pannelli SSD1677 sul cablaggio
-	 * della Waveshare ESP32 Driver Board senza adattamenti.
-	 */
-	display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-	display.init(115200, true, 2, false);
+	// Clock del bus e durata del reset dipendono dal cablaggio del pannello e stanno nel Layout.
+	display.epd2.selectSPI(hspi, SPISettings(Layout::SPI_CLOCK_HZ, MSBFIRST, SPI_MODE0));
+	display.init(115200, true, Layout::RESET_DURATION_MS, false);
 	display.epd2.setBusyCallback(waitBusyAsleep);
 	display.setRotation(Layout::ROTATION);
 	display.setFullWindow();

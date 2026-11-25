@@ -45,6 +45,15 @@ namespace Layout
    *  nomi dei pin, qui e nel 122c, non lo sono. */
   inline constexpr int BUSY_WAKE_PIN = PIN_BUSY;
 
+  /** Clock SPI del pannello: 10 MHz è il massimo raccomandato per il cablaggio
+   *  diretto nel connettore della Waveshare ESP32 Driver Board. Letterale
+   *  decimale nudo perchè tools/layout_preview.py valuta queste costanti. */
+  inline constexpr uint32_t SPI_CLOCK_HZ = 10000000;
+
+  /** Impulso di reset passato a display.init(), in ms: con 2 ms il 9.7" è in
+   *  produzione. */
+  inline constexpr uint16_t RESET_DURATION_MS = 2;
+
   /**
    * Altezza della page del template GxEPD2_3C. Sta qui e non nel .ino perchè
    * dipende dal pannello: è il compromesso fra RAM occupata dai due buffer
