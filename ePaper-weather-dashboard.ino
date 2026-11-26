@@ -121,7 +121,7 @@
 
 /** Origine del servizio routefinder (submodule omonimo), con lo stesso ruolo
  *  di CINEMA_ORIGIN: l'URL dell'immagine lo compone buildRouteUrl(). */
-#define ROUTEFINDER_ORIGIN      "https://routefinder-7w0a.onrender.com"
+#define ROUTEFINDER_ORIGIN      "https://routefinder-epd.onrender.com"
 
 /**
  * Un server render.com del free tier: l'ultimo contatto e l'ultima sveglia
