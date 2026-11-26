@@ -42,7 +42,7 @@ sincronizzazione precedente. Il log scrive
 `SNTP: correzione X ms dopo Y min (Z ppm)`: è la misura reale su questa board.
 Alternative scartate: la sorgente 8,5 MHz/256 (circa 20 ppm) va scelta in
 sdkconfig, che il core Arduino fornisce precompilato; la calibrazione dopo il
-risveglio (PR esp-idf #19250) non è nel core 3.3.11.
+risveglio richiede un core con la PR esp-idf #19250, assente nel 3.3.11.
 
 I test su host compilano `Clock.h` con lo stub `test/stub/esp_sntp.h`, che con
 MSVC fornisce anche `timeval` e `gettimeofday`; `Clock.h` include `sys/time.h`
@@ -90,7 +90,7 @@ appartiene a nessuno dei due.
   `esp_timer_get_time()/1000` e `time()` poggia sulla stessa base più l'offset
   di `settimeofday`; quella base avanza in light sleep. La deriva la correggono
   `resyncIfStale()` e il polling di lwIP, quindi `sntp` **non va mai fermato**.
-- **L'ora sopravvive a un riavvio software**: il core 3.3.11 ha
+- **L'ora sopravvive a un riavvio software**: il core 3.3.x (verificato su 3.3.11 e 3.3.13) ha
   `CONFIG_LIBC_TIME_SYSCALL_USE_RTC_HRT`, e per ESP-IDF il timer RTC conserva l'ora
   attraverso ogni reset tranne il power-on. Dopo un OTA, un crash o un watchdog
   `valido()` è quindi vero al boot. Per questo `sincronizza()`, alla prima chiamata

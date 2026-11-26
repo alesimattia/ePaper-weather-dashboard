@@ -1,19 +1,21 @@
 ---
 name: Toolchain compilazione Arduino/ESP32 su questa macchina
-description: Come compilare il firmware A:\epd da qui - installazione arduino-cli unica in C:\tmp\arduino (core esp32 3.3.11 con index filtrato, librerie, junction sketch), output su A:\tmp\arduino-build, FQBN, partitions.csv dello sketch con schema a menu custom; più i test su host con MSVC
+description: Come compilare il firmware A:\epd da qui - installazione arduino-cli unica in C:\tmp\arduino (core esp32 3.3.13 con index filtrato da filtra-index-esp32.py, librerie dei soli epd e obd, junction sketch), build.ps1 con board e opzioni da .vscode/arduino.json, output su A:\tmp\arduino-build, partitions.csv dello sketch con schema a menu custom; più i test su host con MSVC
 type: reference
 ---
 
 **Questa macchina COMPILA il firmware.** Solo sviluppo + verifica di compilazione: nessun
 upload/flash da qui (decisione dell'utente), il flash avviene da un altro PC.
 
-**Comando unico:** `C:\tmp\arduino\build.ps1` (opzioni `-Clean`, `-Dettagli`,
-`-Board <fqbn>`, `-Partizioni <schema>`). Ricrea la junction sketch se manca e copia
-`Env_template.h` in `Env.h` se assente.
+**Comando unico:** `C:\tmp\arduino\build.ps1` (opzioni `-Clean`, `-Dettagli`). Legge board,
+stringa `configuration` e `buildPreferences` da `A:\epd\.vscode\arduino.json` (la configurazione
+del Mac che compila il firmware della board), quindi compila lo stesso firmware senza una seconda
+copia delle opzioni; si ferma se `buildPreferences` non ha `upload.maximum_size`. Ricrea la junction
+sketch se manca e copia `Env_template.h` in `Env.h` se assente. Salvato UTF-8 con BOM.
 
 **Installazione unica in `C:\tmp\arduino`**, deroga autorizzata dall'utente al vincolo "tutto su
 `A:\tmp\sandbox`" perchè il core non entra nello spazio libero di `A:`. La stessa installazione
-la usano `A:\rd` e `A:\obd` con i propri `build.ps1`.
+la usa `A:\obd` con il proprio `build.ps1`: `epd` e `obd` sono gli unici progetti Arduino.
 - `bin\arduino-cli.exe` (1.5.2) + `arduino-cli.yaml`. Il config NON è nel percorso di default:
   passare SEMPRE `--config-file C:/tmp/arduino/arduino-cli.yaml`.
 - `data\` (core + toolchain), `staging\` (archivi scaricati), `user\libraries\` (librerie),
@@ -24,17 +26,23 @@ la usano `A:\rd` e `A:\obd` con i propri `build.ps1`.
 - L'installazione non contiene percorsi assoluti (verificato con una ricerca su tutto `data\`):
   si sposta con un rename della cartella più la correzione dello yaml e degli script.
 
-**Core esp32 3.3.11 installato con index FILTRATO** `C:\tmp\arduino\setup\package_esp32_min_index.json`
-(rigenerabile da `pkg_esp32.json` nella stessa cartella, referenziato in `board_manager.additional_urls`
-come `file:///`). Tenuti solo `esp-x32`, `esp32-libs`, `esptool_py`, `mkspiffs`, `mklittlefs`; esclusi
-`esp-rv32`, i gdb, openocd, dfu-util e le libs di c3/c5/c6/h2/p4/s2/s3. Nella 3.3.x le SDK sono
-per-target (`esp32-libs`), non più il monolite `esp32-arduino-libs` della 3.0/3.1: è ciò che rende
-il filtro efficace. Reinstallando o cambiando versione: rigenerare l'index con lo stesso filtro.
-L'index ufficiale Arduino contiene anch'esso il package `esp32`, ma gli `additional_urls` vincono sul
-merge (verificato con `core download`), quindi il filtro ha effetto. Lo stesso index ufficiale, che
-`core update-index` scarica comunque, porta però anche le versioni esp32 **più recenti** della 3.3.11,
+**Core esp32 3.3.13 installato con index FILTRATO** `C:\tmp\arduino\setup\package_esp32_min_index.json`
+(referenziato in `board_manager.additional_urls` come `file:///`), generato dall'index upstream
+`pkg_esp32.json` nella stessa cartella con `python filtra-index-esp32.py pkg_esp32.json
+package_esp32_min_index.json <versioni...>`. Lo script fissa il filtro: tenuti solo `esp-x32`, `esp32-libs`,
+`esptool_py`, `mkspiffs`, `mklittlefs`; esclusi `esp-rv32`, i gdb, openocd, dfu-util e le libs di
+c3/c5/c6/h2/p4/s2/s3; riproduce identica la voce 3.3.11 dell'index scritto a mano. L'index tiene 3.3.11,
+3.3.13 e 4.0.0, così un ritorno al 3.3.11 è un `core install` con la versione esplicita. Nella 3.3.x le
+SDK sono per-target (`esp32-libs`), non più il monolite `esp32-arduino-libs` della 3.0/3.1: è ciò che
+rende il filtro efficace. L'index ufficiale Arduino contiene anch'esso il package `esp32`, ma gli
+`additional_urls` vincono sul merge (verificato con `core download`), quindi il filtro ha effetto. Lo
+stesso index ufficiale, che `core update-index` scarica comunque, porta anche versioni esp32 più recenti
 non filtrate, e `core list` le mostra nella colonna Ultimo: si installa quindi sempre con la versione
-esplicita (`core install esp32:esp32@3.3.11`) e mai con `core upgrade`.
+esplicita (`core install esp32:esp32@3.3.13`) e mai con `core upgrade`. Il 3.3.13 (ESP-IDF 5.5.6,
+toolchain `esp-x32` 2610) ha lo stesso sdkconfig del 3.3.11 su tutte le voci da cui dipende il firmware
+(sorgente RTC, ora su RTC+HRT, SNTP, bundle CA completo, newlib, buffer TLS). Il 4.0.0 è ESP-IDF 6.1 con
+mbedTLS 4 (TF-PSA-Crypto): lì `mbedtls_md_hmac` non è più API pubblica, quindi l'HMAC di `Tuya.h` va
+riscritto prima di adottarlo, e bsec2 non dichiara compatibilità con la 4.x.
 
 **Core esp8266 3.1.2** (lo usa `A:\obd`), installato con l'index filtrato
 `C:\tmp\arduino\setup\package_esp8266_min_index.json`, generato dall'index upstream
@@ -65,12 +73,14 @@ arduino-cli mette gli intermedi in `C:\tmp\arduino\cache\sketches\<hash>` e chi 
 li lascia in una cartella `build\` dentro lo sketch. Con un build path esplicito la cache del core
 non viene usata, quindi una build da cartella vuota ricompila anche gli oggetti del core.
 
-**Librerie:** ArduinoJson 7.4.3, Adafruit GFX 1.12.6 + BusIO 1.17.4, bsec2 1.10.2610 (usa la
-precompilata `src\esp32`), BME68x 1.3.40408. Col BME280 selezionato in `Indoor.h` (il default)
-servono Adafruit BME280 Library 2.3.0 e Adafruit Unified Sensor 1.1.15, non ancora installate su
-questa macchina: `arduino-cli --config-file C:/tmp/arduino/arduino-cli.yaml lib install
-"Adafruit BME280 Library@2.3.0" "Adafruit Unified Sensor@1.1.15"`. Sul Mac ci sono già (in
-`~/Documents/Arduino/libraries`). Al cambio di sensore conviene una build pulita (`-Clean`).
+**Librerie:** in `user\libraries` stanno solo quelle che `epd` usa: ArduinoJson 7.4.3, Adafruit GFX
+2.0.0 (font in `src\Fonts`, che `tools/layout_preview.py` cerca insieme al vecchio `Fonts`) + BusIO
+1.17.4, GxEPD2 1.6.9 (copia potata), bsec2 1.10.2610 (usa la precompilata `src\esp32`) + BME68x
+1.3.40408, Adafruit BME280 Library 2.3.0 + Adafruit Unified Sensor 1.1.15. GFX 2.0.0 non cambia la
+resa del firmware: i font FreeSans sono identici, lo spostamento del cursore di `setFont` scala con
+`setTextSize`, che il firmware non usa, e le anteprime rigenerate sono uguali byte per byte. `obd`
+dichiara `mcp_can` e `U8g2`, che il suo `build.ps1` controlla e non sono installate qui. Al cambio di
+sensore conviene una build pulita (`-Clean`).
 
 **La compilazione non esporta nessun binario** (decisione dell'utente, comune ad
 `A:\rd`): lo script non passa `--output-dir`, perchè su questa macchina non si flasha
@@ -88,21 +98,21 @@ e un `.bin` qui non servirebbe a niente. Gli oggetti intermedi in
   [[scheduler_task_table]]). `Env.h` non va letto per valore: contiene credenziali vere, e si
   verifica solo se le macro coincidono con il template.
 
-**Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`, ed è il default di `build.ps1`.
+**Entrambe le varianti compilano**, FQBN `esp32:esp32:esp32`.
 
 **La build che va sulla board la fa il Mac** con la configurazione di `.vscode/arduino.json`:
 `PartitionScheme=custom`, `CPUFreq=80`, `EraseFlash=all`, `PSRAM=disabled`, `LoopCore=1`,
-`EventsCore=1` e altre. `build.ps1` usa i default della board (CPU a 240 MHz), quindi una verifica
-fedele si fa con `arduino-cli compile -b "esp32:esp32:esp32:<stringa configuration di
-arduino.json>"` e un build path separato (`A:\tmp\arduino-build\ePaper-weather-dashboard-mac`).
-`arduino-cli board details` conferma che tutte quelle opzioni, `ZigbeeMode` compresa, esistono per
-la board. `EraseFlash=all` cancella anche la NVS e la partizione `wallpaper` a ogni flash via
+`EventsCore=1` e altre; `build.ps1` usa la stessa stringa. `arduino-cli board details -b <FQBN completo>`
+conferma che tutte quelle opzioni, `ZigbeeMode` compresa, esistono per la board, ed è il controllo
+rapido di una stringa `configuration` senza compilare. Per provare tutte le combinazioni pannello x
+sensore senza toccare i `#define` serve una copia dello sketch per combinazione: lo fa
+`A:\tmp\epd-matrix\compila-matrice.sh <etichetta>` (copie con `Env_template.h`, ~7 min a combinazione). `EraseFlash=all` cancella anche la NVS e la partizione `wallpaper` a ogni flash via
 seriale: calibrazione BSEC e cadenze di `/config` ripartono dai default e il riquadro torna al
 wallpaper predefinito del firmware (scelta dell'utente).
 
 **L'upload nativo scrive solo bootloader, `partitions.bin`, `boot_app0` e firmware** (`tools.esptool_py.upload.pattern_args` del core, via `tools/flasher.py`): `upload.extra_flags` passato come `--build-property` (o in `buildPreferences`) NON arriva al comando di upload, provato con `compile --upload` dell'arduino-cli 0.31 interno all'estensione, che è quello che usa VS Code. `.incbin` non trova file del progetto perchè gcc dà `-I{build.source.path}` al preprocessore e non all'assembler, e GCC 14.2 (esp-x32 2601) non ha `#embed`. Quindi ciò che deve arrivare con l'upload nativo va compilato come array in un header; l'utente non vuole script di flash separati.
 
-**La tabella delle partizioni è `partitions.csv` nella root dello sketch**: il core la copia sopra quella dello schema a menu (hook `recipe.hooks.prebuild.3` di `platform.txt`, varianti bash e Windows), quindi vale per IDE Arduino, VS Code e `build.ps1`. Contiene `nvs` 20 KB, `otadata`, `app0`/`app1` da 1856 KB (`0x1D0000`), `wallpaper` 168 KB (`0x2A000`, dati, sottotipo `undefined`, due slot del wallpaper da 21 settori, la misura del 12.2", vedi [[fallback_progmem_uniformity]]) e `coredump` 152 KB, che prende il resto fino a `0x400000` (`gen_esp32part.py`: offset app allineato a `0x10000`, dimensioni a `0x1000`). La flash è tutta assegnata: lo spazio della `wallpaper` viene dagli slot e non dalla coredump, perchè la coredump ELF del core (`ESP_COREDUMP_ENABLE_TO_FLASH`, fino a 64 task) a 24 KB non entrerebbe. Lo schema a menu è `custom` in `build.ps1`, in `.vscode/arduino.json` e nell'IDE: `build.partitions` vuoto, quindi vale solo `partitions.csv`, ma `upload.maximum_size` 16777216, ben oltre gli slot: `build.ps1` passa `--build-property upload.maximum_size=1900544` (parametro `-MaxApp`) e `.vscode/arduino.json` lo stesso valore in `buildPreferences`, chiave documentata da vscode-arduino; l'Arduino IDE 2 non ha un override e di fatto non controlla la dimensione. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]); con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce al primo aggiornamento via web. Un OTA non cambia la tabella: dopo una sua modifica il primo flash va fatto via seriale.
+**La tabella delle partizioni è `partitions.csv` nella root dello sketch**: il core la copia sopra quella dello schema a menu (hook `recipe.hooks.prebuild.3` di `platform.txt`, varianti bash e Windows), quindi vale per IDE Arduino, VS Code e `build.ps1`. Contiene `nvs` 20 KB, `otadata`, `app0`/`app1` da 1856 KB (`0x1D0000`), `wallpaper` 168 KB (`0x2A000`, dati, sottotipo `undefined`, due slot del wallpaper da 21 settori, la misura del 12.2", vedi [[fallback_progmem_uniformity]]) e `coredump` 152 KB, che prende il resto fino a `0x400000` (`gen_esp32part.py`: offset app allineato a `0x10000`, dimensioni a `0x1000`). La flash è tutta assegnata: lo spazio della `wallpaper` viene dagli slot e non dalla coredump, perchè la coredump ELF del core (`ESP_COREDUMP_ENABLE_TO_FLASH`, fino a 64 task) a 24 KB non entrerebbe. Lo schema a menu è `custom` in `.vscode/arduino.json`, quindi anche in `build.ps1`, e nell'IDE: `build.partitions` vuoto, quindi vale solo `partitions.csv`, ma `upload.maximum_size` 16777216, ben oltre gli slot: `.vscode/arduino.json` mette `upload.maximum_size=1900544` in `buildPreferences`, chiave documentata da vscode-arduino, e `build.ps1` la passa come `--build-property`; l'Arduino IDE 2 non ha un override e di fatto non controlla la dimensione. Servono **due** slot perchè l'aggiornamento dalla finestra di manutenzione scrive nella slot inattiva (vedi [[maintenance_window]]); con `huge_app` il firmware compila e gira, ma `Update.begin()` fallisce al primo aggiornamento via web. Un OTA non cambia la tabella: dopo una sua modifica il primo flash va fatto via seriale.
 
 Il vincolo di dimensione è quindi lo slot da 1856 KB, non i 4 MB di flash. I valori assoluti di flash e RAM non si annotano qui: cambiano a ogni wallpaper e a ogni modulo, e li stampa la build. Quello che resta vero è la differenza fra le due varianti: la 122c usa ~3,2 KB di RAM in più della 097c, che sono i buffer di page più alti (96 righe invece di 84), mentre il flash è praticamente identico. Si passa da una variante all'altra scambiando i `#define DISPLAY_VARIANT_*` in testa al `.ino`.
 

@@ -227,7 +227,7 @@ transita l'HMAC del DeviceSecret.
 
 ## Cosa offre il core, e i gotcha di esp-tls
 
-Zero librerie da installare, tutto in `esp32-libs/3.3.11`: `esp-tls` per il trasporto,
+Zero librerie da installare, tutto in `esp32-libs/<versione del core>`: `esp-tls` per il trasporto,
 `mbedtls/md.h` per l'HMAC (`mbedtls_md_hmac()` one-shot), `lwip/sockets.h` per `select()`.
 
 - `esp_tls_conn_new_sync()` ritorna 1 o -1; su -1 l'handle va comunque distrutto con

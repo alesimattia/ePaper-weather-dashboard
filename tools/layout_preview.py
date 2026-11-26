@@ -41,12 +41,14 @@ SVG_PANEL = "097c"
 
 # Cartelle in cui cercare i font di Adafruit_GFX quando --fonts-dir manca: la
 # variabile d'ambiente, l'installazione di arduino-cli di questa macchina e la
-# cartella libraries dell'IDE Arduino.
+# cartella libraries dell'IDE Arduino. Dalla 2.0.0 i font stanno in src/Fonts,
+# prima in Fonts: si cercano entrambe finchè una macchina ha la versione vecchia.
 FONTS_ENV = "ADAFRUIT_GFX_FONTS"
-FONTS_DIR_CANDIDATES = (
-    Path("C:/tmp/arduino/user/libraries/Adafruit_GFX_Library/Fonts"),
-    Path.home() / "Documents" / "Arduino" / "libraries" / "Adafruit_GFX_Library" / "Fonts",
+_GFX_LIBRARY_DIRS = (
+    Path("C:/tmp/arduino/user/libraries/Adafruit_GFX_Library"),
+    Path.home() / "Documents" / "Arduino" / "libraries" / "Adafruit_GFX_Library",
 )
+FONTS_DIR_CANDIDATES = tuple(library / sub for library in _GFX_LIBRARY_DIRS for sub in ("src/Fonts", "Fonts"))
 
 WHITE, BLACK, RED = 0, 1, 2
 PALETTE = {WHITE: (255, 255, 255), BLACK: (0, 0, 0), RED: (220, 0, 0)}
