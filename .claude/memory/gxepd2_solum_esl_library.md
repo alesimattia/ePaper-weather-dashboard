@@ -36,7 +36,7 @@ negli esempi. Uno sketch non nomina mai la classe concreta:
 #include <GxEPD2_3C.h>
 #include <GxEPD2_SOLUM.h>
 GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
-    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }));
+    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 32, 22 }));
 ```
 
 - `SOLUM_PANEL_097C` / `SOLUM_PANEL_122C`: da definire **prima** dell'include. Zero o due danno
@@ -51,14 +51,15 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
 **Pinout uniforme `GxEPD2_SOLUM_Pins`.** È ciò che rende un driver sostituibile con l'altro: i
 pannelli non hanno lo stesso numero di segnali (il 12.2" ha due CS e due BUSY perchè ha due
 controller) e senza una firma comune cambiare pannello vorrebbe dire riscrivere la riga di
-costruzione del display. Campi in ordine: `cs, dc, rst, busy, cs2, busy2, sck, miso, mosi`; `-1`
+costruzione del display. Campi in ordine: `cs, dc, rst, busy, cs2, busy2`; `-1`
 significa assente e i campi non passati lo prendono dal default member initializer (serve C++14+,
 il core ESP32 compila a gnu++17). Ogni driver ha un `explicit Driver(const GxEPD2_SOLUM_Pins&)` che
-delega al proprio costruttore nativo leggendo i campi che gli servono.
-
-Nota sullo snippet qui sopra: serve a mostrare la forma della struct, non un pinout valido. Il `33`
-è il CS del secondo controller e su questa board va sostituito con **32**, perchè il 33 non è
-portato fuori — vedi [[waveshare_esp32_driver_board]] e [[gxepd2_122c_driver]].
+delega al proprio costruttore nativo leggendo i campi che gli servono. I pin del bus SPI non sono
+nella struct: la libreria è indipendente dalla board, e lo sketch apre il bus sui propri pin e lo
+passa con `selectSPI()` prima di `init()`; è l'API della versione 2.0.0 di `library.properties`, in
+cui nessun costruttore riceve pin del bus. Lo snippet usa il
+cablaggio del secondo controller su questa board, CS 32 e BUSY 22 (vedi [[waveshare_esp32_driver_board]]
+e [[gxepd2_122c_driver]]).
 
 **Contratto di `GxEPDImage.h`.** Il namespace e il template `showImage()` sono **unici** per la
 libreria, non duplicati per driver: due header driver possono stare nella stessa translation unit.
@@ -96,6 +97,8 @@ libreria*):
 3. bus SPI **sempre** da `_pSPIx` / `_spi_settings` della base `GxEPD2_EPD`, mai dall'oggetto `SPI`
    globale: un default proprio si imposta chiamando `selectSPI()` nel costruttore, non cablando le
    `SPISettings` nelle primitive. Altrimenti un `selectSPI()` dello sketch è silenziosamente inerte.
+   Il driver non apre e non riconfigura il bus: `init()` della base chiama `begin()` senza pin, che
+   su un bus già aperto dallo sketch non cambia niente (`SPIClass::begin()` esce se `_spi` esiste).
    **Nessun membro deve tenere riferimenti o puntatori a membri di `*this`**: `GxEPD2_3C` tiene il
    driver per valore e lo copia dal parametro del costruttore, che poi muore, quindi un riferimento
    copiato resta legato a un oggetto distrutto. Il 12.2" passa il bus alle `ScreenPart` a ogni

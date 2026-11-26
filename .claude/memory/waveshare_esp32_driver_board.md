@@ -34,8 +34,9 @@ display.epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 
 È esattamente ciò che fa l'example board-specific upstream
 `A:\tmp\GxEPD2-master\examples\GxEPD2_WS_ESP32_Driver\GxEPD2_WS_ESP32_Driver.ino` (righe 22, 178-190),
-che è la fonte autorevole per questa board e usa anche lui 4 MHz. Il firmware del progetto sta a
-10 MHz, il driver 12.2" ha 20 MHz come default in `selectSPI()`.
+che è la fonte autorevole per questa board e usa anche lui 4 MHz. Il firmware sceglie il clock per
+pannello con `Layout::SPI_CLOCK_HZ` (10 MHz il 9.7", 4 MHz il 12.2" per i fili volanti); il default
+che i costruttori dei driver impostano con `selectSPI()` è 10 MHz.
 
 ## Alimentazione e strap del connettore J1 (netlist)
 
@@ -113,8 +114,8 @@ visivo. È lo stesso genere di trappola dei PDF SOLUM descritta in [[ssd1677_com
   commuta davvero: la **resistenza di sense del booster**, A = 3R e B = 0.47R — non è un selettore
   di modello (vedi la sezione sul wiki, più sotto). Il n.2 alimenta il modulo USB-UART.
 - `hspi.begin()` e `selectSPI()` sono roba board-level: nel firmware stanno nel `.ino` e non nei
-  `Layout_*.h`, con l'eccezione documentata in [[layout_separation]] (il driver 12.2" apre il bus
-  da sè in `init()`, quindi `Layout_122c.h` gli passa anche sck/miso/mosi).
+  `Layout_*.h` (vedi [[layout_separation]]), per entrambi i pannelli. I driver della libreria non
+  aprono il bus e non ne conoscono i pin, quindi questa è l'unica parte del codice legata alla board.
 
 ## Wiki ufficiale: cosa aggiunge allo schematico
 

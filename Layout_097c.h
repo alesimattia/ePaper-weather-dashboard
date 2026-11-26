@@ -67,7 +67,7 @@ namespace Layout
    * Costruisce il driver del pannello. Il pinout passa dalla struct uniforme
    * della libreria, quindi la firma è identica per tutti i driver e il .ino
    * non cambia quando cambia il pannello. Ordine dei campi: cs, dc, rst,
-   * busy, cs2, busy2, sck, miso, mosi; quelli non passati restano -1.
+   * busy, cs2, busy2; quelli non passati restano -1. Il bus lo apre il .ino.
    */
   inline Panel makePanel()
   {

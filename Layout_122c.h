@@ -85,19 +85,15 @@ namespace Layout
    * Costruisce il driver del pannello. Il pinout passa dalla struct uniforme
    * della libreria, quindi la firma è identica per tutti i driver e il .ino
    * non cambia quando cambia il pannello. Ordine dei campi: cs, dc, rst,
-   * busy, cs2, busy2, sck, miso, mosi; quelli non passati restano -1.
+   * busy, cs2, busy2; quelli non passati restano -1. Il bus lo apre il .ino.
    *
-   * I pin del bus servono a questo driver, che apre l'SPI da sè dentro
-   * init(): sono gli stessi HSPI della board (13/12/14) su cui lo sketch fa
-   * hspi.begin(), e il selectSPI() dello sketch resta valido perchè il driver
-   * usa _pSPIx della base. Il modo di indirizzamento si imposta qui, prima di
-   * init(), e GxEPD2_3C lo eredita con la copia del driver.
+   * Il modo di indirizzamento si imposta qui, prima di init(), e GxEPD2_3C lo
+   * eredita con la copia del driver.
    */
   inline Panel makePanel()
   {
     Panel panel(GxEPD2_SOLUM_Pins{ PIN_CS_M, PIN_DC, PIN_RST, PIN_BUSY_M,
-                                   PIN_CS_S, PIN_BUSY_S,
-                                   13, 12, 14 });
+                                   PIN_CS_S, PIN_BUSY_S });
     if (SECOND_CONTROLLER_CASCADE) panel.setAddressingMode(Panel::ADDRESSING_CASCADE);
     return panel;
   }
