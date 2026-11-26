@@ -1,6 +1,6 @@
 ---
 name: Refresh differenziale B/N del 9.7"
-description: Il partial usato dentro il loop paged, frame per frame: CRC32 del piano rosso per pagina contro l'ultimo frame pieno, ruoli di 0x24 e 0x26 scambiati a ogni passata con righe VS di LUT1 e LUT2 scambiate, controller in Sleep e non in deep sleep finchè c'è un riferimento, frame pieno sempre con reset e init, politica in PartialRefresh.h, elementi in nero scelti per non spostare il rosso, rischi non risolti dalle fonti e cosa prova l'esempio differential_check
+description: Il partial usato dentro il loop paged, frame per frame: orchestrazione in GxEPDFrame::render della libreria (armo, uscita alla prima pagina rifiutata, rifacimento pieno), CRC32 del piano rosso per pagina contro l'ultimo frame pieno, ruoli di 0x24 e 0x26 scambiati a ogni passata con righe VS di LUT1 e LUT2 scambiate, controller in Sleep e non in deep sleep finchè c'è un riferimento, frame pieno sempre con reset e init, un guasto del BUSY che non convalida il riferimento, politica in PartialRefresh.h con l'isteresi del freddo, elementi in nero scelti per non spostare il rosso, rischi non risolti dalle fonti e cosa prova l'esempio differential_check
 type: project
 ---
 
@@ -13,29 +13,43 @@ i suoi limiti stanno in [[gxepd2_097c_driver]]; qui c'è il modo in cui lo si us
 
 - **Meccanismo**: sezione REFRESH DIFFERENZIALE in testa a `GxEPD2_SOLUM_097c_960x672.h`.
 - **Stato e regole senza I/O**: `GxEPD2_SOLUM_Differential.h`, provato su host. Il driver fa solo I/O.
-- **Politica**: `PartialRefresh.h` (funzioni pure: decisione, contatori del giorno, trait e helper di
-  aggancio al driver) più le costanti `PARTIAL_*` nella sezione compile-time di `Timings.h`, non
+- **Orchestrazione del frame**: `GxEPDFrame::render()` in `GxEPD2_SOLUM_ESL/src/GxEPDFrame.h`, nella
+  libreria. Tiene il protocollo con il driver sopra il loop paged (armo, uscita alla prima pagina
+  rifiutata, rifacimento pieno, salto del frame invariato, esito con guasto del BUSY e durata); il
+  firmware passa solo il disegno di una pagina e la decisione della politica.
+- **Politica**: `PartialRefresh.h` (funzioni pure: decisione, contatori del giorno, `finalReason()` che
+  traduce l'esito di `render()` nel motivo finale, alias dei trait di `GxEPDFrame`) più le costanti `PARTIAL_*` nella sezione compile-time di `Timings.h`, non
   configurabili da NVS: vedi [[timings_nvs_config]]. Tetto di partial consecutivi 6, soglia di
   temperatura 18 °C con isteresi di 2 °C, gap massimo dall'ultimo frame in **millisecondi** (due
   cicli più il margine del poll: `CYCLE_S` è in secondi e `BSEC_MARGINE_POLL_MS` in ms, e mescolarli
   rende pieno ogni frame; c'è uno `static_assert`).
-- **Integrazione**: `Weather::renderFrame()` e `initDisplay()` nel `.ino`; interruttore generale
+- **Integrazione**: `Weather::renderFrame()` chiama `GxEPDFrame::render()` e logga l'esito;
+  `initDisplay()` nel `.ino` accende il differenziale e il salto del frame invariato; interruttore generale
   `DISPLAY_PARTIAL_REFRESH`, a 0 il driver non calcola nessun CRC e il percorso di scrittura è quello
   di sempre.
 - **Esempio sul vetro**: `GxEPD2_SOLUM_ESL/examples/097c/differential_check`.
 
 ## Come funziona
 
-1. Il firmware decide con `decide()`; se il partial è possibile chiama `beginFrame()` **prima di
-   `firstPage()`**, perchè `firstPage()` chiama `setPaged()` nel driver.
+1. Il firmware decide con `decide()`; se il partial è possibile `GxEPDFrame::render()` arma il driver
+   con `beginDifferentialFrame()` **prima di `firstPage()`**, perchè `firstPage()` chiama `setPaged()`
+   nel driver.
 2. Il loop paged disegna come sempre. A ogni `writeImage(black, color)` il driver calcola il CRC32
    (funzione della ROM, `esp_rom_crc32_le`) del piano colore della pagina e lo confronta con quello
    dell'ultimo frame pieno. Un riferimento vale 8 pagine da 84 righe; la struct ne regge 16.
 3. Tutte uguali: il B/N nuovo va nella RAM che non contiene il B/N del vetro e `refresh(false)` lancia
-   il partial. Una diversa: il driver salta le scritture, non tocca il pannello e il firmware rifà il
-   frame in pieno. Il rendering in più dopo un rifiuto costa poche centinaia di ms contro 24 s.
-4. Se `beginFrame()` non arma (nessun riferimento) il primo rendering è già pieno e **non** se ne fa un
-   secondo: raddoppierebbe a 48 s.
+   il partial. Una diversa: il driver salta le scritture e non tocca il pannello, `render()` esce dalla
+   passata alla prima pagina rifiutata (le pagine dopo non cambierebbero l'esito, e il driver disarma
+   il frame anche senza arrivare al refresh) e rifà il frame in pieno con una seconda passata, un
+   rendering in più trascurabile contro i 24 s del pieno.
+4. Se `beginDifferentialFrame()` non arma (nessun riferimento) il primo rendering è già pieno e **non**
+   se ne fa un secondo: raddoppierebbe a 48 s.
+
+L'esito di `render()` vale `Full`, `Partial`, `Skipped` o `Refused`, con la mask delle pagine rifiutate,
+il guasto del BUSY e la durata dell'ultimo refresh. Per l'uscita anticipata la mask contiene la sola
+prima pagina rifiutata, perchè le successive non arrivano più alla macchina a stati, e `render()` la
+legge prima della passata piena, che la ripulirebbe; il log dice "pieno: rosso cambiato dalla pagina N"
+con N l'indice di quella pagina.
 
 Non c'è un frame store, perchè senza PSRAM non c'è dove tenerlo. Dopo un pieno il B/N sul vetro sta in
 0x24 e 0x26 contiene il rosso; i ruoli si **scambiano a ogni passata**. La LUT la sceglie solo la
@@ -46,7 +60,8 @@ per gruppo e restano uguali. Un pixel rosso ha il bit B/N a 1 in entrambe le RAM
 
 ## Il salto del frame invariato viene prima
 
-In `refresh(false)` il controllo del frame invariato ([[frame_skip_unchanged]]) precede il partial: se i due piani nero e colore sono identici a quelli dell'ultimo frame mandato al vetro non parte nè il partial nè il pieno, la catena non cresce e i ruoli delle RAM non si scambiano. Vale anche per un frame non armato, dove il riferimento resta spento. L'esito è `Reason::Unchanged`, contato a parte da partial e pieni, e il frame saltato aggiorna comunque `lastFrameMs`.
+In `refresh(false)` un guasto del BUSY già alzato precede tutto (non rinfresca, non registra il frame
+e butta il riferimento), poi il controllo del frame invariato ([[frame_skip_unchanged]]) precede il partial: se i due piani nero e colore sono identici a quelli dell'ultimo frame mandato al vetro non parte nè il partial nè il pieno, la catena non cresce e i ruoli delle RAM non si scambiano. Vale anche per un frame non armato, dove il riferimento resta spento. L'esito è `Reason::Unchanged`, contato a parte da partial e pieni, e il frame saltato aggiorna comunque `lastFrameMs`.
 
 ## Invarianti
 
@@ -63,11 +78,14 @@ In `refresh(false)` il controllo del frame invariato ([[frame_skip_unchanged]]) 
 - **Qualunque scrittura di RAM che non viene dal frame spegne il riferimento.** Le tre primitive di
   scrittura invalidano quando la guardia interna (`_diffInternalWrite`, RAII) è bassa; il loop paged,
   le pulizie di `setPaged()` e `_Update_Full()` e il riempimento di `_initial_write` la alzano.
-  `refresh(x, y, w, h)` invalida e disarma, `refreshPartial()` e le API opt-in invalidano.
+  `refresh(x, y, w, h)` invalida e disarma, e le passate delle API opt-in (sottoclasse dell'esempio)
+  invalidano.
 - **Il riferimento si convalida solo a refresh pieno finito.** Pagine contigue dall'alto che coprono
-  l'altezza, nessuna scrittura estranea (`dirty`) e BUSY basso dopo l'attesa: la base esce dal timeout
-  stampando "Busy Timeout!" ma senza segnalarlo, quindi il driver rilegge il pin. Il conteggio delle
-  pagine si azzera a ogni commit, così un refresh pieno fuori dal loop non rivalida con CRC vecchi.
+  l'altezza, nessuna scrittura estranea (`dirty`) e nessun guasto del BUSY: un refresh con il BUSY
+  ancora alto allo scadere dell'attesa (`Timeout`) o sceso prima della durata minima plausibile
+  (`TooShort`) non convalida il riferimento, che si butta, e il frame dopo è pieno; vale anche per un
+  partial. Il conteggio delle pagine si azzera a ogni commit, così un refresh pieno fuori dal loop non
+  rivalida con CRC vecchi.
 - **Dopo un partial 0x26 contiene B/N**: `_markPreviousInColorRam()` alla prima scrittura del nuovo in
   0x26 e dopo ogni partial, perchè un refresh pieno la rileggerebbe come accent.
 - **L'orientamento è un parametro** di `_Init_Part` e `_Update_Part`; le API opt-in, che presuppongono
@@ -75,14 +93,15 @@ In `refresh(false)` il controllo del frame invariato ([[frame_skip_unchanged]]) 
   l'orientamento caricato cambia, e conta nella finestra di manutenzione dove nessun reinit cade fra
   due frame.
 - Un frame armato **si disarma da sè** in `refresh(false)`; la mask delle pagine con rosso cambiato
-  resta leggibile fino al prossimo `arm()`, e il firmware la legge prima del secondo rendering.
+  resta leggibile fino al prossimo `arm()`, e `GxEPDFrame::render()` la legge prima del secondo
+  rendering.
 
 ## Aggancio al firmware
 
 `renderFrame()` e `initDisplay()` non sono template, e un `if constexpr` scartato fuori da un template
-viene comunque compilato: le chiamate all'API passano tutte da helper template su `PartialRefresh`,
-che con un driver senza `hasDifferentialRefresh` non fanno niente. Così il driver 122c non dichiara
-niente e non si tocca; la sua compatibilità la prova un test del trait con pannelli finti, perchè
+viene comunque compilato: le chiamate all'API passano tutte da helper template di `GxEPDFrame` (con gli
+alias in `PartialRefresh`), che con un driver senza `hasDifferentialRefresh` non fanno niente. Così il
+driver 122c, che dichiara solo il salto del frame invariato, non si tocca; la sua compatibilità la prova un test del trait con pannelli finti, perchè
 `build.ps1` prende il pannello dal define del `.ino` e un `-D` esterno fa scattare l'`#error` di
 `Layout.h`. Una temperatura NaN non supera mai la soglia (la guardia è la negazione di `>=`), e il
 giorno dei contatori entra come argomento e si azzera solo con ora valida.
@@ -91,7 +110,12 @@ Sensore e temperatura in `decide()`: input `sensorPresent` = `Indoor::attivo()` 
 BME280, inizializzato in `begin()`). **Sensore assente → partial senza controllo della temperatura** (niente soglia nè
 isteresi; catena, gap e primo frame valgono comunque), scelta dell'utente: rischio accettato di nero
 sbiadito al freddo, perchè la LUT del partial non compensa la temperatura. Sensore collegato con
-campione non valido (BSEC non ancora stabilizzato, campione scaduto) → `SensorInvalid`, frame pieno.
+campione non valido (BSEC non ancora stabilizzato, campione scaduto): `SensorInvalid`, frame pieno.
+
+L'isteresi del freddo è un latch di `onFrameDone()`: la decisione `TooCold` lo arma e `Partial` lo
+disarma, mentre `LongGap`, `ChainLimit` e `SensorInvalid` lo lasciano com'è, perchè non dicono niente
+della temperatura e azzerarlo toglierebbe l'isteresi al frame dopo. Con il latch armato la soglia sale
+di `PARTIAL_TEMP_HYSTERESIS_C`.
 
 ## Perchè questi elementi sono in nero
 
@@ -110,9 +134,11 @@ N/(N+1) della catena e un frame rifiutato azzera la catena.
 ## Verifica
 
 - Su host: `test/test_partial.cpp`, due volte nel runner, con l'interruttore spento e acceso. Prova la
-  macchina a stati (rifiuti a pagina 0, intermedia e ultima, pagine fuori ordine, invalidazione a
-  frame armato, refresh fuori dal loop, alternanza dei ruoli, disarmo, mask), la politica e il trait.
-  Le chiamate SPI del driver non girano su host.
+  macchina a stati (rifiuti a pagina 0, intermedia e ultima, uscita anticipata con la sola prima pagina
+  nella mask, pagine fuori ordine, invalidazione a frame armato, refresh fuori dal loop, alternanza
+  dei ruoli, disarmo, mask), la politica con il latch dell'isteresi, `finalReason()` dai quattro esiti
+  di `GxEPDFrame::Outcome` e il trait. Le chiamate SPI del driver e `GxEPDFrame::render()` con un
+  display vero non girano su host.
 - Sul vetro: `differential_check` prova con il codice vero tre cose che nessuna sonda copre, perchè
   `drawPartial` delle sonde riscrive 0x26 dopo ogni refresh e la catena tiene l'analog acceso:
   l'orientamento scambiato, il power off 0xC3 fra due passate e un sonno di minuti in Sleep. Se

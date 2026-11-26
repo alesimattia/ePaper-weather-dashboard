@@ -456,9 +456,11 @@ SAMPLE_INDOOR = {"temp": 22.5, "hum": 45, "iaq": 74, "acc": 3, "press": 1013}
 
 
 def shown_temperature(celsius):
-    """Indoor::shownTemperature(): arrotonda a 0,5 °C, con i mezzi punti lontano dallo zero come roundf."""
+    """Indoor::shownTemperature(): arrotonda a 0,5 °C, con i mezzi punti lontano dallo zero come
+    roundf, e senza lo zero negativo, che "%.1f" stamperebbe "-0.0"."""
     scaled = celsius * 2.0
-    return math.copysign(math.floor(abs(scaled) + 0.5), scaled) / 2.0
+    rounded = math.copysign(math.floor(abs(scaled) + 0.5), scaled) / 2.0
+    return 0.0 if rounded == 0.0 else rounded
 
 
 def shown_pressure(mbar):
@@ -568,8 +570,9 @@ class Frame:
         return self.c
 
     def draw_wallpaper(self):
-        """showImage() del wallpaper del pannello, a misura CINEMA_W x CINEMA_H. Piano nero
-        con bit 0 = nero, piano rosso con bit 0 = rosso, come lo compone GxEPDImage."""
+        """showImage() del wallpaper del pannello, a misura CINEMA_W x CINEMA_H, in Paint::InkOnly
+        come drawTestBackground(): piano rosso con bit 0 = rosso, poi piano nero con bit 0 = nero
+        sopra, sul fondo bianco della pagina. Il risultato coincide con quello qui sotto."""
         L = self.L
         width, height, black, red = read_wallpaper(self.panel, L)
         stride = (width + 7) // 8
@@ -798,6 +801,8 @@ class Frame:
         axis_y = top_y + L["TC_H"] - L["TC_AXIS_PAD_BOT"]
         plot_top, plot_bottom = top_y + 6, axis_y - 1
         t_min, t_max = min(p[1] for p in points), max(p[1] for p in points)
+        # Le etichette mostrano i valori dei dati, non il margine di una curva piatta.
+        data_min, data_max = t_min, t_max
         if t_max - t_min < 1.0:
             middle = (t_max + t_min) * 0.5
             t_min, t_max = middle - 0.5, middle + 0.5
@@ -853,8 +858,8 @@ class Frame:
             if clamp_right and text_x + x1 + width > chart_r:
                 text_x = chart_r - width - x1
             c.print(text, text_x, label_y, BLACK)
-        self.draw_right(str(round_half_away(t_max)), chart_l - 3, plot_top + self.cap_height(), BLACK)
-        self.draw_right(str(round_half_away(t_min)), chart_l - 3, axis_y - 1, BLACK)
+        self.draw_right(str(round_half_away(data_max)), chart_l - 3, plot_top + self.cap_height(), BLACK)
+        self.draw_right(str(round_half_away(data_min)), chart_l - 3, axis_y - 1, BLACK)
         c.fill_circle(map_x(now), map_y(SAMPLE_SLOTS[0]["feels"]), L["TC_DOT_R"], BLACK)
 
 

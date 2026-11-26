@@ -1,10 +1,12 @@
 ---
 name: Metodi nativi prima, niente duplicati della base GxEPD2
-description: ordine di preferenza dei metodi (GxEPD2 nativo, poi driver GxEPD2_SOLUM, poi codice epd solo per la GUI) e divieto di duplicare nei driver membri o metodi della base GxEPD2_EPD
+description: ordine di preferenza dei metodi (GxEPD2 nativo, poi i wrapper e il driver della libreria GxEPD2_SOLUM_ESL, poi codice epd solo per la GUI), divieto di duplicare nei driver membri o metodi della base GxEPD2_EPD, driver che non scrive mai su Serial
 type: feedback
 ---
 
 Ordine di utilizzo dei metodi: prima quelli nativi di GxEPD2 (`GxEPD2_EPD`, `GxEPD2_3C`, Adafruit_GFX); se non esistono, quelli del driver custom in `GxEPD2_SOLUM_ESL`; nel codice di `A:\epd` (`Graphics.h` e moduli) si creano metodi solo quando non riguardano il driver ma la specifica interfaccia grafica della dashboard. Nei driver del submodule nessun membro o metodo duplica la base: un virtuale nativo si sovrascrive con `override` invece di introdurne un omonimo con altro nome, un membro protetto della base si usa invece di ridichiararlo, una funzione della base (init, reset, attesa del BUSY, scrittura di comando e dato) si chiama ed eventualmente si estende.
+
+Dove GxEPD2 è scomodo da usare direttamente la libreria SOLUM offre wrapper sopra le sue primitive, ed è da lì che il firmware entra: `GxEPDImage::showImage()` sopra `drawInvertedBitmap()` (con `Paint::Opaque` o `Paint::InkOnly`), `GxEPDFrame::render()` sopra il loop paged e `GxEPD2_SOLUM::beginBus()`, che apre il bus e restituisce le `SPISettings` per l'overload nativo `GxEPD2_3C::init(..., spi, settings)`. Il driver 9.7" non scrive mai su Serial: gli esiti escono da accessor (`busyFault()`, `lastUpdateMs()`, `frameSkipped()`, `differentialChain()`) e li logga il firmware. Il 12.2" conserva solo il messaggio di timeout dello slave, sotto il flag diagnostico della base.
 
 **Why:** richiesta esplicita dell'utente ("metodi nativi gxepd2 e se non presente usa metodi del custom driver gxepd2-solum e solo se il metodo non riguarda il driver bensì la specifica implementazione della mia interfaccia grafica allora puoi creare metodi nel codice di epd", "non voglio avere metodi duplicati rispetto alla base gxepd2"). Un membro ridichiarato nasconde quello della base, e i metodi della base, `init()` per primo, aggiornano la copia della base e non quella del driver.
 

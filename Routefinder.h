@@ -180,15 +180,21 @@ namespace Routefinder
     return nullptr;
   }
 
-  /** Motivo del rifiuto di `s`, o nullptr se è una configurazione valida. Le
-   *  due fasce non si sovrappongono perchè le immagini condividono il buffer. */
-  inline const char* invalidReason(const Settings& s, const Timings::Valori& t)
+  /** Motivo del rifiuto di coordinate e carburante di `s`, o nullptr se sono validi. */
+  inline const char* invalidPlaceReason(const Settings& s)
   {
     if (!detail::latitudeInRange(s.originLatE6) || !detail::longitudeInRange(s.originLngE6))
       return "partenza fuori range";
     if (!detail::latitudeInRange(s.destinationLatE6) || !detail::longitudeInRange(s.destinationLngE6))
       return "arrivo fuori range";
     if ((uint8_t)s.fuel >= FUEL_COUNT) return "carburante sconosciuto";
+    return nullptr;
+  }
+
+  /** Motivo del rifiuto delle due fasce di `s`, o nullptr se sono valide. Le
+   *  due fasce non si sovrappongono perchè le immagini condividono il buffer. */
+  inline const char* invalidWindowsReason(const Settings& s, const Timings::Valori& t)
+  {
     if (s.windowStartMin >= s.windowEndMin || s.windowEndMin > 24 * 60)
       return "l'inizio della fascia del percorso non precede la fine";
     if (s.cinemaStartMin >= s.cinemaEndMin || s.cinemaEndMin > 24 * 60)
@@ -198,7 +204,18 @@ namespace Routefinder
     return windowsOutsideRadioHours(s, t);
   }
 
-  /** Scrive in NVS i soli campi cambiati, come Timings::save(). */
+  /** Motivo del rifiuto di `s`, o nullptr se è una configurazione valida. */
+  inline const char* invalidReason(const Settings& s, const Timings::Valori& t)
+  {
+    const char* place = invalidPlaceReason(s);
+    return place ? place : invalidWindowsReason(s, t);
+  }
+
+  /**
+   * Scrive in NVS i soli campi cambiati, come Timings::save().
+   * @return false se il namespace non si apre in scrittura o se una put non
+   *         scrive nulla, per esempio a partizione piena.
+   */
   inline bool save()
   {
     using namespace detail;
@@ -208,11 +225,17 @@ namespace Routefinder
       LOG("route", "NVS non apribile in scrittura: impostazioni attive solo fino al riavvio");
       return false;
     }
-    prefs.putUShort(KEY_SCHEMA, SCHEMA);
+    bool written = prefs.putUShort(KEY_SCHEMA, SCHEMA) != 0;
     const Settings& s = settings;
-    auto putInt = [&](const char* k, int32_t v) { if (prefs.getInt(k, INT32_MIN) != v) prefs.putInt(k, v); };
-    auto putByte = [&](const char* k, uint8_t v) { if (prefs.getUChar(k, 0xFF) != v) prefs.putUChar(k, v); };
-    auto putShort = [&](const char* k, uint16_t v) { if (prefs.getUShort(k, 0xFFFF) != v) prefs.putUShort(k, v); };
+    auto putInt = [&](const char* k, int32_t v) {
+      if (prefs.getInt(k, INT32_MIN) != v && prefs.putInt(k, v) == 0) written = false;
+    };
+    auto putByte = [&](const char* k, uint8_t v) {
+      if (prefs.getUChar(k, 0xFF) != v && prefs.putUChar(k, v) == 0) written = false;
+    };
+    auto putShort = [&](const char* k, uint16_t v) {
+      if (prefs.getUShort(k, 0xFFFF) != v && prefs.putUShort(k, v) == 0) written = false;
+    };
     putInt("orig_lat", s.originLatE6);
     putInt("orig_lng", s.originLngE6);
     putInt("dest_lat", s.destinationLatE6);
@@ -223,14 +246,17 @@ namespace Routefinder
     putShort("cine_start", s.cinemaStartMin);
     putShort("cine_end", s.cinemaEndMin);
     prefs.end();
-    return true;
+    if (!written) LOG("route", "scrittura NVS fallita: impostazioni attive solo fino al riavvio");
+    return written;
   }
 
   /**
    * Carica le impostazioni da NVS; da chiamare dopo Timings::begin(), perchè
    * la fascia si confronta con quella WiFi. Una chiave assente ricade sul
-   * default di Env.h; una combinazione non valida, anche solo perchè la fascia
-   * WiFi è stata ristretta da /config/reset, torna interamente ai default.
+   * default di Env.h. Un gruppo non valido torna ai default da solo: le fasce
+   * (anche solo perchè la fascia WiFi è stata ristretta da /config/reset) senza
+   * toccare le coordinate, e viceversa, così una fascia da correggere non fa
+   * perdere la destinazione salvata.
    */
   inline void begin()
   {
@@ -255,13 +281,27 @@ namespace Routefinder
       settings.cinemaEndMin     = prefs.getUShort("cine_end", DEFAULTS.cinemaEndMin);
     }
     prefs.end();
-    const char* reason = invalidReason(settings, Timings::get());
-    if (reason)
+
+    const char* placeReason = invalidPlaceReason(settings);
+    if (placeReason)
     {
-      LOG("route", "impostazioni non valide (%s): torno ai predefiniti", reason);
-      settings = DEFAULTS;
-      save();
+      LOG("route", "coordinate o carburante non validi (%s): torno ai predefiniti", placeReason);
+      settings.originLatE6      = DEFAULTS.originLatE6;
+      settings.originLngE6      = DEFAULTS.originLngE6;
+      settings.destinationLatE6 = DEFAULTS.destinationLatE6;
+      settings.destinationLngE6 = DEFAULTS.destinationLngE6;
+      settings.fuel             = DEFAULTS.fuel;
     }
+    const char* windowsReason = invalidWindowsReason(settings, Timings::get());
+    if (windowsReason)
+    {
+      LOG("route", "fasce non valide (%s): torno ai predefiniti", windowsReason);
+      settings.windowStartMin = DEFAULTS.windowStartMin;
+      settings.windowEndMin   = DEFAULTS.windowEndMin;
+      settings.cinemaStartMin = DEFAULTS.cinemaStartMin;
+      settings.cinemaEndMin   = DEFAULTS.cinemaEndMin;
+    }
+    if (placeReason || windowsReason) save();
   }
 
   /** Applica in blocco senza salvare, come Timings::applica(); falso e stato
@@ -460,12 +500,14 @@ namespace Routefinder
     return (uint32_t)ROUTE_MAX_AGE_CADENCES * Timings::get().routeMin * 60U;
   }
 
-  /** Vero se un percorso scaricato all'epoch `downloadedAt` è ancora mostrabile. */
+  /** Vero se un percorso scaricato all'epoch `downloadedAt` è ancora mostrabile.
+   *  Un'età negativa fino a 60 s si tollera: SNTP può riportare indietro
+   *  l'orologio, che in light sleep anticipa, dopo il download. */
   inline bool isRouteFresh(uint32_t downloadedAt)
   {
     if (!Clock::valido() || downloadedAt == 0) return false;
     const int64_t age = (int64_t)time(nullptr) - (int64_t)downloadedAt;
-    return age >= 0 && age <= (int64_t)maxRouteAgeS();
+    return age >= -60 && age <= (int64_t)maxRouteAgeS();
   }
 
   /** Epoch di oggi all'inizio della fascia del cinema, 0 senza orologio.
@@ -488,13 +530,18 @@ namespace Routefinder
    * Vero se un cinema scaricato a `downloadedAt` (epoch) e `downloadedMs`
    * (millis) vale ancora: scaricato oggi dopo l'inizio della fascia cinema,
    * oppure dopo l'inizio della forzatura in corso. Un'immagine della sera prima
-   * non vale più, anche se il buffer la contiene ancora.
+   * non vale più, anche se il buffer la contiene ancora. L'ordine fra download e
+   * inizio della forzatura si decide confrontando le età su millis(), non la
+   * differenza signed dei due istanti: oltre 24,8 giorni di distanza questa
+   * cambierebbe segno e darebbe per recente un download vecchio.
    */
   inline bool isCinemaFresh(uint32_t downloadedAt, uint32_t downloadedMs)
   {
     if (!Clock::valido() || downloadedAt == 0) return false;
     if (downloadedAt >= cinemaWindowStartEpoch()) return true;
-    return activeSource() == Source::Cinema && (int32_t)(downloadedMs - detail::overrideStartMs) >= 0;
+    if (activeSource() != Source::Cinema) return false;
+    const uint32_t nowMs = millis();
+    return (uint32_t)(nowMs - downloadedMs) <= (uint32_t)(nowMs - detail::overrideStartMs);
   }
 
   /**

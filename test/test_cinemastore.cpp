@@ -57,8 +57,16 @@ int main()
   ok(!CinemaStore::beginWrite(CinemaStore::Kind::Cinema), "  e il download non parte finchè manca spazio");
   ok(!CinemaStore::isValid() && CinemaStore::plane(0) == nullptr, "  nessuna immagine");
 
+  // ensureAllocated() espone solo l'allocazione: il .ino la chiama prima della
+  // GET per scoprire un heap esaurito senza spendere l'handshake.
+  ok(!CinemaStore::ensureAllocated(), "ensureAllocated con l'heap esaurito: false");
+  ok(!CinemaStore::writeChunk((const uint8_t*)"x", 1), "  e non ha avviato nessuna scrittura");
+
   g_heapEsaurito = false;
-  ok(CinemaStore::beginWrite(CinemaStore::Kind::Cinema), "heap tornato: il download ritenta l'allocazione e parte");
+  ok(CinemaStore::ensureAllocated() && !CinemaStore::isValid(),
+     "heap tornato: ensureAllocated alloca i piani senza avviare un download");
+  ok(!CinemaStore::writeChunk((const uint8_t*)"x", 1), "  nessuna scrittura avviata");
+  ok(CinemaStore::beginWrite(CinemaStore::Kind::Cinema), "il download parte con i piani già allocati");
   ok(scriviImmagine(2 * PIANO, 7), "corpo a blocchi da 7 byte, uno a cavallo dei due piani");
   ok(!CinemaStore::isValid(), "  prima del commit l'immagine non vale");
   g_msFinto = 42000;
@@ -67,6 +75,14 @@ int main()
          CinemaStore::downloadedAt() == 1790000000u && CinemaStore::downloadedMs() == 42000,
      "  valida, di tipo cinema, con epoch e millis del download");
   ok(pianiCorretti(PIANO), "  piano nero e piano colore con i byte giusti");
+
+  // Con un'immagine valida ensureAllocated non la invalida, nemmeno a heap
+  // esaurito: i piani ci sono già e non serve allocare niente.
+  g_heapEsaurito = true;
+  ok(CinemaStore::ensureAllocated() && CinemaStore::isValid() && CinemaStore::downloadedAt() == 1790000000u &&
+         pianiCorretti(PIANO),
+     "ensureAllocated con un'immagine valida: true, l'immagine resta valida e intatta");
+  g_heapEsaurito = false;
 
   ok(!CinemaStore::writeChunk((const uint8_t*)"x", 1), "nessuna scrittura fuori da un download");
 

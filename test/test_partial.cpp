@@ -164,6 +164,29 @@ int main()
   }
 
   {
+    // Uscita anticipata di GxEPDFrame::render(): la passata armata si ferma alla
+    // prima pagina rifiutata, il frame si disarma e quello pieno riparte da capo.
+    Diff d;
+    d.setEnabled(true);
+    fullFrame(d, 100);
+    d.arm();
+    d.beginFrame();
+    ok(d.onPage(crcOf(100, 0), 0, PAGE_H) == Action::WriteNew, "uscita anticipata: pagina 0 uguale");
+    ok(d.onPage(crcOf(100, 1) ^ 0xFFFFu, PAGE_H, PAGE_H) == Action::Skip, "uscita anticipata: pagina 1 rifiutata");
+    ok(d.refusedMask() == (1u << 1), "uscita anticipata: la mask ha solo la prima pagina rifiutata");
+    ok(!d.canFire(HEIGHT), "uscita anticipata: nessun partial con le pagine restanti mai viste");
+    d.disarm();
+    d.beginFrame();
+    bool allFull = true;
+    for (int i = 0; i < PAGES; ++i)
+      if (d.onPage(crcOf(300, i), (int16_t)(i * PAGE_H), PAGE_H) != Action::WriteFull) allFull = false;
+    ok(allFull, "uscita anticipata: il frame pieno successivo riscrive tutte le pagine");
+    d.commitFull(HEIGHT);
+    ok(d.refValid() && d.chain() == 0, "uscita anticipata: il pieno ricostruisce il riferimento");
+    ok(d.arm() && armedFrame(d, 300), "uscita anticipata: il frame dopo può andare in partial sul nuovo riferimento");
+  }
+
+  {
     Diff d;
     d.setEnabled(true);
     fullFrame(d, 100);
@@ -348,8 +371,30 @@ int main()
     ok(s.day.dayKey == 6 && s.day.partial == 2, "senza ora valida i contatori non si azzerano");
     onFrameDone(s, 7000, Reason::TooCold, Reason::TooCold, 6);
     ok(s.coldLatched, "dopo una decisione TooCold l'isteresi si arma");
+    onFrameDone(s, 7500, Reason::ChainLimit, Reason::ChainLimit, 6);
+    ok(s.coldLatched, "una decisione presa prima della temperatura lascia l'isteresi armata");
+    onFrameDone(s, 7600, Reason::SensorInvalid, Reason::SensorInvalid, 6);
+    onFrameDone(s, 7700, Reason::LongGap, Reason::LongGap, 6);
+    ok(s.coldLatched, "anche SensorInvalid e LongGap non toccano l'isteresi");
     onFrameDone(s, 8000, Reason::Partial, Reason::Partial, 6);
-    ok(!s.coldLatched, "una decisione diversa da TooCold la disarma");
+    ok(!s.coldLatched, "una decisione Partial, presa sopra la soglia, la disarma");
+  }
+
+  {
+    // Motivo finale del frame dall'esito di GxEPDFrame::render().
+    GxEPDFrame::Outcome out;
+    out.result = GxEPDFrame::FrameResult::Skipped;
+    ok(finalReason(Reason::Partial, out) == Reason::Unchanged, "frame saltato: Unchanged");
+    out.result = GxEPDFrame::FrameResult::Partial;
+    ok(finalReason(Reason::Partial, out) == Reason::Partial, "partial partito: Partial");
+    out.result = GxEPDFrame::FrameResult::Refused;
+    out.refusedPages = 0x0003;
+    ok(finalReason(Reason::Partial, out) == Reason::RedChanged, "rifiutato con pagine segnate: RedChanged");
+    out.refusedPages = 0;
+    ok(finalReason(Reason::Partial, out) == Reason::NoReference, "rifiutato senza pagine: NoReference");
+    out.result = GxEPDFrame::FrameResult::Full;
+    ok(finalReason(Reason::Partial, out) == Reason::NoReference, "partial deciso ma non armato: NoReference");
+    ok(finalReason(Reason::ChainLimit, out) == Reason::ChainLimit, "pieno per politica: la decisione");
   }
 
   {

@@ -914,15 +914,26 @@ int main()
     ok(std::strcmp(g_eventi, "SRarF") == 0 && g_runA == 2 && !tab[0].state.retrying && tab[0].state.slotCycle == 1,
        "  al ciclo successivo riesce, slot ancorato al ciclo 1");
 
-    // Radio caduta al fallimento: ritento prenotato.
+    // Radio caduta al fallimento: guasto a monte, non del task. Si registra come
+    // saltato, quindi nessun ritento prenotato e lo slot resta intatto.
     impostaOra(2026, 9, 10, 12, 0);
     g_msFinto = 84000000;
     boot(tab, 1);
     g_fallisciPrimi = 1;
     g_radioCadeAlFallimento = true;
     giro();
-    ok(std::strcmp(g_eventi, "SRarF") == 0 && tab[0].state.retrying, "radio caduta al fallimento: ritento prenotato");
+    ok(std::strcmp(g_eventi, "SRarF") == 0 && g_runA == 1 && g_frame == 1,
+       "radio caduta al fallimento: il task ha girato, radio giù e frame");
+    ok(!tab[0].state.retrying && tab[0].state.neverRun && !tab[0].state.attempted &&
+           tab[0].state.failedAttempts == 0 && tab[0].state.outcomeCount == 0 && tab[0].state.failedCount == 0,
+       "  registrato come saltato: nessun ritento, slot intatto, nessun tentativo speso");
     WiFi.stato = WL_CONNECTED;
+    g_radioCadeAlFallimento = false;
+    azzeraEventi();
+    alProssimoPoll();
+    giro();
+    ok(g_runA == 2 && tab[0].state.okCount == 1 && !tab[0].state.neverRun && !tab[0].state.retrying,
+       "  col ciclo successivo e la radio su il task è dovuto e riesce al primo tentativo");
 
     // Due task falliti nello stesso passo: una sola passata, entrambi al ciclo dopo.
     impostaOra(2026, 9, 10, 12, 0);
@@ -930,9 +941,11 @@ int main()
     boot(tab, 2);
     g_fallisciPrimi = 1;
     g_fallisciB = true;
+    g_wdtResets = 0;
     giro();
     ok(std::strcmp(g_eventi, "SRabrF") == 0 && tab[0].state.retrying && tab[1].state.retrying,
        "due fallimenti nello stesso passo: una sola passata, entrambi ritentano al ciclo dopo");
+    ok(g_wdtResets == 2, "  il watchdog del loop si alimenta prima di ogni task eseguito");
     g_fallisciB = false;
   }
 

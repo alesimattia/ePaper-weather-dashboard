@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
+#include <esp_task_wdt.h>
 #include <time.h>
 #include <stdint.h>
 
@@ -491,8 +492,18 @@ namespace Scheduler
           continue;
         }
 
+        // Il watchdog del loop si alimenta prima di ogni task: il tratto più lungo
+        // senza alimentazione è un solo fetch.
+        esp_task_wdt_reset();
         const uint32_t startMs = millis();
-        const Outcome outcome = t.run();
+        Outcome outcome = t.run();
+        // Un fallimento con la radio caduta durante il task è un guasto a monte,
+        // non del task: si registra come saltato e lo slot resta intatto.
+        if (outcome == Outcome::FAILED && WiFi.status() != WL_CONNECTED)
+        {
+          LOG("sched", "%s: fallito con la radio caduta, saltato (slot intatto)", t.tag);
+          outcome = Outcome::SKIPPED;
+        }
         recordOutcome(t, outcome, millis() - startMs);
         if (outcome != Outcome::SKIPPED) ranAny = true;
       }
@@ -639,9 +650,9 @@ namespace Scheduler
             }
             stepRanTask = runDueTasks();
 
-            // Un fetch lungo ha attraversato la scadenza del sensore: il ciclo
-            // nuovo riparte da Idle, e questo passo serve comunque il frame in
-            // sospeso, come prima del passo a fasi.
+            // Un fetch lungo ha attraversato la scadenza del sensore: il ciclo nuovo
+            // è già in Idle, ma dopo questo return il suo passo di rete non riparte
+            // nello stesso giro. Il frame in sospeso si disegna comunque, subito.
             if (cycle != cycleAtStart)
             {
               releaseRadio(mode);

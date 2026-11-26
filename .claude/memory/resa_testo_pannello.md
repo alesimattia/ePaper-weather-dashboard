@@ -1,6 +1,6 @@
 ---
 name: Resa del testo sul pannello
-description: I font GFX sono a 7 bit e scartano in silenzio ogni byte fuori da 0x20-0x7E; conversione UTF-8 alla ricezione con Graphics::foldToFontCharset (vocale più apostrofo); etichette meteo brevi dal codice condizione, passaggio a FONT_SMALL e troncamento che rimisura il ".." 
+description: I font GFX sono a 7 bit e scartano in silenzio ogni byte fuori da 0x20-0x7E; conversione UTF-8 alla ricezione con Graphics::foldToFontCharset (vocale più apostrofo, byte di controllo in spazio); titolo vuoto degli eventi come "(senza titolo)"; etichette meteo brevi dal codice condizione, passaggio a FONT_SMALL e troncamento che rimisura il ".." 
 type: project
 ---
 
@@ -20,13 +20,18 @@ scarica testo: l'etichetta viene dal codice condizione ed è già ASCII (vedi
   ä → a, ß → ss, æ → ae);
 - virgolette tipografiche e angolari diventano `"`, gli apici `'`, i trattini
   medio e lungo `-`, lo spazio non separabile uno spazio, … diventa `...`, € `EUR`;
-- emoji, altri script e sequenze troncate dal buffer vengono scartati.
+- emoji, altri script e sequenze troncate dal buffer vengono scartati;
+- i byte di controllo (sotto 0x20) e il DEL (0x7F) diventano spazio: un `\n` lasciato nel
+  titolo farebbe tornare il cursore GFX a x=0.
 
 Nessuna resa supera i byte UTF-8 che sostituisce, quindi il risultato non è mai
-più lungo dell'originale e i buffer fissi restano validi.
+più lungo dell'originale e i buffer fissi restano validi. Per i titoli degli eventi
+`Calendar::detail::setEventTitle()` toglie poi gli spazi in testa e in coda, e un titolo
+vuoto o ridotto a soli spazi dopo la conversione diventa "(senza titolo)", altrimenti la
+riga mostrerebbe solo l'orario (vedi [[calendar_module]]).
 
 **Riga sotto la temperatura dei blocchi meteo.** `renderBlock()` ha
-`larghezza del blocco - 2 × WX_DESC_SIDE_PAD` utili: 154 px nel blocco corrente,
+`larghezza del blocco - 2 × WX_DESC_SIDE_PAD` utili: 152 px nel blocco corrente,
 138 nelle previsioni. Oltre, il testo passa a `FONT_SMALL` e, se ancora non entra,
 viene troncato. Le etichette di `icons_weather.h` e la riga "pop% X.Xmm" sono
 scelte e misurate perchè entrino sempre in 12pt o in 9pt: il testo `lang=it` di

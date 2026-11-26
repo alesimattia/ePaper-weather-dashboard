@@ -32,9 +32,11 @@
  *      HMAC-SHA256 su un timestamp Unix, quindi serve l'orologio sincronizzato;
  *   2. connessione TLS 1.2 al broker della propria region, porta 8883, e CONNECT;
  *   3. publish in QoS 1 su tylink/{deviceId}/thing/property/report;
- *   4. attesa del PUBACK e chiusura della connessione TLS. Con
+ *   4. attesa del PUBACK; la connessione TLS non si chiude, resta aperta fino
+ *      a releaseSession(), per il motivo spiegato qui sotto. Con
  *      TUYA_REQUEST_ACK si attende anche la conferma applicativa del cloud,
- *      che è l'unico modo per accorgersi di un device model non allineato.
+ *      che è l'unico modo per accorgersi di un device model non allineato, ma
+ *      solo nei primi TUYA_ACK_BOOT_PUBLISHES publish dopo il boot.
  *
  * Tuya dichiara offline il dispositivo nell'istante in cui la connessione si
  * chiude, con un DISCONNECT MQTT (motivo client_disconnect) ma anche con una
@@ -57,9 +59,10 @@
  * esp-tls del core e l'HMAC viene da mbedtls: non serve nessuna libreria
  * aggiuntiva. Il certificato del broker è verificato con il certificate bundle
  * di mbedtls compilato nel core, quindi non c'è nessun PEM da incorporare e da
- * correggere quando Tuya ruota la CA. A differenza degli altri moduli, che
- * usano setInsecure(), qui la verifica va fatta: su questa connessione transita
- * l'HMAC del DeviceSecret.
+ * correggere quando Tuya ruota la CA. Le altre HTTPS del firmware verificano
+ * il certificato con lo stesso bundle, tranne il download del cinema e la
+ * sonda /health, dove non transita nessun segreto; qui la verifica è
+ * comunque obbligatoria perchè transita l'HMAC del DeviceSecret.
  *
  * API, allineata a quella degli altri moduli di rete:
  *   - Tuya::begin()           : compone topic e client id, azzera lo stato;
@@ -151,7 +154,8 @@
  * qualunque altro valore viene loggato insieme al corpo della risposta, che
  * contiene la spiegazione. Costa una sottoscrizione, il traffico della
  * risposta e fino a TUYA_ACK_TIMEOUT_MS di attesa in più per publish, e per
- * questo il default è 0.
+ * questo il default è 0 e, anche a 1, la conferma si chiede solo nei primi
+ * TUYA_ACK_BOOT_PUBLISHES publish dopo il boot.
  *
  * Forma del campo e del topic prese dall'SDK ufficiale tuya-iot-core-sdk
  * (tuyalink_message_send), che le compone esattamente così.
@@ -161,15 +165,23 @@
 #endif
 
 /**
- * Coda del payload: il campo sys va a livello di messaggio, dopo data, come
- * nell'SDK ufficiale. Concatenato al format a compile time, così la
- * composizione resta un unico snprintf senza rami condizionali.
+ * Quanti publish dopo il boot chiedono la conferma del cloud, con
+ * TUYA_REQUEST_ACK a 1: bastano a verificare il device model. Una risposta che
+ * arriva a radio già spenta viene ritrasmessa dal broker sulla connessione
+ * muta, e alla riaccensione lo stack risponde con un RST, che Tuya registra
+ * come Offline client_closed: a regime la conferma non si chiede più.
  */
-#if TUYA_REQUEST_ACK
-#define TUYA_SYS_ACK_FIELD ",\"sys\":{\"ack\":1}"
-#else
-#define TUYA_SYS_ACK_FIELD ""
+#ifndef TUYA_ACK_BOOT_PUBLISHES
+#define TUYA_ACK_BOOT_PUBLISHES 3
 #endif
+
+/**
+ * Coda del payload quando si chiede la conferma: il campo sys va a livello di
+ * messaggio, dopo data, come nell'SDK ufficiale. Va nel payload tramite un
+ * segnaposto %s, così la composizione resta un unico snprintf e il campo si
+ * sceglie a runtime.
+ */
+#define TUYA_SYS_ACK_FIELD ",\"sys\":{\"ack\":1}"
 
 namespace Tuya
 {
@@ -215,13 +227,19 @@ namespace Tuya
     inline bool published = false;
     inline bool failed    = false;
 #if TUYA_REQUEST_ACK
-    inline bool subscribed  = false;
-    inline bool ackReceived = false;
+    inline bool subscribeAnswered = false;   // il SUBACK del nostro SUBSCRIBE è arrivato
+    inline bool subscribed        = false;   // ...e il broker ha accettato la sottoscrizione
+    inline bool ackReceived       = false;
+    inline long lastCloudCode     = -1;      // ultimo code letto dalla risposta del cloud
+    inline uint8_t ackPublishes   = 0;       // publish con la conferma richiesta dal boot
 #endif
 
-    /** Identificatore del pacchetto in corso e quello del PUBLISH da confermare. */
+    /** Identificatore del pacchetto in corso, del PUBLISH da confermare e del SUBSCRIBE. */
     inline uint16_t packetId  = 0;
     inline uint16_t publishId = 0;
+#if TUYA_REQUEST_ACK
+    inline uint16_t subscribeId = 0;
+#endif
 
     /** Tipi di pacchetto MQTT 3.1.1 che il modulo legge, dai quattro bit alti del primo byte. */
     inline constexpr uint8_t PACKET_CONNACK = 2;
@@ -346,10 +364,10 @@ namespace Tuya
      * ritorna un uint32_t, che non basterebbe a contenere un epoch in
      * millisecondi.
      *
-     * Con TUYA_REQUEST_ACK la coda porta anche il campo sys.ack, che chiede al
-     * cloud di rispondere sul topic di report_response.
+     * Con withAck la coda porta anche il campo sys.ack, che chiede al cloud di
+     * rispondere sul topic di report_response.
      */
-    inline bool buildPayload(const Indoor::Sample& s, unsigned long ts)
+    inline bool buildPayload(const Indoor::Sample& s, unsigned long ts, bool withAck)
     {
       const unsigned long ageSec   = (millis() - s.lastUpdateMs) / 1000UL;
       const unsigned long sampleTs = (ageSec < ts) ? (ts - ageSec) : ts;
@@ -368,23 +386,25 @@ namespace Tuya
                        "\"%s\":{\"value\":%u},"
                        "\"%s\":{\"value\":%u},"
                        "\"%s\":{\"value\":%u},"
-                       "\"%s\":{\"value\":%u}}" TUYA_SYS_ACK_FIELD "}",
+                       "\"%s\":{\"value\":%u}}%s}",
                        (unsigned long)++msgSeq, sampleTs,
                        TUYA_DP_TEMPERATURE,  toFloatDp(s.temperature),
                        TUYA_DP_HUMIDITY,     (unsigned)s.humidity,
                        TUYA_DP_PRESSURE,     (unsigned)s.pressure,
                        TUYA_DP_IAQ,          (unsigned)s.iaq,
-                       TUYA_DP_IAQ_ACCURACY, (unsigned)s.iaqAccuracy);
+                       TUYA_DP_IAQ_ACCURACY, (unsigned)s.iaqAccuracy,
+                       withAck ? TUYA_SYS_ACK_FIELD : "");
 #else
       int n = snprintf(payload, sizeof(payload),
                        "{\"msgId\":\"%lu\",\"time\":%lu,\"data\":{"
                        "\"%s\":{\"value\":%.1f},"
                        "\"%s\":{\"value\":%u},"
-                       "\"%s\":{\"value\":%u}}" TUYA_SYS_ACK_FIELD "}",
+                       "\"%s\":{\"value\":%u}}%s}",
                        (unsigned long)++msgSeq, sampleTs,
                        TUYA_DP_TEMPERATURE,  toFloatDp(s.temperature),
                        TUYA_DP_HUMIDITY,     (unsigned)s.humidity,
-                       TUYA_DP_PRESSURE,     (unsigned)s.pressure);
+                       TUYA_DP_PRESSURE,     (unsigned)s.pressure,
+                       withAck ? TUYA_SYS_ACK_FIELD : "");
 #endif
 
       return n > 0 && (size_t)n < sizeof(payload);
@@ -594,16 +614,40 @@ namespace Tuya
     inline bool sendSubscribe()
     {
       beginBody();
-      putU16(++packetId);
+      subscribeId = ++packetId;
+      putU16(subscribeId);
       putString(ackTopic);
       putByte(0);
       return sendPacket(0x82);
     }
 
     /**
+     * Cerca il campo "code" nel corpo JSON della risposta del cloud, che non è
+     * terminato da zero. Ritorna -1 se manca. Gira sul corpo intero e non sulla
+     * copia troncata per il log: un corpo più lungo del buffer di log
+     * perderebbe il campo e un'accettazione verrebbe letta come rifiuto.
+     */
+    inline long findResponseCode(const char* json, size_t length)
+    {
+      static const char key[] = "\"code\":";
+      const size_t keyLength = sizeof(key) - 1;
+      for (size_t i = 0; i + keyLength < length; ++i)
+      {
+        if (memcmp(json + i, key, keyLength) != 0) continue;
+        char digits[12];
+        size_t n = length - (i + keyLength);
+        if (n > sizeof(digits) - 1) n = sizeof(digits) - 1;
+        memcpy(digits, json + i + keyLength, n);
+        digits[n] = 0;
+        return strtol(digits, nullptr, 10);
+      }
+      return -1;
+    }
+
+    /**
      * Risposta del cloud al property report: msgId, time e un campo code, dove
      * 0 significa accettato. In caso di rifiuto il corpo porta anche il
-     * motivo, quindi viene loggato per intero: è l'informazione che manca
+     * motivo, quindi viene loggato (fino a 159 byte): è l'informazione che manca
      * quando i valori non compaiono nell'app malgrado il PUBACK.
      *
      * La sottoscrizione è in QoS 0, quindi dopo il topic non c'è un packet id
@@ -618,14 +662,14 @@ namespace Tuya
       if (((firstByte >> 1) & 3) > 0) offset += 2;
       if (offset > length) return;
 
+      const long code = findResponseCode((const char*)body + offset, length - offset);
+      lastCloudCode = code;
+
       char text[160];
       size_t n = length - offset;
       if (n > sizeof(text) - 1) n = sizeof(text) - 1;
       memcpy(text, body + offset, n);
       text[n] = 0;
-
-      const char* p = strstr(text, "\"code\":");
-      const long code = (p != nullptr) ? strtol(p + 7, nullptr, 10) : -1;
 
       if (code == 0)
         LOG("Tuya", "il cloud ha accettato le proprietà (code 0)");
@@ -668,7 +712,14 @@ namespace Tuya
 
 #if TUYA_REQUEST_ACK
         case PACKET_SUBACK:
-          subscribed = true;
+          // Packet id del nostro SUBSCRIBE e un return code per topic: 0x80 è il rifiuto.
+          if (length >= 3 && (uint16_t)((body[0] << 8) | body[1]) == subscribeId)
+          {
+            subscribeAnswered = true;
+            subscribed = body[2] != 0x80;
+            if (!subscribed)
+              LOG("Tuya", "sottoscrizione al topic di risposta rifiutata dal broker");
+          }
           break;
 
         case PACKET_PUBLISH:
@@ -820,8 +871,12 @@ namespace Tuya
     snprintf(clientId, sizeof(clientId), "tuyalink_%s", TUYA_DEVICE_ID);
     snprintf(topic, sizeof(topic), "tylink/%s/thing/property/report", TUYA_DEVICE_ID);
 #if TUYA_REQUEST_ACK
-    subscribed  = false;
-    ackReceived = false;
+    subscribeAnswered = false;
+    subscribed        = false;
+    ackReceived       = false;
+    lastCloudCode     = -1;
+    ackPublishes      = 0;
+    subscribeId       = 0;
     snprintf(ackTopic, sizeof(ackTopic),
              "tylink/%s/thing/property/report_response", TUYA_DEVICE_ID);
 #endif
@@ -829,7 +884,8 @@ namespace Tuya
     LOG("Tuya", "init ok, publish ogni %u min verso %s",
         (unsigned)Timings::get().tuyaMin, TUYA_MQTT_URI);
 #if TUYA_REQUEST_ACK
-    LOG("Tuya", "conferma applicativa del cloud attiva (bring-up)");
+    LOG("Tuya", "conferma applicativa del cloud attiva nei primi %u publish (bring-up)",
+        (unsigned)TUYA_ACK_BOOT_PUBLISHES);
 #endif
   }
 
@@ -903,12 +959,19 @@ namespace Tuya
 
     const unsigned long ts = (unsigned long)time(nullptr);
 
+    // La conferma del cloud si chiede solo nei primi publish dopo il boot.
+#if TUYA_REQUEST_ACK
+    const bool askAck = ackPublishes < TUYA_ACK_BOOT_PUBLISHES;
+#else
+    const bool askAck = false;
+#endif
+
     if (!buildCredentials(ts))
     {
       LOG("Tuya", "costruzione delle credenziali fallita");
       return false;
     }
-    if (!buildPayload(s, ts))
+    if (!buildPayload(s, ts, askAck))
     {
       LOG("Tuya", "payload troppo lungo per il buffer");
       return false;
@@ -921,8 +984,10 @@ namespace Tuya
     packetId  = 0;
     publishId = 0;
 #if TUYA_REQUEST_ACK
-    subscribed  = false;
-    ackReceived = false;
+    subscribeAnswered = false;
+    subscribed        = false;
+    ackReceived       = false;
+    subscribeId       = 0;
 #endif
 
     esp_tls_cfg_t cfg = {};
@@ -948,12 +1013,17 @@ namespace Tuya
        * Sottoscrizione al topic di risposta prima del publish, con attesa del
        * SUBACK: pubblicare con la sottoscrizione non ancora attiva farebbe
        * perdere la risposta. Un fallimento qui non blocca la telemetria, si
-       * perde solo la conferma.
+       * perde solo la conferma. Solo nei publish che la chiedono: senza
+       * sottoscrizione il broker non ha nulla da ritrasmettere sulla
+       * connessione muta.
        */
-      if (sendSubscribe())
-        waitFlag(subscribed, TUYA_ACK_TIMEOUT_MS);
-      else
-        LOG("Tuya", "sottoscrizione al topic di risposta fallita");
+      if (askAck)
+      {
+        if (sendSubscribe())
+          waitFlag(subscribeAnswered, TUYA_ACK_TIMEOUT_MS);
+        else
+          LOG("Tuya", "sottoscrizione al topic di risposta fallita");
+      }
 #endif
 
       if (failed)
@@ -961,7 +1031,12 @@ namespace Tuya
       else if (!sendPublish())
         LOG("Tuya", "publish non inviato");
       else
+      {
+#if TUYA_REQUEST_ACK
+        if (askAck) ++ackPublishes;
+#endif
         ok = waitFlag(published, TUYA_PUBACK_TIMEOUT_MS);
+      }
 
 #if TUYA_REQUEST_ACK
       /**
@@ -969,9 +1044,12 @@ namespace Tuya
        * cloud è diagnostica e il suo codice viene loggato alla lettura della
        * risposta, quindi un rifiuto applicativo non va confuso con una
        * mancata consegna. Attesa solo se il messaggio è stato consegnato:
-       * senza PUBACK non c'è nulla che il cloud possa confermare.
+       * senza PUBACK non c'è nulla che il cloud possa confermare. Non si
+       * attende se il broker ha rifiutato la sottoscrizione: la risposta non
+       * arriverebbe.
        */
-      if (ok && !waitFlag(ackReceived, TUYA_ACK_TIMEOUT_MS))
+      const bool subscriptionRefused = subscribeAnswered && !subscribed;
+      if (askAck && ok && !subscriptionRefused && !waitFlag(ackReceived, TUYA_ACK_TIMEOUT_MS))
         LOG("Tuya", "nessuna conferma dal cloud entro il timeout");
 #endif
     }

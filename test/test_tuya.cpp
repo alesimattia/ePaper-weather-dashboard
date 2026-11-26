@@ -10,7 +10,9 @@
  * d'essere del modulo (Tuya dichiara offline il dispositivo nell'istante in
  * cui la connessione si chiude); la chiusura immediata su ogni fallimento; i
  * timeout con un broker muto; le letture frammentate; i pacchetti più grandi
- * del buffer.
+ * del buffer; la conferma applicativa del cloud chiesta solo nei primi
+ * TUYA_ACK_BOOT_PUBLISHES publish dopo il boot, con il code cercato nel corpo
+ * intero della risposta; il SUBACK controllato per packet id e return code.
  *
  * Non si verifica la rete nè il TLS: quelli si provano solo sul dispositivo.
  *
@@ -20,6 +22,7 @@
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS
 #endif
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -179,7 +182,10 @@ static std::string readString(const Bytes& body, size_t& offset)
 
 static Bytes connack(uint8_t returnCode) { return packetOf(0x20, {0x00, returnCode}); }
 static Bytes puback(uint16_t id) { return packetOf(0x40, {(uint8_t)(id >> 8), (uint8_t)id}); }
-static Bytes suback(uint16_t id) { return packetOf(0x90, {(uint8_t)(id >> 8), (uint8_t)id, 0x00}); }
+static Bytes suback(uint16_t id, uint8_t returnCode = 0x00)
+{
+  return packetOf(0x90, {(uint8_t)(id >> 8), (uint8_t)id, returnCode});
+}
 
 /** PUBLISH in QoS 0 dal broker, come la risposta del cloud al property report. */
 static Bytes cloudPublish(const std::string& topic, const std::string& json)
@@ -198,6 +204,8 @@ struct Scenario
   uint8_t connackCode     = 0;
   bool answerConnect      = true;
   bool answerSubscribe    = true;
+  uint8_t subackCode      = 0x00;   // 0x80 = sottoscrizione rifiutata dal broker
+  int subackIdOffset      = 0;      // SUBACK per un packet id che non è il nostro
   bool answerPublish      = true;
   int pubackIdOffset      = 0;
   bool closeAfterConnack  = false;
@@ -222,7 +230,8 @@ static void brokerReacts(const Bytes& raw)
       break;
 
     case 8: // SUBSCRIBE
-      if (g_scenario.answerSubscribe) enqueue(suback((uint16_t)((p.body[0] << 8) | p.body[1])));
+      if (g_scenario.answerSubscribe)
+        enqueue(suback((uint16_t)(((p.body[0] << 8) | p.body[1]) + g_scenario.subackIdOffset), g_scenario.subackCode));
       break;
 
     case 3: // PUBLISH
@@ -387,7 +396,7 @@ int main()
     o = 2;
     ok(readString(packets[1].body, o) == "tylink/" TUYA_DEVICE_ID "/thing/property/report_response",
        "SUBSCRIBE: topic report_response");
-    ok(Tuya::detail::ackReceived, "la risposta del cloud è stata letta");
+    ok(Tuya::detail::ackReceived && Tuya::detail::lastCloudCode == 0, "la risposta del cloud è stata letta, code 0");
 #endif
   }
 
@@ -512,7 +521,7 @@ int main()
     prepare(Scenario());
     g_scenario.cloudJson = "{\"code\":2003,\"msgId\":\"1\",\"time\":1,\"version\":\"1.0\"}";
     ok(Tuya::runPublish(), "il PUBACK conferma la consegna anche se il cloud rifiuta i valori");
-    ok(Tuya::detail::ackReceived, "la risposta di rifiuto è stata letta e loggata");
+    ok(Tuya::detail::ackReceived && Tuya::detail::lastCloudCode == 2003, "la risposta di rifiuto è stata letta e loggata");
   }
   {
     std::printf("\n-- il cloud non risponde\n");
@@ -521,7 +530,92 @@ int main()
     ok(!Tuya::detail::ackReceived && g_msFinto >= TUYA_ACK_TIMEOUT_MS, "attende TUYA_ACK_TIMEOUT_MS");
     ok(releasedCleanly(), "releaseSession lascia zero handle vivi");
   }
+  {
+    // Il campo code si cerca nel corpo intero: dopo più di 160 byte la copia per il
+    // log lo avrebbe perso, e un'accettazione sarebbe passata per rifiuto.
+    std::printf("\n-- risposta del cloud più lunga del buffer di log, con il code in coda\n");
+    prepare(Scenario());
+    g_scenario.cloudJson = "{\"msgId\":\"1\",\"pad\":\"" + std::string(200, 'x') + "\",\"code\":0}";
+    ok(Tuya::runPublish() && Tuya::detail::ackReceived, "il publish riesce e la risposta è letta");
+    ok(Tuya::detail::lastCloudCode == 0, "  il code 0 in coda al corpo è trovato");
+
+    const char* shortJson = "{\"msgId\":\"1\",\"code\":2003,\"msg\":\"x\"}";
+    ok(Tuya::detail::findResponseCode(shortJson, std::strlen(shortJson)) == 2003, "findResponseCode: code 2003");
+    ok(Tuya::detail::findResponseCode("{\"a\":1}", 7) == -1, "  assente: -1");
+    ok(Tuya::detail::findResponseCode("{\"code\":", 8) == -1, "  senza cifre dopo i due punti: assente");
+  }
+  {
+    std::printf("\n-- SUBACK con return code 0x80: sottoscrizione rifiutata\n");
+    Scenario s;
+    s.subackCode = 0x80;
+    prepare(s);
+    const bool result = Tuya::runPublish();
+    ok(result && !Tuya::hasFailed(), "la telemetria non si blocca: il PUBACK basta");
+    ok(Tuya::detail::subscribeAnswered && !Tuya::detail::subscribed, "il rifiuto è letto: risposta ricevuta, non sottoscritto");
+    ok(g_msFinto < TUYA_ACK_TIMEOUT_MS, "non si attende la conferma del cloud che non può arrivare");
+    ok(!Tuya::detail::ackReceived, "  nessuna conferma letta");
+    ok(releasedCleanly(), "releaseSession lascia zero handle vivi");
+  }
+  {
+    std::printf("\n-- SUBACK per un altro packet id\n");
+    Scenario s;
+    s.subackIdOffset = 9;
+    prepare(s);
+    ok(Tuya::runPublish(), "il publish riesce lo stesso");
+    ok(!Tuya::detail::subscribeAnswered && !Tuya::detail::subscribed,
+       "un SUBACK estraneo non conferma nè rifiuta la sottoscrizione");
+    ok(g_msFinto >= TUYA_ACK_TIMEOUT_MS, "  si attende il SUBACK vero fino a TUYA_ACK_TIMEOUT_MS");
+    ok(releasedCleanly(), "releaseSession lascia zero handle vivi");
+  }
 #endif
+
+  // --- la conferma del cloud solo nei primi publish dopo il boot ---------------
+  // Una risposta che arriva a radio già spenta viene ritrasmessa dal broker sulla
+  // connessione muta e alla riaccensione lo stack risponde con un RST, che Tuya
+  // registra come Offline client_closed: a regime niente sys.ack nè sottoscrizione.
+  // Col cloud che non risponde mai, la durata dice se si è atteso.
+  {
+    std::printf("\n-- conferma del cloud nei primi %d publish dopo il boot (TUYA_REQUEST_ACK = %d)\n",
+                (int)TUYA_ACK_BOOT_PUBLISHES, (int)TUYA_REQUEST_ACK);
+    prepare(Scenario());
+    bool tuttiRiusciti = true;
+    for (int i = 1; i <= (int)TUYA_ACK_BOOT_PUBLISHES + 2; ++i)
+    {
+      const size_t before = g_broker.written.size();
+      const uint32_t startMs = g_msFinto;
+      tuttiRiusciti = Tuya::runPublish() && tuttiRiusciti;
+      const std::vector<Packet> packets =
+          parsePackets(Bytes(g_broker.written.begin() + (std::ptrdiff_t)before, g_broker.written.end()));
+      const uint32_t spentMs = g_msFinto - startMs;
+
+      std::string payload;
+      for (const Packet& p : packets)
+        if ((p.first >> 4) == 3)
+        {
+          size_t o = 0;
+          readString(p.body, o);
+          payload.assign((const char*)&p.body[o + 2], p.body.size() - o - 2);
+        }
+
+      const bool wantsAck = TUYA_REQUEST_ACK && i <= (int)TUYA_ACK_BOOT_PUBLISHES;
+      char name[96];
+      std::snprintf(name, sizeof name, "publish %d: %s", i,
+                    wantsAck ? "sys.ack, SUBSCRIBE e attesa della conferma" : "nessuna conferma richiesta");
+      ok(hasPacketType(packets, 8) == wantsAck &&
+             (payload.find("\"sys\":{\"ack\":1}") != std::string::npos) == wantsAck &&
+             (spentMs >= TUYA_ACK_TIMEOUT_MS) == wantsAck,
+         name);
+      ok(neverDisconnected(packets), "  nessun DISCONNECT nè PINGREQ");
+    }
+    ok(tuttiRiusciti, "tutti i publish riusciti, con o senza conferma");
+    ok(releasedCleanly(), "releaseSession lascia zero handle vivi");
+#if TUYA_REQUEST_ACK
+    ok(Tuya::detail::ackPublishes == TUYA_ACK_BOOT_PUBLISHES, "il contatore si ferma al numero di publish con conferma");
+    // Un nuovo boot riparte da zero.
+    Tuya::begin();
+    ok(Tuya::detail::ackPublishes == 0, "dopo un nuovo begin() la conferma si richiede di nuovo");
+#endif
+  }
 
   std::printf("\n%s\n", falliti ? "CI SONO FALLIMENTI" : "tutti i controlli superati");
   return falliti ? 1 : 0;

@@ -248,6 +248,8 @@ namespace Graphics
    * sanno disegnare: Adafruit_GFX scarta in silenzio ogni byte fuori da
    * 0x20..0x7E, quindi "caffè" uscirebbe "caff". Il risultato non è mai più
    * lungo dell'originale, e una sequenza troncata dal buffer viene scartata.
+   * I byte di controllo (sotto 0x20) e DEL diventano spazio: un '\n' lasciato
+   * nel titolo farebbe tornare il cursore GFX a x=0.
    * Usato da Weather.h e Calendar.h subito dopo la copia dei testi
    * ricevuti dalla rete.
    */
@@ -261,7 +263,7 @@ namespace Graphics
       const uint8_t c = *in;
       if (c < 0x80)
       {
-        *out++ = (char)c;
+        *out++ = (c < 0x20 || c == 0x7F) ? ' ' : (char)c;
         ++in;
         continue;
       }

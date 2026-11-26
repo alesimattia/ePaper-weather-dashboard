@@ -127,7 +127,8 @@
 #endif
 
 /** Fascia oraria locale in cui si accende la radio e si disegna il pannello.
- *  Fuori, cioè di notte, restano solo i risvegli del sensore. */
+ *  Fuori, cioè di notte, col BME680 resta solo il sensore, che si sveglia a ogni
+ *  scadenza di BSEC, mentre col BME280 non ci sono risvegli. */
 #ifndef WIFI_ACTIVE_HOUR_START
   #define WIFI_ACTIVE_HOUR_START 7
 #endif
@@ -175,11 +176,28 @@
  *  come attesa massima senza dati durante la lettura del corpo. Il download
  *  parte solo a istanza render.com già su, quindi copre la generazione
  *  dell'immagine e mai lo spin-up, che si attende fra due cicli: a cache vuota
- *  la pipeline della webapp è stata misurata entro 9 s, e i suoi timeout verso
- *  l'esterno sono di 15 s più 10 s. Tipizzati come il parametro di
+ *  la pipeline della webapp è stata misurata entro 9 s, ma i suoi timeout verso
+ *  l'esterno sono 20 s di scraping più 10 s di locandine più la CPU, circa 35 s,
+ *  oltre i 30 del firmware: se scadono, il ritento del ciclo dopo trova
+ *  l'immagine già in cache. Tipizzati come il parametro di
  *  HTTPClient::setTimeout(): un valore che non ci sta non compila. */
 #define CINEMA_HTTP_TIMEOUT_MS uint16_t{30000}
 #define ROUTE_HTTP_TIMEOUT_MS uint16_t{30000}
+
+/** Scadenza totale della lettura di un corpo HTTP: il timeout del client vale
+ *  per ogni lettura senza dati, quindi un server che manda un byte alla volta
+ *  lo terrebbe aperto all'infinito. */
+#ifndef HTTP_BODY_DEADLINE_MS
+  #define HTTP_BODY_DEADLINE_MS 60000UL
+#endif
+
+/** Timeout del task watchdog del loop: il loop lo alimenta a ogni task dello
+ *  scheduler e a ogni blocco di un upload, quindi scatta solo su un tratto
+ *  bloccato più a lungo del più lento fra connessione, handshake e attesa
+ *  degli header. */
+#ifndef LOOP_WDT_TIMEOUT_MS
+  #define LOOP_WDT_TIMEOUT_MS 120000UL
+#endif
 
 /** Età oltre la quale un percorso non si mostra, in multipli della cadenza: un
  *  tempo stimato vecchio è un'informazione sbagliata, e i termini Google non
@@ -224,6 +242,12 @@
  *  publish. */
 #define TUYA_KEEPALIVE_S 1200
 
+/** Tetto della cadenza di Tuya, in minuti: il multiplo del ciclo più grande
+ *  che resta sotto 1,5 volte il keepalive, oltre il quale il dispositivo
+ *  risulterebbe offline fra un publish e il successivo. */
+#define TUYA_PUBLISH_MIN_CEIL \
+  ((((unsigned long)TUYA_KEEPALIVE_S * 3UL / 2UL - 1UL) / 60UL / CYCLE_MIN) * CYCLE_MIN)
+
 /** Persistenza dello stato di calibrazione BSEC in NVS. */
 #define BSEC_STATE_SAVE_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
 
@@ -232,8 +256,11 @@
 #define BSEC_MARGINE_POLL_MS 1000UL
 
 /** Età oltre la quale il campione del sensore non si mostra nè si pubblica:
- *  un campione perso è tollerato, al secondo il dato vale come assente. */
-#define INDOOR_SAMPLE_MAX_AGE_MS (2UL * BSEC_PERIODO_ULP_S * 1000UL + BSEC_MARGINE_POLL_MS)
+ *  un campione perso è tollerato, al secondo il dato vale come assente. Un
+ *  periodo e mezzo regge entrambi i sensori: col BME680 il poll cade a un
+ *  periodo più il margine, col BME280 a un periodo esatto, e in nessuno dei due
+ *  casi la seconda lettura persa cade sotto la soglia. */
+#define INDOOR_SAMPLE_MAX_AGE_MS (3UL * BSEC_PERIODO_ULP_S * 1000UL / 2UL)
 
 /** Età oltre la quale il meteo in cache non si mostra più: con OpenWeather in
  *  errore il banner passa ai placeholder invece di esporre dati vecchi. */
@@ -266,7 +293,8 @@
  * BME680 collegato la soglia non si applica e il partial si prova comunque.
  *
  * PARTIAL_MAX_GAP_MS: oltre questa distanza dall'ultimo frame il riferimento non
- * si usa (notte, riavvio, finestra di manutenzione). Sono due cicli più il margine
+ * si usa (notte, finestra di manutenzione); dopo un riavvio non c'è un ultimo
+ * frame e la decisione è NoLastFrame, non LongGap. Sono due cicli più il margine
  * del poll, in millisecondi: un frame saltato non fa perdere il riferimento. Un
  * frame saltato perchè identico a quello sul vetro (DISPLAY_SKIP_UNCHANGED) conta
  * come frame valutato: il gap misura i frame, non i refresh.
@@ -294,8 +322,9 @@
  * Orologio di sistema.
  *
  * TIME_VALID_EPOCH_MIN e' il pavimento oltre il quale time() si considera
- * sincronizzato: prima di SNTP restituisce l'uptime contato dal 1970, che
- * dopo 27,7 h di accensione diventa indistinguibile da un'ora reale.
+ * sincronizzato: prima di SNTP restituisce l'uptime contato dal 1970, che non
+ * raggiunge quella soglia in tempi utili, quindi un orologio non sincronizzato
+ * non si confonde mai con un'ora reale.
  *
  * TIME_SYNC_TIMEOUT_MS e' l'unico budget dell'ora, per entrambi i proprietari
  * della radio: wifiOn() lo spende in modo bloccante dopo la connessione, lo
@@ -343,6 +372,9 @@ static_assert(TUYA_KEEPALIVE_S >= 30 && TUYA_KEEPALIVE_S <= 1200,
               "Tuya ammette un keepalive da 30 a 1200 secondi");
 static_assert((unsigned long)TUYA_PUBLISH_MIN * 60UL < (unsigned long)TUYA_KEEPALIVE_S * 3UL / 2UL,
               "con questa cadenza il broker Tuya vedrebbe il dispositivo offline fra un publish e il successivo");
+static_assert(TUYA_PUBLISH_MIN <= TUYA_PUBLISH_MIN_CEIL && TUYA_PUBLISH_MIN_CEIL >= TUYA_PUBLISH_MIN_FLOOR &&
+                  (unsigned long)TUYA_PUBLISH_MIN_CEIL * 60UL < (unsigned long)TUYA_KEEPALIVE_S * 3UL / 2UL,
+              "il tetto della cadenza Tuya deve restare sotto 1,5 volte il keepalive e sopra il pavimento");
 static_assert(ROUTE_FETCH_MIN >= ROUTE_FETCH_MIN_FLOOR && ROUTE_FETCH_MIN <= CADENZA_MAX_MIN,
               "ROUTE_FETCH_MIN fuori dai limiti");
 static_assert(CINEMA_FETCH_MIN >= CINEMA_FETCH_MIN_FLOOR && CINEMA_FETCH_MIN <= CADENZA_MAX_MIN,
@@ -371,6 +403,14 @@ static_assert(PARTIAL_MAX_GAP_MS > CYCLE_S * 1000UL + BSEC_MARGINE_POLL_MS,
 static_assert(RADIO_STA_ATTESA_MS + TIME_SYNC_TIMEOUT_MS < (uint32_t)OTA_WINDOW_MIN_FLOOR * 60UL * 1000UL,
               "l'attesa della STA più quella dell'ora devono scadere dentro la finestra di manutenzione, "
               "che e' l'unico momento in cui il loop gira senza dormire");
+// Il tratto più lungo fra due alimentazioni del watchdog è un fetch: connessione e DNS con un
+// margine di 30 s, handshake TLS e attesa degli header, la maggiore fra i due timeout delle immagini e 5 s.
+static_assert(30000UL + (unsigned long)TLS_HANDSHAKE_TIMEOUT_S * 1000UL +
+                      ((unsigned long)CINEMA_HTTP_TIMEOUT_MS > (unsigned long)ROUTE_HTTP_TIMEOUT_MS
+                           ? ((unsigned long)CINEMA_HTTP_TIMEOUT_MS > 5000UL ? (unsigned long)CINEMA_HTTP_TIMEOUT_MS : 5000UL)
+                           : ((unsigned long)ROUTE_HTTP_TIMEOUT_MS > 5000UL ? (unsigned long)ROUTE_HTTP_TIMEOUT_MS : 5000UL))
+                  < LOOP_WDT_TIMEOUT_MS,
+              "un fetch che rispetta i suoi timeout non deve far scattare il watchdog del loop");
 
 // ---------------------------------------------------------------------------
 // Valori a runtime: default sopra, override persistiti in NVS
@@ -455,7 +495,7 @@ namespace Timings
         {"goog_min",   "Calendario Google",                         "min",
          &Valori::googleMin, CAL_GOOGLE_FETCH_MIN_FLOOR, CADENZA_MAX_MIN, CAL_GOOGLE_FETCH_MIN, CYCLE_MIN},
         {"tuya_min",   "Telemetria Tuya",                           "min",
-         &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, CADENZA_MAX_MIN, TUYA_PUBLISH_MIN, CYCLE_MIN},
+         &Valori::tuyaMin, TUYA_PUBLISH_MIN_FLOOR, TUYA_PUBLISH_MIN_CEIL, TUYA_PUBLISH_MIN, CYCLE_MIN},
         {"maint_min",  "Finestra di manutenzione",                  "min",
          &Valori::finestraManutenzioneMin, OTA_WINDOW_MIN_FLOOR, CADENZA_MAX_MIN, OTA_WINDOW_MIN, 1},
         {"wifi_h_ini", "Inizio fascia WiFi",                        "ora",
@@ -546,7 +586,8 @@ namespace Timings
   /**
    * Scrive in NVS i soli campi che differiscono da quanto gia' memorizzato:
    * riscrivere valori identici consumerebbe cicli di flash per niente.
-   * @return false se il namespace NVS non e' apribile in scrittura.
+   * @return false se il namespace NVS non è apribile in scrittura o se una
+   *         scrittura non è andata a buon fine, per esempio a partizione piena.
    */
   inline bool save()
   {
@@ -556,15 +597,20 @@ namespace Timings
       LOG("timings", "NVS non apribile in scrittura: valori attivi solo fino al riavvio");
       return false;
     }
-    prefs.putUShort(detail::NVS_CHIAVE_SCHEMA, detail::SCHEMA);
+    bool scritto = prefs.putUShort(detail::NVS_CHIAVE_SCHEMA, detail::SCHEMA) != 0;
+    if (!scritto) LOG("timings", "scrittura NVS fallita per la chiave %s", detail::NVS_CHIAVE_SCHEMA);
     for (size_t i = 0; i < detail::N_CAMPI; ++i)
     {
       const Campo& c = detail::CAMPI[i];
       const uint16_t v = detail::valori.*(c.campo);
-      if (prefs.getUShort(c.chiave, 0xFFFF) != v) prefs.putUShort(c.chiave, v);
+      if (prefs.getUShort(c.chiave, 0xFFFF) != v && prefs.putUShort(c.chiave, v) == 0)
+      {
+        LOG("timings", "scrittura NVS fallita per la chiave %s", c.chiave);
+        scritto = false;
+      }
     }
     prefs.end();
-    return true;
+    return scritto;
   }
 
   /**
@@ -585,9 +631,11 @@ namespace Timings
     valori = PREDEFINITI;
 
     Preferences prefs;
+    // Al primo boot il namespace non esiste e l'apertura in sola lettura
+    // fallisce: restano i predefiniti, che il primo save() scriverà.
     if (!prefs.begin(NVS_NAMESPACE, true))
     {
-      LOG("timings", "NVS non disponibile: uso i valori predefiniti");
+      LOG("timings", "namespace assente o NVS non disponibile: uso i valori predefiniti");
       return;
     }
     const uint16_t schema = prefs.getUShort(NVS_CHIAVE_SCHEMA, 0);

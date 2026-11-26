@@ -88,6 +88,18 @@ namespace CinemaStore
   }
 
   /**
+   * Alloca i piani se mancano, senza toccare l'immagine valida nè avviare una
+   * scrittura. Il .ino la chiama prima della GET, così un heap esaurito si
+   * scopre prima di spendere l'handshake e di invalidare l'immagine precedente.
+   * @return false se i piani non trovano spazio nell'heap.
+   */
+  inline bool ensureAllocated()
+  {
+    if (detail::planes[0] != nullptr && detail::planes[1] != nullptr) return true;
+    return detail::allocate();
+  }
+
+  /**
    * Prepara il buffer per una nuova immagine. Da qui l'immagine precedente non
    * vale più, quindi il chiamante la chiama solo quando il corpo sta per
    * arrivare. Ritenta l'allocazione se al boot non era riuscita.
@@ -95,7 +107,7 @@ namespace CinemaStore
    */
   inline bool beginWrite(Kind imageKind)
   {
-    if ((detail::planes[0] == nullptr || detail::planes[1] == nullptr) && !detail::allocate()) return false;
+    if (!ensureAllocated()) return false;
     detail::valid = false;
     detail::writing = true;
     detail::writingKind = imageKind;

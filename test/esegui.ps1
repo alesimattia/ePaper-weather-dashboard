@@ -59,7 +59,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $falliti = 0
 
-foreach ($caso in @('test_timings', 'test_scheduler', 'test_routefinder', 'test_cinemastore', 'test_tuya', 'test_tuya:/DTUYA_REQUEST_ACK=0', 'test_tuya:/DINDOOR_SENSOR_BME280', 'test_partial', 'test_partial:/DDISPLAY_PARTIAL_REFRESH=1', 'test_framecrc'))
+foreach ($caso in @('test_timings', 'test_scheduler', 'test_routefinder', 'test_cinemastore', 'test_tuya', 'test_tuya:/DTUYA_REQUEST_ACK=0', 'test_tuya:/DINDOOR_SENSOR_BME280', 'test_partial', 'test_partial:/DDISPLAY_PARTIAL_REFRESH=1', 'test_framecrc', 'test_showimage', 'test_tlscache'))
 {
 	# Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira tre volte, con e senza la conferma del cloud e col payload del BME280, e test_partial con l'interruttore del differenziale spento e acceso.
 	$nome, $extra = $caso -split ':', 2

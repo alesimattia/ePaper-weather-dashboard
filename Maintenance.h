@@ -34,6 +34,7 @@
 #include <WebServer.h>
 #include <HTTPUpdateServer.h>
 #include <Update.h>
+#include <esp_task_wdt.h>
 
 #include "Env.h"
 #include "Timings.h"
@@ -42,6 +43,7 @@
 #include "Scheduler.h"
 #include "Routefinder.h"
 #include "Net.h"
+#include "Tuya.h"
 #include "CinemaStore.h"
 #include "WallpaperStore.h"
 
@@ -50,7 +52,7 @@
   #define MAINT_HOSTNAME "epd-dashboard"
 #endif
 
-/** L'annuncio mDNS costa una cinquantina di KB di flash: si puo' spegnere e
+/** L'annuncio mDNS costa circa 34 KB di flash: si può spegnere e
  *  raggiungere il dispositivo per indirizzo IP. */
 #ifndef MAINT_MDNS
   #define MAINT_MDNS 1
@@ -580,6 +582,11 @@ namespace Maintenance
     inline const char*                  wallpaperErrore    = nullptr;
     inline WallpaperStore::CommitResult wallpaperEsito     = WallpaperStore::CommitResult::Failed;
 
+    /** Byte del multipart che circondano il file nel corpo della richiesta
+     *  (boundary, Content-Disposition e Content-Type): poche centinaia, il
+     *  margine ne lascia ampio spazio. */
+    inline constexpr long WALLPAPER_MULTIPART_MARGIN = 1024;
+
     /** Descrive il wallpaper mostrato: quello della partizione o il predefinito del firmware. */
     inline void describeWallpaper(char* buf, size_t size)
     {
@@ -607,10 +614,14 @@ namespace Maintenance
      * Riceve il file a blocchi durante il parsing multipart e lo scrive nello
      * slot inattivo della partizione. Autorizzazione e origine si controllano
      * al primo blocco, perchè la risposta arriva solo a file finito: un
-     * controllo a valle troverebbe la partizione già cancellata.
+     * controllo a valle troverebbe la partizione già cancellata. Per lo stesso
+     * motivo la Content-Length della richiesta si confronta con la misura
+     * attesa prima di cancellare lo slot, che altrimenti si cancellerebbe anche
+     * per un file di pochi byte. Ogni blocco alimenta il watchdog del loop.
      */
     inline void handleWallpaperUpload()
     {
+      esp_task_wdt_reset();
       HTTPUpload& upload = server.upload();
       switch (upload.status)
       {
@@ -624,7 +635,12 @@ namespace Maintenance
           wallpaperAccettato = origineValida();
         #endif
           if (!wallpaperAccettato) return;
-          if (!WallpaperStore::beginWrite()) wallpaperErrore = "partizione non scrivibile";
+          const long corpo = server.clientContentLength();
+          const long atteso = (long)Layout::CINEMA_TOTAL_SZ;
+          if (corpo < atteso || corpo > atteso + WALLPAPER_MULTIPART_MARGIN)
+            wallpaperErrore = "dimensione del file diversa da quella attesa";
+          else if (!WallpaperStore::beginWrite())
+            wallpaperErrore = "partizione non scrivibile";
           LOG("MAINT", "wallpaper: %s", wallpaperErrore ? wallpaperErrore : "caricamento avviato");
           break;
         }
@@ -758,7 +774,9 @@ namespace Maintenance
   #else
     updater.setup(&server, "/update");
   #endif
+    // Ogni blocco scritto alimenta il watchdog del loop: un upload dura più del suo timeout.
     Update.onProgress([](size_t fatto, size_t totale) {
+      esp_task_wdt_reset();
       static uint8_t ultimo = 255;
       const uint8_t pct = totale ? (uint8_t)((uint64_t)fatto * 100ULL / totale) : 0;
       if (pct / 10 != ultimo) { ultimo = (uint8_t)(pct / 10); LOG("OTA", "upload %u%%", (unsigned)pct); }
@@ -814,7 +832,8 @@ namespace Maintenance
           // lento del dispositivo (tipico dopo un blackout) non condanna il
           // giro alla sola rete di emergenza.
           WiFi.mode(WIFI_AP_STA);
-          WiFi.softAP(OTA_AP_SSID, OTA_AP_PASSWORD);
+          if (!WiFi.softAP(OTA_AP_SSID, OTA_AP_PASSWORD))
+            LOG("MAINT", "access point %s non avviato: password sotto gli 8 caratteri o SSID non valido", OTA_AP_SSID);
           apri(Stato::ServerAp);
         }
         return;   // senza indirizzo non c'e' niente da servire
@@ -856,10 +875,15 @@ namespace Maintenance
     if (mdnsAttivo) { MDNS.end(); mdnsAttivo = false; }
   #endif
     if (stato == Stato::ServerAp) WiFi.softAPdisconnect(false);
-    // Stessa sequenza di wifiOff(): eraseap a false conserva BSSID e canale,
-    // che fanno risparmiare tempo alla prima riconnessione dello scheduler.
+    // Stessa sequenza di wifiOff(): eraseap a false non cancella la configurazione
+    // salvata ma non evita la scansione, che salta solo wifiOn() con canale e
+    // BSSID memorizzati: g_wifi_ap_known del .ino parte falso, quindi la prima
+    // connessione dello scheduler scandisce comunque.
     WiFi.disconnect(true, false);
     WiFi.mode(WIFI_OFF);
+    // Come wifiOff(): la sessione Tuya del publish in finestra si rilascia solo
+    // a radio spenta, perchè con la radio su la chiusura farebbe segnare offline.
+    Tuya::releaseSession();
     stato = Stato::Inattiva;
     conclusa = true;
     LOG("MAINT", "finestra chiusa (%s) dopo %lu s, radio spenta", via, (unsigned long)durata);

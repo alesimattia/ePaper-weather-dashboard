@@ -48,9 +48,10 @@ extern GxEPD2_3C<Layout::Panel, Layout::PAGE_HEIGHT> display;
  * Modulo calendario header-only:
  *  - riquadro del mese corrente (in alto nella sidebar, bordi arrotondati);
  *  - lista dei prossimi eventi non ancora terminati, prelevati da due
- *    sorgenti indipendenti (Outlook via Microsoft Graph, fino a 5 eventi,
- *    + Google Calendar via Calendar API v3, fino a 5 eventi) e fuse in
- *    un unico elenco; il rendering mostra i 5 piu' vicini all'orario
+ *    sorgenti indipendenti (Outlook via Microsoft Graph, fino a
+ *    MAX_EVENTS_DISPLAYED eventi, + Google Calendar via Calendar API v3,
+ *    fino a MAX_EVENTS_DISPLAYED eventi) e fuse in un unico elenco; il
+ *    rendering mostra i MAX_EVENTS_DISPLAYED più vicini all'orario
  *    corrente (merge + insertion sort per startUtc crescente);
  *  - fetch OAuth2 refresh-token per ciascuna sorgente.
  *
@@ -74,8 +75,9 @@ namespace Calendar
    * l'orario è "tutto gg", che ha i discendenti.
    *
    * Le sorgenti (Outlook, Google) alimentano ciascuna una propria cache
-   * da MAX_EVENTS=5; la lista mostrata è il merge ordinato dei più
-   * vicini all'orario corrente, ritagliato a MAX_EVENTS_DISPLAYED.
+   * da MAX_EVENTS, uguale a MAX_EVENTS_DISPLAYED perchè una sola sorgente
+   * può riempire da sola tutte le righe; la lista mostrata è il merge
+   * ordinato dei più vicini all'orario corrente.
    */
   static constexpr int16_t MIN_EVT_ROW_H = 40;
   static constexpr uint8_t MAX_EVENTS_DISPLAYED =
@@ -87,15 +89,17 @@ namespace Calendar
   namespace Outlook
   {
     /** Numero di eventi cacheati da questa sorgente. */
-    static constexpr uint8_t MAX_EVENTS = 5;
+    static constexpr uint8_t MAX_EVENTS = Calendar::MAX_EVENTS_DISPLAYED;
 
+    /** Giorni in avanti coperti dalla finestra di calendarView, che vuole un
+     *  inizio e una fine: oltre l'orizzonte gli eventi non sono "prossimi". */
+    static constexpr uint8_t HORIZON_DAYS = 30;
   }
 
   namespace Google
   {
     /** Numero di eventi cacheati da questa sorgente. */
-    static constexpr uint8_t MAX_EVENTS = 5;
-
+    static constexpr uint8_t MAX_EVENTS = Calendar::MAX_EVENTS_DISPLAYED;
   }
 
   // -------------------------------------------------------------------------
@@ -160,24 +164,35 @@ namespace Calendar
     }
 
     /**
-     * Converte componenti UTC (Y,M,D,h,m,s) in epoch UNIX.
+     * Converte componenti UTC (Y,M,D,h,m,s) in epoch UNIX. Ritorna false, senza
+     * toccare `outUtc`, se un componente è fuori range: anno 1970..2100, mese
+     * 1..12, giorno nel mese, ora 0..23, minuti e secondi 0..59. Un dato
+     * malformato nella risposta del server altrimenti indicizzerebbe fuori
+     * dalla tabella dei giorni o darebbe una data inventata.
      */
-    inline time_t ymdhmsToUtcEpoch(int Y, int M, int D, int h, int m, int s)
+    inline bool ymdhmsToUtcEpoch(int Y, int M, int D, int h, int m, int s, time_t& outUtc)
     {
       static const int16_t DTM[12] = { 0,31,59,90,120,151,181,212,243,273,304,334 };
+      if (Y < 1970 || Y > 2100 || M < 1 || M > 12) return false;
+      const int daysInMonth = DAYS_IN_MONTH[M - 1] + ((M == 2 && isLeapY(Y)) ? 1 : 0);
+      if (D < 1 || D > daysInMonth) return false;
+      if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return false;
+
       int32_t days = 0;
       for (int y = 1970; y < Y; y++) days += isLeapY(y) ? 366 : 365;
       days += DTM[M - 1];
       if (M > 2 && isLeapY(Y)) days++;
       days += (D - 1);
-      return (time_t)((int64_t)days * 86400LL + (int64_t)h * 3600 + m * 60 + s);
+      outUtc = (time_t)((int64_t)days * 86400LL + (int64_t)h * 3600 + m * 60 + s);
+      return true;
     }
 
     /**
      * Parse di una stringa ISO 8601 con offset opzionale (Z, +HH:MM,
      * -HH:MM) e la converte in epoch UTC. Se non c'è offset esplicito
      * interpreta come UTC (comportamento atteso per Outlook con
-     * `Prefer: outlook.timezone=UTC`).
+     * `Prefer: outlook.timezone=UTC`). Ritorna false, lasciando `outUtc`
+     * intatto, se la stringa o l'offset sono malformati o fuori range.
      *
      * Formati accettati:
      *   "2026-04-21T14:00:00"
@@ -200,6 +215,7 @@ namespace Calendar
         int oh = 0, om = 0;
         if (sscanf(z + 1, "%d:%d", &oh, &om) >= 1)
         {
+          if (oh < 0 || oh > 23 || om < 0 || om > 59) return false;
           offsetSec = sign * (oh * 3600 + om * 60);
         }
       }
@@ -208,20 +224,48 @@ namespace Calendar
        * essere un "local time + offset", quindi sottraiamo l'offset per
        * ottenere l'epoch UTC reale.
        */
-      outUtc = ymdhmsToUtcEpoch(Y, M, D, h, m, s) - offsetSec;
+      time_t localAsUtc = 0;
+      if (!ymdhmsToUtcEpoch(Y, M, D, h, m, s, localAsUtc)) return false;
+      outUtc = localAsUtc - offsetSec;
       return true;
     }
 
     /**
      * Parse "YYYY-MM-DD" (evento all-day) come mezzanotte UTC del giorno.
+     * Ritorna false, lasciando `outUtc` intatto, se la data è malformata o
+     * fuori range.
      */
     inline bool parseIsoDateToUtc(const char* str, time_t& outUtc)
     {
       if (!str || !*str) return false;
       int Y, M, D;
       if (sscanf(str, "%d-%d-%d", &Y, &M, &D) != 3) return false;
-      outUtc = ymdhmsToUtcEpoch(Y, M, D, 0, 0, 0);
-      return true;
+      return ymdhmsToUtcEpoch(Y, M, D, 0, 0, 0, outUtc);
+    }
+
+    /**
+     * Copia il titolo ricevuto nell'evento e lo riduce ai caratteri che i font
+     * sanno disegnare, togliendo gli spazi in testa e in coda. Un titolo vuoto
+     * o ridotto a soli spazi dopo la conversione diventa "(senza titolo)",
+     * altrimenti la riga mostrerebbe solo l'orario.
+     */
+    inline void setEventTitle(CalEvent& e, const char* title)
+    {
+      strncpy(e.title, title ? title : "", sizeof(e.title) - 1);
+      e.title[sizeof(e.title) - 1] = 0;
+      Graphics::foldToFontCharset(e.title);
+
+      size_t len = strlen(e.title);
+      while (len > 0 && e.title[len - 1] == ' ') e.title[--len] = 0;
+      size_t lead = 0;
+      while (e.title[lead] == ' ') ++lead;
+      if (lead > 0) memmove(e.title, e.title + lead, len - lead + 1);
+
+      if (e.title[0] == 0)
+      {
+        strncpy(e.title, "(senza titolo)", sizeof(e.title) - 1);
+        e.title[sizeof(e.title) - 1] = 0;
+      }
     }
 
 
@@ -248,6 +292,18 @@ namespace Calendar
     }
 
     /**
+     * Logga il corpo d'errore del token endpoint, letto per al più 511 byte.
+     * Sta in una funzione a sè e non inline perchè il buffer occupi lo stack
+     * solo qui e non durante l'handshake di oauthRefreshGeneric().
+     */
+    __attribute__((noinline)) inline void logTokenErrorBody(HTTPClient& http, int code)
+    {
+      char resp[512];
+      Net::readBodyPrefix(http, resp, sizeof(resp));
+      LOG("OAuth", "token refresh failed: http=%d body=%s", code, resp);
+    }
+
+    /**
      * Refresh generico di un access token OAuth2 (grant_type=refresh_token).
      * Gestisce sia flussi senza client_secret (Microsoft client pubblico)
      * sia flussi con client_secret (Google desktop app).
@@ -268,7 +324,7 @@ namespace Calendar
                                     String& outToken,
                                     uint32_t& outExpiresIn)
     {
-      WiFiClientSecure client;
+      Net::TlsClient client;
       HTTPClient http;
       if (!Net::beginHttps(http, client, tokenUrl))
       {
@@ -277,8 +333,10 @@ namespace Calendar
       }
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
+      // Il refresh token Microsoft supera 1 KB: la capacità iniziale evita le
+      // riallocazioni mentre si compone il corpo.
       String body;
-      body.reserve(512);
+      body.reserve(2048);
       body  = "client_id=";       body += clientId;
       if (clientSecret && *clientSecret)
         (body += "&client_secret=") += clientSecret;
@@ -290,9 +348,11 @@ namespace Calendar
       int code = http.POST(body);
       if (code != 200)
       {
-        String resp = http.getString();
-        LOG("OAuth", "token refresh failed: http=%d body=%s",
-            code, resp.c_str());
+        Net::logTlsFailure("OAuth", client, code);
+        if (code > 0)
+          logTokenErrorBody(http, code);
+        else
+          LOG("OAuth", "token refresh failed: http=%d", code);
         http.end();
         return false;
       }
@@ -352,39 +412,53 @@ namespace Calendar
     }
 
     /**
-     * GET /me/events con filtro `end/dateTime ge <now>`, top=MAX_EVENTS=5,
-     * ordinato per inizio. Popola `outlookEvents[]` e invalida gli slot
-     * residui, quindi la cache rispecchia sempre la risposta del server.
-     * Ritorna true quando HTTP e parsing riescono, anche senza eventi:
-     * false e' riservato ai guasti, cosi' il chiamante sa che la cache
-     * precedente e' ancora quella buona.
+     * GET /me/calendarView sulla finestra [adesso, adesso + HORIZON_DAYS],
+     * top=MAX_EVENTS, ordinato per inizio. calendarView espande le ricorrenze
+     * nelle singole occorrenze: /me/events restituiva invece la serie con la
+     * data della prima occorrenza, quindi un evento ricorrente usciva con una
+     * data passata. Popola `outlookEvents[]` e invalida gli slot residui, quindi
+     * la cache rispecchia sempre la risposta del server, meno gli eventi
+     * annullati. Ritorna true quando HTTP e parsing riescono, anche senza
+     * eventi: false è riservato ai guasti, così il chiamante sa che la cache
+     * precedente è ancora quella buona, e all'ora non valida, senza la quale
+     * la finestra partirebbe dal 1970.
      */
     inline bool fetchOutlookEvents()
     {
-      time_t now = nowUtcEpoch();
-      char nowIso[24] = "1970-01-01T00:00:00Z";
-      if (now > 0) formatIsoUtc(now, nowIso, sizeof(nowIso));
+      const time_t now = nowUtcEpoch();
+      if (now == 0)
+      {
+        LOG("Outlook", "ora non valida: eventi non richiesti");
+        return false;
+      }
+      char nowIso[24];
+      char horizonIso[24];
+      formatIsoUtc(now, nowIso, sizeof(nowIso));
+      formatIsoUtc(now + (time_t)Calendar::Outlook::HORIZON_DAYS * 86400, horizonIso, sizeof(horizonIso));
 
-      WiFiClientSecure client;
+      Net::TlsClient client;
       HTTPClient http;
       String url;
       url.reserve(360);
-      url  = "https://graph.microsoft.com/v1.0/me/events?$top=";
+      url  = "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=";
+      url += nowIso;
+      url += "&endDateTime=";
+      url += horizonIso;
+      url += "&$top=";
       url += (int)Calendar::Outlook::MAX_EVENTS;
       url += "&$orderby=start/dateTime";
-      url += "&$select=subject,start,end,isAllDay";
-      url += "&$filter=end/dateTime%20ge%20'";
-      url += nowIso;
-      url += "'";
+      url += "&$select=subject,start,end,isAllDay,isCancelled";
 
       if (!Net::beginHttps(http, client, url)) { LOG("Outlook", "events http.begin failed"); return false; }
-      http.addHeader("Authorization", String("Bearer ") + cachedOutlookToken);
+      http.setAuthorizationType("Bearer");
+      http.setAuthorization(cachedOutlookToken.c_str());
       http.addHeader("Prefer", "outlook.timezone=\"UTC\"");
 
       int code = http.GET();
       if (code != 200)
       {
         LOG("Outlook", "events fetch failed: http=%d", code);
+        Net::logTlsFailure("Outlook", client, code);
         http.end();
         if (code == 401) { 
           cachedOutlookToken = ""; 
@@ -400,6 +474,7 @@ namespace Calendar
       filter["value"][0]["start"]["dateTime"]   = true;
       filter["value"][0]["end"]["dateTime"]     = true;
       filter["value"][0]["isAllDay"]            = true;
+      filter["value"][0]["isCancelled"]         = true;
 
       JsonDocument doc;
       Net::BodyStream body(http.getStream());
@@ -415,6 +490,9 @@ namespace Calendar
       {
         if (n >= (int)Calendar::Outlook::MAX_EVENTS) break;
 
+        // Un evento annullato resta nella risposta di Graph: non è un impegno.
+        if (item["isCancelled"] | false) continue;
+
         const char* subject  = item["subject"]           | "(senza titolo)";
         const char* startStr = item["start"]["dateTime"] | "";
         const char* endStr   = item["end"]["dateTime"]   | "";
@@ -423,22 +501,20 @@ namespace Calendar
         time_t startUtc = 0;
         if (!parseIsoDateTimeToUtc(startStr, startUtc)) continue;
         time_t endUtc = startUtc;
-        parseIsoDateTimeToUtc(endStr, endUtc);
+        if (*endStr && !parseIsoDateTimeToUtc(endStr, endUtc)) continue;
 
         CalEvent& e = outlookEvents[n];
-        strncpy(e.title, subject, sizeof(e.title) - 1);
-        e.title[sizeof(e.title) - 1] = 0;
-        Graphics::foldToFontCharset(e.title);
+        setEventTitle(e, subject);
         e.startUtc = startUtc;
         e.endUtc   = endUtc;
         e.allDay   = allDay;
         e.valid    = true;
         n++;
       }
-      for (int i = n; i < (int)Calendar::Outlook::MAX_EVENTS; i++) 
+      for (int i = n; i < (int)Calendar::Outlook::MAX_EVENTS; i++)
         outlookEvents[i].valid = false;
 
-      LOG("Outlook", "fetched %d events (end>='%s')", n, nowIso);
+      LOG("Outlook", "fetched %d events (da '%s' a '%s')", n, nowIso, horizonIso);
       // Successo anche con n == 0: HTTP e parsing sono riusciti, quindi
       // outlookEvents[] rispecchia il calendario e un'agenda vuota e' un
       // risultato valido, non un errore da ritentare.
@@ -480,19 +556,24 @@ namespace Calendar
 
     /**
      * GET /calendar/v3/calendars/primary/events con timeMin=<now>,
-     * maxResults=MAX_EVENTS=5, singleEvents=true, orderBy=startTime.
+     * maxResults=MAX_EVENTS, singleEvents=true, orderBy=startTime.
      * timeMin su Google tiene in lista anche gli eventi in corso (termine
      * nel futuro). Stesso contratto di ritorno di fetchOutlookEvents():
-     * true su risposta valida, anche vuota; false solo sui guasti.
+     * true su risposta valida, anche vuota; false solo sui guasti e all'ora
+     * non valida.
      */
     inline bool fetchGoogleEvents()
     {
-      time_t now = nowUtcEpoch();
-      char nowIso[24] = "1970-01-01T00:00:00Z";
-      if (now > 0) 
-        formatIsoUtc(now, nowIso, sizeof(nowIso));
+      const time_t now = nowUtcEpoch();
+      if (now == 0)
+      {
+        LOG("Google", "ora non valida: eventi non richiesti");
+        return false;
+      }
+      char nowIso[24];
+      formatIsoUtc(now, nowIso, sizeof(nowIso));
 
-      WiFiClientSecure client;
+      Net::TlsClient client;
       HTTPClient http;
 
       // Percent-encode dei ':' del solo timeMin: applicato all'URL intero
@@ -512,12 +593,14 @@ namespace Calendar
       url += "&fields=items(summary,start,end)";
 
       if (!Net::beginHttps(http, client, url)) { LOG("Google", "events http.begin failed"); return false; }
-      http.addHeader("Authorization", String("Bearer ") + cachedGoogleToken);
+      http.setAuthorizationType("Bearer");
+      http.setAuthorization(cachedGoogleToken.c_str());
 
       int code = http.GET();
       if (code != 200)
       {
         LOG("Google", "events fetch failed: http=%d", code);
+        Net::logTlsFailure("Google", client, code);
         http.end();
         if (code == 401) { cachedGoogleToken = ""; googleTokenExpiresAtMs = 0; }
         return false;
@@ -551,14 +634,14 @@ namespace Calendar
         {
           if (!parseIsoDateTimeToUtc(startDateTime, startUtc)) continue;
           endUtc = startUtc;
-          if (endDateTime) parseIsoDateTimeToUtc(endDateTime, endUtc);
+          if (endDateTime && *endDateTime && !parseIsoDateTimeToUtc(endDateTime, endUtc)) continue;
         }
         else if (startDate)
         {
           allDay = true;
           if (!parseIsoDateToUtc(startDate, startUtc)) continue;
           endUtc = startUtc + 86400;
-          if (endDate) parseIsoDateToUtc(endDate, endUtc);
+          if (endDate && *endDate && !parseIsoDateToUtc(endDate, endUtc)) continue;
         }
         else
         {
@@ -566,9 +649,7 @@ namespace Calendar
         }
 
         CalEvent& e = googleEvents[n];
-        strncpy(e.title, summary, sizeof(e.title) - 1);
-        e.title[sizeof(e.title) - 1] = 0;
-        Graphics::foldToFontCharset(e.title);
+        setEventTitle(e, summary);
         e.startUtc = startUtc;
         e.endUtc   = endUtc;
         e.allDay   = allDay;
@@ -752,8 +833,8 @@ namespace Calendar
     }
 
     /**
-     * Merge delle cache Outlook + Google (fino a 5+5=10 eventi validi),
-     * insertion sort ascendente per startUtc, disegno delle prime
+     * Merge delle cache Outlook + Google (fino a MAX_EVENTS validi per
+     * sorgente), insertion sort ascendente per startUtc, disegno delle prime
      * MAX_EVENTS_DISPLAYED righe (le piu' vicine all'orario attuale).
      * Gli eventi già terminati si saltano: la cache resta quella dell'ultimo
      * fetch riuscito, e con i fetch in errore li mostrerebbe come prossimi.
@@ -769,7 +850,7 @@ namespace Calendar
       for (auto& ev : googleEvents)
         if (ev.valid && !hasEnded(ev, nowUtc) && count < CAP) merged[count++] = &ev;
 
-      // Insertion sort ascendente su startUtc (lista piccola, max 10).
+      // Insertion sort ascendente su startUtc (lista piccola).
       for (int i = 1; i < count; i++)
       {
         const CalEvent* key = merged[i];
@@ -842,8 +923,9 @@ namespace Calendar
 
   /**
    * Sottosistema Outlook (Microsoft Graph). Cache dei prossimi
-   * MAX_EVENTS eventi del calendario Outlook non ancora terminati;
-   * refresh periodico via refresh-token + GET /me/events.
+   * MAX_EVENTS eventi del calendario Outlook non ancora terminati e non
+   * annullati, entro HORIZON_DAYS giorni; refresh periodico via
+   * refresh-token + GET /me/calendarView, che espande le ricorrenze.
    */
   namespace Outlook
   {
@@ -864,7 +946,9 @@ namespace Calendar
       for (auto& e : outlookEvents) { e.valid = false; e.title[0] = 0; e.startUtc = 0; e.endUtc = 0; e.allDay = false; }
       cachedOutlookToken      = "";
       outlookTokenExpiresAtMs = 0;
-      if (!isConfigured())
+      if (isConfigured())
+        cachedOutlookToken.reserve(2560);  // un access token Graph supera 2 KB: niente riallocazioni a ogni rinnovo
+      else
         LOG("Outlook", "credenziali assenti in Env.h: calendario Outlook disattivato");
     }
 
@@ -911,7 +995,9 @@ namespace Calendar
       for (auto& e : googleEvents) { e.valid = false; e.title[0] = 0; e.startUtc = 0; e.endUtc = 0; e.allDay = false; }
       cachedGoogleToken      = "";
       googleTokenExpiresAtMs = 0;
-      if (!isConfigured())
+      if (isConfigured())
+        cachedGoogleToken.reserve(384);  // un access token Google sta in poche centinaia di byte
+      else
         LOG("Google", "credenziali assenti in Env.h: calendario Google disattivato");
     }
 

@@ -8,9 +8,9 @@ logica applicativa, selezionabili a compile-time via
 [Selezione del display](#selezione-del-display)):
 
 - **SOLUM ESL 9.7"** (672w × 960h nativo → 960w × 672h landscape, controller
-  SSD1677) — tre colori (bianco, nero, rosso), driver in uso e verificato.
+  SSD1677): tre colori (bianco, nero, rosso), driver in uso e verificato.
 - **SOLUM 12.2"** (960w × 768h, **due controller SSD16xx** da 960 × 384
-  ciascuno) — il driver pilota una banda, la seconda coda FFC non risponde.
+  ciascuno): il driver pilota una banda, la seconda coda FFC non risponde.
 
 Entrambi i driver stanno nel submodule
 [`GxEPD2_SOLUM_ESL/`](GxEPD2_SOLUM_ESL), che è una libreria Arduino a sè
@@ -47,7 +47,7 @@ Lo sketch principale compone uno schermo completo con:
   [Icone meteo](#icone-meteo);
 - **scheda calendario** a destra: il mese corrente come titolo sul bordo,
   la griglia con la data odierna in rosso pieno (`fillRoundRect`) e sotto un
-  filetto la **lista eventi** (5 sul 9.7", 7 sul 12.2"), fusione di **Outlook**
+  filetto la **lista eventi** (6 sul 9.7", 7 sul 12.2"), fusione di **Outlook**
   (Microsoft Graph) e **Google Calendar** ordinati per inizio: gli
   eventi di oggi sono colorati in rosso, gli altri in nero, con evento
   in corso (end nel futuro) mantenuto fino al termine effettivo;
@@ -137,7 +137,7 @@ serve uno per ogni periferica sullo stesso bus).
 |---|---|---|---|---|---|---|---|---|
 | SPI0, SPI1 | hardware, interno | nessuno | 6-11 | 6-11 | 6-11 | 6-11 | | **occupato** dalla flash del modulo, non utilizzabile |
 | SPI2 (**HSPI**), pin nativi | hardware | `SPIClass(HSPI)` | 14 | 12 | 13 | 15 | 80 MHz | vedi la riga sotto |
-| SPI2 (**HSPI**), come lo usa il display | hardware | `hspi` nel `.ino` | **13** | 12 (fittizio) | **14** | 15 | circa 40 MHz, usato a 10 MHz | **occupato** dal display |
+| SPI2 (**HSPI**), come lo usa il display | hardware | `hspi` nel `.ino`, aperto da `GxEPD2_SOLUM::beginBus()` | **13** | 12 (fittizio) | **14** | 15 | circa 40 MHz, usato a 10 MHz | **occupato** dal display |
 | SPI3 (**VSPI**), pin nativi | hardware | `SPI` (globale del core) | 18 | 19 | 23 | 5 | 80 MHz | **libero**, riservato a una periferica SPI aggiuntiva |
 | SPI software | software | librerie dedicate | qualunque I/O | qualunque I/O | qualunque I/O | qualunque I/O | pochi MHz | non serve |
 
@@ -145,7 +145,10 @@ Il display usa l'HSPI, ma la board scambia CLK e MOSI rispetto ai pin nativi:
 il clock è sul 13 invece che sul 14, i dati sul 14 invece che sul 13. Per questo
 il segnale passa dalla matrice GPIO; a 10 MHz il margine sui circa 40 MHz della
 matrice è ampio. Il pannello non ha un'uscita dati, quindi il MISO sul 12 non
-riceve niente.
+riceve niente. Il remap lo fa `initDisplay()` nel `.ino` con l'overload nativo
+`display.init(..., hspi, settings)` di `GxEPD2_3C`, che riceve il bus aperto da
+`GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, 10000000)` insieme alle impostazioni
+SPI a 10 MHz: nessun driver della libreria apre il bus nè ne conosce i pin.
 
 #### Bus I2C
 
@@ -412,31 +415,42 @@ come fork di
 adattato al SOLUM 9.7" recuperato da ESL dismesse. Rispetto ai driver stock
 di GxEPD2 aggiunge:
 
-1. **`GxEPDImage::showImage()`** — unica funzione pubblica per stampare
-   un'immagine, con hibernate automatico opzionale. Due overload: descrittore
-   generico (output dello script Python) e bitmap raw 1bpp B/N (formato
-   [image2cpp](https://javl.github.io/image2cpp/)).
+1. **`GxEPDImage::showImage()`**, unica funzione pubblica per stampare
+   un'immagine, un solo template che prende un descrittore (output dello script
+   Python, oppure una bitmap raw 1bpp B/N nel formato
+   [image2cpp](https://javl.github.io/image2cpp/) avvolta dalla macro
+   `GXEPD_BW_IMAGE`) e un `GxEPDImage::Paint`: `Opaque` (default) dipinge anche il
+   bianco, `InkOnly` solo nero e rosso, per un'immagine su fondo bianco. È un
+   wrapper di `GxEPD2_3C::drawInvertedBitmap()`, rosso poi nero sopra, e non
+   spegne il pannello: l'`hibernate()` lo chiama chi disegna.
 2. **API single-channel** `writeImageBlack` / `writeImageRed` per scrittura
-   diretta sul controller.
+   diretta sul controller, che sul 9.7" stanno nell'esempio
+   `examples/097c/panel_diagnostic` e non nel driver.
 3. **Sistema di descrittori universali** (`GxEPDImage::Descriptor`) con
    formato e dimensioni dell'immagine.
 4. **Partial refresh in bianco e nero**: 639 ms contro i ~24 s del refresh
    pieno, ma un frame partial non scrive rosso (il rosso già sul vetro resta
-   fermo). Il driver lo espone in due modi. Le API opt-in `drawImagePartial()` e
-   `drawImagePartialPart()` lavorano fuori dal template e il firmware non le
-   chiama. Il **refresh differenziale** lavora invece dentro il loop paged:
-   il driver confronta il CRC32 del piano rosso di ogni pagina con quello
-   dell'ultimo frame pieno e, se è identico, scrive il B/N nuovo nella RAM
-   libera e lancia il partial; altrimenti non tocca il pannello e il firmware
-   rifà il frame in pieno (`DISPLAY_PARTIAL_REFRESH` nel `.ino`, politica in
-   [`PartialRefresh.h`](PartialRefresh.h) e `Timings.h`, meccanismo nella
-   sezione REFRESH DIFFERENZIALE del driver). Con un riferimento valido il
-   controller resta in Sleep e non va in deep sleep, perchè il deep sleep perde
-   la RAM.
-5. **Salto del refresh a frame invariato** (`DISPLAY_SKIP_UNCHANGED` nel `.ino`):
+   fermo). Il driver lo espone come **refresh differenziale**, che lavora
+   dentro il loop paged: il driver confronta il CRC32 del piano rosso di ogni
+   pagina con quello dell'ultimo frame pieno e, se è identico, scrive il B/N
+   nuovo nella RAM libera e lancia il partial; altrimenti non tocca il pannello
+   e il frame si rifà in pieno (`DISPLAY_PARTIAL_REFRESH` nel `.ino`, politica
+   in [`PartialRefresh.h`](PartialRefresh.h) e `Timings.h`, protocollo del frame
+   in `GxEPDFrame::render()` della libreria, meccanismo nella sezione REFRESH
+   DIFFERENZIALE del driver). Con un riferimento valido il controller resta in
+   Sleep e non va in deep sleep, perchè il deep sleep perde la RAM. Le API
+   opt-in del partial a finestra (`drawImagePartial()` e le altre) non
+   stanno nel driver ma nell'esempio `examples/097c/panel_diagnostic`, e i loro
+   punti aperti e alcune sequenze rimandate sono in [`ISSUES.md`](ISSUES.md).
+5. **Guasti del BUSY** (driver 9.7"): un refresh più breve del plausibile (5000
+   ms il pieno, 300 ms il partial), oppure con il BUSY ancora alto dopo il
+   timeout, è un guasto. Il frame non si registra come mostrato, il riferimento
+   del differenziale si butta e il frame successivo è pieno; l'esito si legge
+   con `busyFault()` e `lastUpdateMs()` e il firmware lo logga (tag `display`).
+6. **Salto del refresh a frame invariato** (`DISPLAY_SKIP_UNCHANGED` nel `.ino`):
    in `refresh(false)` il driver confronta un CRC32 concatenato dei due piani,
    nero e colore, con quello dell'ultimo frame mandato al vetro e, se coincidono,
-   non lancia nessun refresh, né partial né pieno. Il confronto è sull'uscita del
+   non lancia nessun refresh, nè partial nè pieno. Il confronto è sull'uscita del
    disegno, nello stesso passaggio paged: non costa un disegno in più e nessun
    ingresso del disegno si può dimenticare. Lo condividono i driver 9.7" e 12.2"
    (helper `GxEPD2_SOLUM_FrameCrc.h`) e funziona anche senza il differenziale.
@@ -446,7 +460,7 @@ di GxEPD2 aggiunge:
 La documentazione completa (motivazione, API, esempi d'uso, ottimizzazioni
 rispetto al driver stock) sta in:
 
-> 📘 **[GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md)** — documentazione dedicata del driver custom,
+> 📘 **[GxEPD2_SOLUM_ESL/README.md](GxEPD2_SOLUM_ESL/README.md)**: documentazione dedicata del driver custom,
 > che vive nel repo [GxEPD2_SOLUM_ESL](https://github.com/alesimattia/GxEPD2_SOLUM_ESL) come libreria Arduino
 > a sè: dopo il clone serve `git submodule update --init --recursive`.
 
@@ -474,7 +488,7 @@ I metodi che producono dati per il pannello sono i "produttori", cioè i task de
 | Calendario Google | `runGoogleCalendarFetch()` | [Calendar::Google::runFetch()](Calendar.h), che chiama `refreshGoogleToken()` e `fetchGoogleEvents()` | Lista eventi |
 | Calendario Outlook | `runOutlookCalendarFetch()` | [Calendar::Outlook::runFetch()](Calendar.h), che chiama `refreshOutlookToken()` e `fetchOutlookEvents()` | Lista eventi |
 | Programmazione cinema | `runCinemaFetch()` | [buildCinemaUrl()](ePaper-weather-dashboard.ino) e [downloadImageToStore()](ePaper-weather-dashboard.ino), preceduti da sonda o preparazione del server ([wakeOrPrepare()](ePaper-weather-dashboard.ino), via `prewarmCinemaServer()`) | Blob raw packed scaricato dalla webapp nel buffer in RAM di [CinemaStore](CinemaStore.h), mostrato nel riquadro nella fascia cinema |
-| Percorso del mattino | `runRouteFetch()` | [buildRouteUrl()](ePaper-weather-dashboard.ino) e [downloadImageToStore()](ePaper-weather-dashboard.ino), preceduti da sonda o preparazione del server ([wakeOrPrepare()](ePaper-weather-dashboard.ino), via `prewarmRouteServer()`) | Stesso formato del cinema, scaricato da routefinder nello stesso buffer di [CinemaStore](CinemaStore.h), mostrato nella fascia percorso secondo [Routefinder](Routefinder.h) |
+| Percorso del mattino | `runRouteFetch()` | [buildRouteUrl()](ePaper-weather-dashboard.ino) e [downloadImageToStore()](ePaper-weather-dashboard.ino), preceduti dalla sola sonda del server, senza preparazione ([wakeOrPrepare()](ePaper-weather-dashboard.ino), via `prewarmRouteServer()`) | Stesso formato del cinema, scaricato da routefinder nello stesso buffer di [CinemaStore](CinemaStore.h), mostrato nella fascia percorso secondo [Routefinder](Routefinder.h) |
 | Wallpaper | nessuno: non è un task | predefinito in [wallpaper/img_great_wave.h](wallpaper/img_great_wave.h), sostituibile con un upload dalla pagina `/wallpaper` di [Maintenance](Maintenance.h) in [WallpaperStore](WallpaperStore.h) | Immagine della partizione `wallpaper`, o senza quella il predefinito, mostrata fuori dalle due fasce o quando l'immagine programmata manca o non vale più |
 
 #### Isolamento dei produttori
@@ -483,7 +497,10 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 
 - **Chiave assente.** Se in `Env.h` è rimasto il valore del template (vuoto, oppure che inizia con `paste_` o `0000000`, vedi [Net::isCredentialSet()](Net.h)), il `preconditionsMet()` del task (`weatherReady()`, `googleReady()`, `outlookReady()`) lo tiene sospeso: niente radio, niente slot consumati, una riga di log al boot e "sospeso" nella pagina di stato (`/`) della finestra di manutenzione. Tuya fa lo stesso con `readyToPublish()`.
 - **Chiave rifiutata.** La funzionalità fallisce e riprova alla sua cadenza, mentre gli altri task proseguono.
-- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h): l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream e legge a blocchi da 128 byte.
+- **Tempo.** Ogni connessione HTTPS passa da [Net::beginHttps()](Net.h) o [Net::prepareTlsClient()](Net.h) con un `Net::TlsClient`: l'handshake ha un tetto di `TLS_HANDSHAKE_TIMEOUT_S`, e un server bloccato non ferma gli altri produttori per i 120 s del default del core. Le richieste usano HTTP/1.0 perchè Google e Microsoft Graph in HTTP/1.1 rispondono chunked, illeggibile per `deserializeJson()` sullo stream. Il corpo si legge da [Net::BodyStream](Net.h): il socket TLS del core è non bloccante e `readBytes()` si ferma alla prima pausa fra i record, che `deserializeJson()` prenderebbe per una fine anticipata (`IncompleteInput`); BodyStream attende le pause fino al timeout dello stream senza dati, e una scadenza totale `HTTP_BODY_DEADLINE_MS` chiude comunque la lettura anche con un server che manda un byte ogni pochi secondi. Legge a blocchi da 128 byte, e le letture più grandi vanno direttamente nella destinazione. [Net::readBodyPrefix()](Net.h) legge al più N byte di un corpo d'errore, e [Net::readBodyInto()](Net.h) il corpo delle immagini a blocchi da 1 KB, in una funzione separata e non inline perchè il blocco non pesi sullo stack durante l'handshake del chiamante.
+- **Certificato.** Le HTTPS che portano segreti verificano il certificato con il bundle CA del core (`useBuiltinCACertBundle()`, lo stesso di Tuya): OpenWeather (`appid`), token endpoint e API di Google e Microsoft (refresh token e Bearer), routefinder (`X-Routefinder-Token`). Il bundle non controlla le date (`CONFIG_MBEDTLS_HAVE_TIME_DATE` è spento), quindi la verifica non dipende dall'orologio. Restano insecure il download cinema e le richieste di sonda e preparazione (`/health` compreso), che non portano segreti. L'interruttore `TLS_VERIFY` nel `.ino` vale 1; a 0 tutte le HTTPS tornano insecure, come uscita di emergenza se una catena non fosse coperta dal bundle. Il motivo TLS di una richiesta fallita prima della risposta HTTP si logga con [Net::logTlsFailure()](Net.h), tag `tls`.
+- **Sessioni TLS.** `Net::TlsClient`, sottoclasse di `WiFiClientSecure` usata da tutti i produttori, riprende la sessione dell'ultima connessione allo stesso host con i ticket TLS 1.2: la connessione parte in plain start, la sessione salvata si applica prima dell'handshake e la nuova si salva a handshake concluso. Una connessione ripresa salta certificato e scambio di chiavi, la parte di calcolo dell'handshake che a radio accesa costa più di un secondo. La cache è statica ([TlsSessionCache.h](TlsSessionCache.h)): `TLS_SESSION_SLOTS` slot (7) da `TLS_SESSION_BYTES` byte (512) ciascuno, distinti per host e per modo di verifica, così una richiesta verificata non riprende mai una sessione nata senza verifica; a slot pieni si sostituisce il meno usato di recente. A handshake concluso `TlsClient` libera la catena del server, che `CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE` terrebbe in heap per tutta la connessione (con OpenWeather quattro certificati, proprio mentre si legge il JSON): l'esito della verifica resta nella sessione e il client non rinegozia. Per lo stesso motivo le sessioni si salvano **senza il certificato del server**: la ripresa non lo riceve nè lo verifica. Si salvano solo le sessioni con un ticket: senza, la ripresa dipende dalla cache del server, che dura meno delle cadenze (OpenWeather dà solo un session ID e non lo riprende già dopo 5 minuti). Così una sessione pesa 306-343 byte invece di alcuni KB, e sette slot, uno per ogni coppia host-verifica con ticket (cinema insecure, routefinder insecure e verificato, token e API di Google e di Microsoft), costano meno di due slot con il certificato. È memoria tolta all'heap, e l'heap è il vincolo: con i piani dell'immagine allocati, un handshake completo verificato verso OpenWeather (catena di quattro certificati, RSA a 3072 e 4096 bit) scende a pochi KB liberi. Un heap esaurito durante la verifica si presenta come `X509 - Allocation of memory failed` oppure `PK verify failed with error 0x4290` (`RSA_PUBLIC_FAILED` + `MPI_ALLOC_FAILED`), non come una firma sbagliata. La riga `tls` di ogni handshake riporta durata, se la sessione è stata offerta, l'heap minimo durante l'handshake e i byte della sessione salvata. Sopravvive al light sleep e si perde al riavvio. Un ticket rifiutato dal server ricade sull'handshake completo. L'interruttore `TLS_SESSION_RESUME` nel `.ino` vale 1; a 0 ogni connessione fa l'handshake completo. Tuya è escluso, perchè usa esp-tls.
+- **Blocchi.** Un produttore fermo oltre ogni timeout non congela il dispositivo: un task watchdog IDF sul loop (`esp_task_wdt_reconfigure()` a `LOOP_WDT_TIMEOUT_MS`, 120 s, con panic, e `esp_task_wdt_add()` del loop) scrive il coredump e riavvia. Il timeout è unico per tutto il watchdog, quindi anche l'idle del core 0, che resta sorvegliato, ha 120 s. Il loop lo alimenta a inizio `loop()`, prima di ogni task dello scheduler, dopo la GET di OpenWeather e quella dei download, a ogni blocco ricevuto da BodyStream, in `waitBusyAsleep()`, in `waitWifiConnected()` e a ogni blocco degli upload OTA e del wallpaper; una `static_assert` in `Timings.h` tiene il tratto più lungo fra due alimentazioni sotto il timeout. Al boot il log riporta il motivo del riavvio (`esp_reset_reason()`, tag `boot`).
 - **Dati vecchi.** Il meteo scade dopo `WEATHER_MAX_AGE_S` e il campione del sensore al secondo campione perso: il pannello mostra `--`. Gli eventi già terminati spariscono dalla lista anche se il fetch dei calendari è in errore.
 - **Testo.** I testi ricevuti passano da [Graphics::foldToFontCharset()](Graphics.h): i font a 7 bit non disegnano le lettere accentate, che diventano vocale più apostrofo (`caffè` → `caffe'`).
 
@@ -497,7 +514,8 @@ Un produttore che fallisce, o la cui chiave manca o è errata, interrompe solo l
 #### Consumatori
 
 - Il pannello si ridisegna a ogni ciclo della fascia WiFi, dopo il sensore e i fetch dello stesso ciclo: l'hook `drawFrame` dello scheduler è `Weather::render()`. Nessun task chiede ridisegni, quindi non esiste un flag di dati nuovi.
-- `render()` esegue [renderFrame()](Weather.h), che dentro il loop paged disegna nell'ordine: sfondo cinema, `Calendar::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia ed eventi e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
+- `render()` esegue [renderFrame()](Weather.h), che affida il frame a `GxEPDFrame::render(display, drawPage, tryPartial)` della libreria ([GxEPDFrame.h](GxEPD2_SOLUM_ESL/src/GxEPDFrame.h)): la libreria imposta la finestra piena, arma il differenziale se la politica (`PartialRefresh::decide()`) lo consente, esegue il loop paged chiamando `drawPage(pageIndex)`, esce dalla passata armata appena il driver rifiuta una pagina perchè il rosso è cambiato, rifà il frame in pieno, salta il refresh a frame invariato e restituisce un esito (`Full`, `Partial`, `Skipped`, `Refused`) con la mask delle pagine rifiutate e l'eventuale guasto del BUSY. A `renderFrame()` restano la politica, i contatori e il log dell'esito; `PartialRefresh.h` tiene `decide()`, i contatori del giorno e `finalReason()`, e l'isteresi del freddo si arma con `TooCold`, si disarma con `Partial` e le decisioni prese prima della temperatura (`LongGap`, `ChainLimit`, `SensorInvalid`) la lasciano com'è. Il log `pieno: rosso cambiato` riporta la prima pagina rifiutata: la mask è parziale, perchè la passata si interrompe lì.
+- `Weather::detail::drawPage()` disegna, dentro il loop paged, sfondo (`drawTestBackground()`), `Calendar::draw()` e `drawBanner()`. Il template tiene in RAM una fascia di `PAGE_HEIGHT` righe e ripete il disegno per ciascuna delle 8 pagine: ogni passata disegna solo ciò che tocca la sua fascia ([Graphics::beginPage()](Graphics.h), `intersectsPage()`, `clipToPage()`), cioè i riquadri interi, le righe di griglia ed eventi e le righe del wallpaper. Nessuno sbiancamento: il buffer di ogni pagina parte bianco. Con `LOG_LEVEL 2` il log `render` riporta i millisecondi di solo disegno per frame. Il banner richiama:
   - [renderBlock()](Weather.h) per corrente e previsioni;
   - [renderIndoorBox()](Weather.h) per il sensore;
   - [renderSunColumn()](Weather.h) per mini-grafico, barra temp-range, alba e tramonto;
@@ -572,20 +590,26 @@ Widget del mese e lista eventi Outlook + Google.
 - **Scheda**: un fieldset 320w alto quanto la colonna destra, con il nome del
   mese in italiano sul bordo superiore. Griglia 7×6 **Lunedì-first**, cella
   odierna riempita di rosso con numero in bianco, poi un filetto e gli eventi.
-- **Lista eventi**: 6 righe sul 9.7", 7 sul 12.2". Cache separate per sorgente
-  (`outlookEvents[5]` + `googleEvents[5]`); al rendering le due cache sono fuse,
-  ordinate per `startUtc` e ritagliate agli eventi più vicini all'orario attuale.
+- **Lista eventi**: 6 righe sul 9.7", 7 sul 12.2" (`MAX_EVENTS_DISPLAYED`). Cache
+  separate per sorgente (`outlookEvents` e `googleEvents`, ciascuna da
+  `MAX_EVENTS_DISPLAYED` eventi, quindi 6 sul 9.7"); al rendering le due cache sono
+  fuse, ordinate per `startUtc` e ritagliate agli eventi più vicini all'orario attuale.
   Gli eventi già terminati (`endUtc` passato) si saltano.
   Per riga: titolo a sinistra (troncato), data e orario a destra. Riga rossa se
-  l'evento cade oggi, nera altrimenti.
+  l'evento cade oggi, nera altrimenti. Un titolo vuoto si mostra come `(senza titolo)`.
 - **Fetch**: `Calendar::Outlook` e `Calendar::Google`, namespace gemelli con la
   stessa API (`begin/runFetch`), ognuno un task distinto con la propria cadenza
   (`outl_min` / `goog_min`). Flusso OAuth2 con refresh token, credenziali in
-  `Env.h`; il token si rinfresca con 60 s di anticipo. Gli endpoint sono
-  `graph.microsoft.com/v1.0/me/events?$filter=end/dateTime ge <now>` e
+  `Env.h`; il token si rinfresca con 60 s di anticipo, e il corpo d'errore del token
+  endpoint si logga per al più 512 byte (buffer da 512). Il Bearer si passa con
+  `setAuthorization()`. Gli endpoint sono
+  `graph.microsoft.com/v1.0/me/calendarView?startDateTime=<now>&endDateTime=<now + 30 giorni>`
+  (`Calendar::Outlook::HORIZON_DAYS`), che espande le riunioni ricorrenti nelle singole
+  occorrenze e di cui si scartano gli eventi con `isCancelled`, e
   `googleapis.com/calendar/v3/calendars/primary/events?timeMin=<now>&fields=items(summary,start,end)`:
   un evento in corso resta in lista finchè non termina. `fields=` tiene piccola la
-  risposta anche con eventi dalla descrizione lunga.
+  risposta anche con eventi dalla descrizione lunga. Senza ora valida i fetch dei
+  calendari non partono, e le date fuori range si scartano.
 - Il disegno non dipende dalla rete: senza fetch riuscito la lista mostra i
   placeholder `--`. L'epoch di riferimento per "oggi" è l'orologio di sistema
   quando è sincronizzato, altrimenti `Weather::slots[0].epoch`; senza nessuno dei
@@ -618,7 +642,9 @@ nei tipi minimi che bastano alla risoluzione utile (`Indoor::Sample` pesa 20 byt
 col BME280 che non ha i campi IAQ), e
 il display lo arrotonda ulteriormente (`Indoor::shownTemperature()`, `shownPressure()`
 e `shownIaq()`), così le oscillazioni sotto quella risoluzione non cambiano il frame e
-il driver può saltare il refresh.
+il driver può saltare il refresh. La temperatura mostrata non è mai `-0.0`: fra -0,25 e
+0 °C l'arrotondamento dà uno zero negativo, che `shownTemperature()` riporta a zero
+positivo.
 
 | Grandezza | Risoluzione massima | Accuratezza | Tipo memorizzato | Risoluzione memorizzata | Mostrato sul display |
 |---|---|---|---|---|---|
@@ -687,7 +713,11 @@ oversampling x1 su temperatura, pressione e umidità e filtro IIR spento, il pro
 le tre grandezze. In forced mode ogni 5 minuti il sensore non si scalda da sè: non c'è
 un riscaldatore come quello del gas del BME680, e la temperatura non va compensata.
 Servono le librerie Adafruit BME280 e Adafruit Unified Sensor (Adafruit BusIO c'è già,
-per Adafruit GFX).
+per Adafruit GFX). A ogni `poll()` il firmware rilegge `ctrl_hum` (registro 0xF2): la
+libreria Adafruit tiene la configurazione in una copia software e non si accorge di un
+reset del chip, che porta a zero il sovracampionamento dell'umidità e darebbe un
+valore plausibile ma falso. Se il sensore si è resettato da sè, `poll()` riapplica il
+campionamento e scarta la lettura.
 
 | Grandezza | Risoluzione a x1 | Accuratezza (datasheet Bosch) | Tipo memorizzato | Mostrato sul display |
 |---|---|---|---|---|
@@ -702,8 +732,10 @@ nessun risveglio fino all'apertura della fascia, e niente NVS. La libreria Adafr
 non segnala gli errori I2C, e su un bus guasto restituisce byte non letti: `poll()`
 scarta ogni lettura fuori dal range operativo del datasheet (-40..85 °C,
 300..1100 hPa) e lascia scadere il campione invece di mostrare un valore inventato.
-Il campione scade dopo `INDOOR_SAMPLE_MAX_AGE_MS`, cioè alla terza lettura persa,
-perchè col ciclo interno le letture distano esattamente `CYCLE_S`.
+Il campione scade dopo `INDOOR_SAMPLE_MAX_AGE_MS`, cioè 1,5 periodi, alla seconda
+lettura persa: una lettura persa si tollera con entrambi i sensori, perchè col ciclo
+interno del BME280 le letture distano esattamente `CYCLE_S`, mentre col BME680 il poll
+cade a un periodo più il margine.
 
 **Config hardware** (`INDOOR_I2C_ADDR`, `INDOOR_SDA_PIN`, `INDOOR_SCL_PIN`,
 `INDOOR_I2C_CLOCK_HZ`) in [`Indoor.h`](Indoor.h): default 0x77 / SDA 21 / SCL 16 /
@@ -735,8 +767,8 @@ pairing.
 
 Una sessione MQTT per messaggio (connect, publish QoS 1, PUBACK): dopo il PUBACK la
 connessione **resta aperta e muta**, e la rilascia `Tuya::releaseSession()`, chiamata da
-`wifiOff()` del `.ino` subito dopo lo spegnimento della radio, quindi prima di ogni light
-sleep. Su ogni fallimento `runPublish()` la chiude da sè.
+`wifiOff()` del `.ino` e da `Maintenance::chiudi()` subito dopo lo spegnimento della
+radio, quindi prima di ogni light sleep. Su ogni fallimento `runPublish()` la chiude da sè.
 
 **Perchè la connessione non si chiude a fine publish.** Tuya dichiara offline il
 dispositivo nell'istante in cui la connessione si chiude, sia con un DISCONNECT MQTT
@@ -774,9 +806,11 @@ Device Logs che dopo ogni `Online` non compaia un `Offline` con motivo `client_c
 
 Nessuna libreria da installare: il trasporto è **esp-tls** del core, l'HMAC viene da
 **mbedtls** e il certificato del broker è verificato con il **certificate bundle**
-compilato nel core, quindi non c'è nessun PEM da aggiornare quando Tuya ruota la CA. È
-l'unico modulo che verifica davvero il certificato invece di fare `setInsecure()`: su
-questa connessione transita l'HMAC del DeviceSecret. **Dipende dall'orologio**:
+compilato nel core, quindi non c'è nessun PEM da aggiornare quando Tuya ruota la CA. Su
+questa connessione transita l'HMAC del DeviceSecret, quindi la verifica è obbligatoria;
+le HTTPS dei produttori verificano con lo stesso bundle dove portano segreti, e Tuya, che
+usa esp-tls e non `Net::TlsClient`, non riprende le sessioni TLS (vedi
+[Isolamento dei produttori](#isolamento-dei-produttori)). **Dipende dall'orologio**:
 l'autenticazione firma un timestamp Unix, quindi senza SNTP il publish viene saltato
 senza ritentare.
 
@@ -785,9 +819,14 @@ identifier fuori dal device model o una `scale` diversa da zero su una property 
 (il firmware non applica moltiplicatori: la temperatura è Float, le altre quattro sono
 Value con scale 0) il publish riesce e i valori non compaiono o appaiono scalati
 nell'app. Si verifica in **Device Debugging** sulla console, oppure con
-`TUYA_REQUEST_ACK` a 1 (il valore definito in `Tuya.h`), che aggiunge il campo
-`sys.ack`, sottoscrive il topic di risposta e logga il codice del cloud (`0` =
-accettato). Costa una sottoscrizione e fino a `TUYA_ACK_TIMEOUT_MS` per publish.
+`TUYA_REQUEST_ACK` a 1 (macro di `Tuya.h`, a 0 di default, che il `.ino` imposta a 1),
+che aggiunge il campo `sys.ack`, sottoscrive il topic di risposta e logga il codice del
+cloud (`0` = accettato). Costa una sottoscrizione e fino a `TUYA_ACK_TIMEOUT_MS` per
+publish, e la conferma si chiede solo nei primi `TUYA_ACK_BOOT_PUBLISHES` (3) publish
+dopo il boot, che bastano a verificare il device model: una risposta tardiva arrivata a
+radio spenta verrebbe ritrasmessa dal broker sulla connessione muta, e alla riaccensione
+lo stack risponderebbe con un RST, che Tuya registra come `Offline` con motivo
+`client_closed`.
 
 **Sul pannello** compare solo un badge `TUYA ERR` rosso sul bordo inferiore del
 riquadro Interno quando l'ultimo tentativo speso è fallito. Il modulo non comanda il
@@ -967,10 +1006,10 @@ la cache di 60 s del servizio è sempre scaduta. Senza un contatto negli ultimi
 `RENDER_SPINDOWN_MS` (15 min, dopo i quali render.com spegne l'istanza), cioè in
 pratica al primo ciclo della fascia, il firmware manda una sonda a `/health`, che non
 tocca la Routes API: con l'istanza in avvio il download si rinvia al ciclo dopo, che
-apre con la preparazione, cioè lo stesso URL del download, token compreso (vedi
-[Sonda, sveglia e preparazione](#sonda-sveglia-e-preparazione)). La stessa cache, con
-singleflight, fa sì che il download che segue la preparazione non costi una seconda
-chiamata alla Routes API.
+scarica direttamente (vedi [Sonda, sveglia e preparazione](#sonda-sveglia-e-preparazione)).
+Il percorso non ha una preparazione: l'immagine si genera dentro i 30 s del download, e
+una preparazione più vecchia della cache di 60 s di routefinder farebbe pagare due volte
+la Routes API.
 
 **Cosa disegna il riquadro** (`Routefinder::shownImage()`): l'immagine programmata se il
 buffer in RAM la contiene ed è ancora valida, altrimenti il wallpaper. Il percorso vale
@@ -979,6 +1018,15 @@ fino a 3 × `route_min` dal download (`ROUTE_MAX_AGE_CADENCES`): un tempo stimat
 contenuti della mappa. Il cinema vale se è stato scaricato oggi dopo l'inizio della
 fascia cinema, oppure dopo l'inizio della forzatura a Cinema in corso: l'immagine della
 sera prima non si mostra, anche se il buffer la contiene ancora.
+
+Il disegno lo fa `drawTestBackground(firstPageOfPass)` del `.ino`, chiamata da
+`Weather::detail::drawPage()`: sceglie percorso, cinema o wallpaper alla prima pagina di
+ogni passata del loop paged e usa la scelta per tutte le pagine, quindi un confine di
+fascia a metà frame non divide il riquadro fra due immagini. Lo dipinge con
+`GxEPDImage::showImage(..., GxEPDImage::Paint::InkOnly)`: `showImage()` è un wrapper di
+`GxEPD2_3C::drawInvertedBitmap()`, rosso poi nero sopra, e con `InkOnly` non dipinge il
+bianco perchè la pagina parte già bianca, mentre con `Paint::Opaque` (il default) aggiunge
+un `fillRect()` bianco.
 
 ---
 
@@ -995,6 +1043,8 @@ Il `loop()` ha due rami:
 void setup()
 {
   Serial.begin(115200);
+  LOG("boot", "motivo del riavvio: ...");    // esp_reset_reason() in parole
+  startLoopWatchdog();                       // task watchdog sul loop, LOOP_WDT_TIMEOUT_MS
   Timings::begin();                          // cadenze da NVS, riportate entro i limiti
   Routefinder::begin();                      // impostazioni e fasce del riquadro, validate contro la fascia WiFi
   CinemaStore::begin(Layout::CINEMA_PLANE_SZ);   // buffer in RAM di percorso e cinema, prima che l'heap si frammenti
@@ -1013,6 +1063,7 @@ void setup()
 
 void loop()
 {
+  esp_task_wdt_reset();                          // alimenta il watchdog del loop
   if (Maintenance::finestraAperta())
   {
     Maintenance::servi();                        // macchina a stati + handleClient()
@@ -1041,7 +1092,8 @@ sempre in quest'ordine:
 1. **sensore**: `Indoor::poll()`;
 2. **rete**: una sola accensione della radio per i task dovuti in questo ciclo,
    nell'ordine della tabella, con sonda o preparazione dei server render.com prima
-   dei fetch;
+   dei fetch. Da `wifiOn()` a `wifiOff()` la CPU sta a `NETWORK_CPU_MHZ` (240 MHz),
+   perchè gli handshake TLS sono calcolo a radio accesa;
 3. **frame**: il ridisegno del pannello, sempre, a ogni ciclo della fascia WiFi, con
    i dati appena prodotti.
 
@@ -1080,13 +1132,15 @@ La sequenza dei task di rete sta nella tabella `TASK_TABLE`, l'unico posto dove 
 | `meteo` | `owm_min` | Se arriva la corrente ma non le previsioni lo slot non si chiude: si ritenta al ciclo successivo invece di attendere la cadenza piena. |
 | `google` | `goog_min` | **Sospeso finchè l'orologio non è sincronizzato**: la query filtra da "adesso", e con l'ora finta riporterebbe i primi eventi del calendario invece dei prossimi. |
 | `outlook` | `outl_min` | Stessa precondizione di `google`. |
-| `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso quando il percorso non è l'immagine programmata del riquadro (fuori dalla fascia percorso e da una forzatura a Percorso), senza orologio, arrivo o token. All'ingresso nella fascia lo slot riparte e il task gira al primo ciclo. Dopo meteo e calendari, come il cinema: il suo `onRoundStart()` manda la sonda o la preparazione del server, e il tempo di rete degli altri copre la generazione dell'immagine. Con il server ancora in avvio il download si rinvia al ciclo dopo (vedi [Sonda, sveglia e preparazione](#sonda-sveglia-e-preparazione)). |
-| `cinema` | `cine_min`, solo in fascia cinema | Programmazione cinema dalla webapp. Sospeso quando il cinema non è l'immagine programmata (fuori dalla fascia cinema e da una forzatura a Cinema) e senza orologio, perchè l'istante del download ne decide la validità. Stessa sonda, preparazione e rinvio del percorso; i due non girano mai nello stesso ciclo, perchè le fasce non si sovrappongono. |
+| `route` | `route_min`, solo in fascia percorso | Percorso del mattino da routefinder. Sospeso quando il percorso non è l'immagine programmata del riquadro (fuori dalla fascia percorso e da una forzatura a Percorso), senza orologio, arrivo o token. All'ingresso nella fascia lo slot riparte e il task gira al primo ciclo. Dopo meteo e calendari, come il cinema: il suo `onRoundStart()` manda la sola sonda del server, senza preparazione, perchè l'immagine si genera dentro i 30 s del download. Con il server ancora in avvio il download si rinvia al ciclo dopo (vedi [Sonda, sveglia e preparazione](#sonda-sveglia-e-preparazione)). |
+| `cinema` | `cine_min`, solo in fascia cinema | Programmazione cinema dalla webapp. Sospeso quando il cinema non è l'immagine programmata (fuori dalla fascia cinema e da una forzatura a Cinema) e senza orologio, perchè l'istante del download ne decide la validità. Stessa sonda e stesso rinvio del percorso, più la preparazione dell'immagine, che il percorso non ha: il suo `onRoundStart()` la manda e il tempo di rete degli altri task copre la generazione. I due non girano mai nello stesso ciclo, perchè le fasce non si sovrappongono. |
 | `tuya` | `tuya_min` | Telemetria del sensore Indoor sul cloud Tuya, con il campione letto nello stesso ciclo. Sospeso finchè mancano credenziali, il primo campione o l’orologio sincronizzato: con un solo tentativo per slot, sarebbe perso fino alla cadenza piena, e i suoi fallimenti sono permanenti sulla scala dei minuti. Ultimo perchè la sua sessione TLS (~40 KB) resta aperta fino allo spegnimento della radio, e aperta prima dei download occuperebbe l'heap accanto all'immagine in RAM e alla sessione del download. |
 
 Ingresso e uscita dalle fasce, scadenza del percorso, scadenza di una forzatura e cambio
 di sorgente da `/route` non hanno risvegli propri: `drawTestBackground()` sceglie
-l'immagine del riquadro a ogni frame, quindi il cambio compare al ciclo successivo.
+l'immagine del riquadro alla prima pagina di ogni passata del frame, e la scelta vale
+per tutte le pagine, quindi un confine di fascia a metà frame non divide il riquadro e
+il cambio compare al ciclo successivo.
 
 Layout finale sul pannello SOLUM 9.7" (960w × 672h, valori da `Layout_common.h`
 con la geometria di `Layout_097c.h`). Margine 10 px su ogni lato, 10 px fra zone
@@ -1138,10 +1192,23 @@ I `#define` in testa allo sketch sono:
   partial, soglia di temperatura e distanza massima dall'ultimo frame sono in
   `Timings.h` (`PARTIAL_CHAIN_MAX`, `PARTIAL_MIN_TEMP_C`, `PARTIAL_MAX_GAP_MS`);
 - `DISPLAY_SKIP_UNCHANGED 1` → un frame identico a quello già sul vetro non lancia
-  nessun refresh, né partial né pieno. Indipendente da `DISPLAY_PARTIAL_REFRESH`:
+  nessun refresh, nè partial nè pieno. Indipendente da `DISPLAY_PARTIAL_REFRESH`:
   vale anche per un driver senza il differenziale. A 0 ogni frame va al pannello
   e il driver non calcola nessun CRC. Il log di ogni frame riporta il contatore dei
-  frame invariati del giorno accanto a partial e pieni.
+  frame invariati del giorno accanto a partial e pieni;
+- `TLS_VERIFY 1` → verifica del certificato sulle HTTPS che portano segreti, con il
+  bundle CA del core; a 0 tutte le HTTPS tornano insecure, come uscita di emergenza
+  (vedi [Isolamento dei produttori](#isolamento-dei-produttori));
+- `TLS_SESSION_RESUME 1` → ripresa delle sessioni TLS con i ticket, che salta
+  l'handshake completo; a 0 ogni connessione fa l'handshake completo, per confrontare
+  i tempi;
+- `NETWORK_CPU_MHZ 240` → frequenza della CPU fra `wifiOn()` e `wifiOff()`: gli
+  handshake TLS sono calcolo a radio accesa, e finire prima spegne prima la radio.
+  `wifiOn()` porta la CPU a 240 MHz, con ripiego a 160 se il chip non li accetta
+  (lo logga una sola volta, tag `cpu`); `wifiOff()` la riporta alla frequenza della
+  board (`F_CPU`, 80 MHz da `.vscode/arduino.json`) prima del sonno. Sopra 80 MHz l'APB
+  resta a 80, quindi UART, SPI, I2C e `millis()` non cambiano. La finestra di
+  manutenzione, che non passa da `wifiOn()`, resta a 80 MHz.
 
 Le cadenze vivono in [`Timings.h`](Timings.h), insieme al **pavimento** di ciascuna, e
 sono modificabili a runtime dalla pagina `/config` della finestra di manutenzione
@@ -1177,9 +1244,9 @@ di `/config`, vedi [Tempi da riga di comando](#maintenance-maintenanceh).
 | Chiave | Default | Pavimento | Passo | Unità | Effetto |
 |---|---|---|---|---|---|
 | `owm_min` | `10` | `10` | `5` | min | Cadenza One Call 3.0, un frame sì e uno no. Il pavimento è la cadenza con cui OWM aggiorna i dati; il limite duro è la quota di 1000 chiamate/giorno. |
-| `outl_min` | `10` | `5` | `5` | min | Cadenza Microsoft Graph `/me/events`. Nessun pavimento sui dati, ma sotto un ciclo il fetch non verrebbe mostrato prima del successivo. |
+| `outl_min` | `10` | `5` | `5` | min | Cadenza Microsoft Graph `/me/calendarView`. Nessun pavimento sui dati, ma sotto un ciclo il fetch non verrebbe mostrato prima del successivo. |
 | `goog_min` | `10` | `5` | `5` | min | Cadenza Google Calendar API v3. |
-| `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il ciclo, cioè il periodo di campionamento del sensore: sotto, si ripubblica lo stesso campione. |
+| `tuya_min` | `5` | `5` | `5` | min | Cadenza del publish TuyaLink. Il pavimento è il ciclo, cioè il periodo di campionamento del sensore: sotto, si ripubblica lo stesso campione. Il massimo è 25 minuti, il multiplo del ciclo più grande sotto 1,5 volte `TUYA_KEEPALIVE_S`. |
 | `maint_min` | `3` | `1` | `1` | min | Durata della finestra di manutenzione. |
 | `wifi_h_ini` | `7` | `0` | `1` | ora | Inizio della fascia in cui la radio si accende e il pannello si ridisegna. Fuori, cioè di notte, solo il sensore. |
 | `wifi_h_fin` | `23` | `23` max | `1` | ora | Fine della fascia, inclusiva fino a `23:59`. |
@@ -1213,8 +1280,10 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `ROUTE_MAX_AGE_CADENCES` | `3` | Età oltre la quale un percorso non si mostra, in multipli di `route_min`: poi il riquadro torna al wallpaper. |
 | `SOURCE_OVERRIDE_MS` | 1 h | Durata di una sorgente del riquadro forzata da `/route`, misurata su `millis()`; poi torna Automatica. Limita anche le chiamate a routefinder fuori dalla fascia percorso. |
 | `TLS_HANDSHAKE_TIMEOUT_S` | `15` s | Tetto dell'handshake di ogni connessione HTTPS, applicato da `Net.h`. Il default del core è 120 s, e un server bloccato fermerebbe tutti i produttori successivi. |
+| `HTTP_BODY_DEADLINE_MS` | `60000` ms | Scadenza totale della lettura di un corpo HTTP, applicata da `Net::BodyStream`: il timeout del client vale per ogni lettura senza dati, quindi un server che manda un byte alla volta lo terrebbe aperto all'infinito. |
+| `LOOP_WDT_TIMEOUT_MS` | `120000` ms | Timeout del task watchdog del loop, che scatta con panic, coredump e riavvio. Il loop lo alimenta a ogni task dello scheduler, a ogni blocco di un corpo HTTP, nelle attese del BUSY e della STA e a ogni blocco degli upload; una `static_assert` tiene sotto questo valore il tratto più lungo fra due alimentazioni, cioè un fetch lento ma ancora nei suoi timeout. |
 | `WIFI_FAST_CONNECT_TIMEOUT_MS` | `5000` ms | Tentativo di connessione su canale e BSSID dell'ultima connessione, prima del ripiego sulla scansione completa. |
-| `INDOOR_SAMPLE_MAX_AGE_MS` | 2 × 300 s + 1 s | Età oltre la quale il campione del sensore non si mostra nè si pubblica: tollera un campione perso. |
+| `INDOOR_SAMPLE_MAX_AGE_MS` | 1,5 × 300 s (450 s) | Età oltre la quale il campione del sensore non si mostra nè si pubblica: tollera una lettura persa con entrambi i sensori. |
 | `WEATHER_MAX_AGE_S` | `3600` s | Età oltre la quale il meteo in cache diventa `--`. |
 | `CLOCK_RESYNC_INTERVAL_MS` | 1 h | Distanza minima fra due risincronizzazioni SNTP forzate all'apertura della radio. |
 | `CLOCK_RECOVERY_CYCLES` | `2` cicli | Con l'ora non valida e nessun task dovuto, cicli fra due accensioni della radio fatte dallo scheduler solo per riprendere l'ora. |
@@ -1226,7 +1295,8 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `TUYA_CONNECT_TIMEOUT_MS` | `8000` ms | Attesa del CONNACK del broker Tuya, handshake TLS compreso. |
 | `TUYA_PUBACK_TIMEOUT_MS` | `3000` ms | Attesa del PUBACK dopo il publish in QoS 1: è l'unico segnale di consegna disponibile prima di tornare a dormire. Vale anche come attesa del resto di un pacchetto iniziato. |
 | `TUYA_ACK_TIMEOUT_MS` | `2000` ms | Attesa della conferma applicativa del cloud, pagata solo con `TUYA_REQUEST_ACK` a 1. |
-| `TUYA_KEEPALIVE_S` | `1200` s | Keepalive dichiarato nel CONNECT: il broker tiene il dispositivo online per 1,5 volte questo valore dall'ultimo traffico. 1200 è il massimo ammesso da Tuya (30..1200); la cadenza `tuya_min` deve restare sotto i 30 minuti, altrimenti il dispositivo risulta offline fra un publish e il successivo. |
+| `TUYA_ACK_BOOT_PUBLISHES` | `3` | Publish dopo il boot che chiedono la conferma del cloud, con `TUYA_REQUEST_ACK` a 1: bastano a verificare il device model, e una risposta arrivata a radio spenta farebbe rispondere lo stack con un RST alla riaccensione (`Offline` con motivo `client_closed`). |
+| `TUYA_KEEPALIVE_S` | `1200` s | Keepalive dichiarato nel CONNECT: il broker tiene il dispositivo online per 1,5 volte questo valore dall'ultimo traffico. 1200 è il massimo ammesso da Tuya (30..1200); il massimo di `tuya_min` è 25 minuti, il multiplo del ciclo più grande sotto 1,5 volte il keepalive, altrimenti il dispositivo risulta offline fra un publish e il successivo. |
 | `SLEEP_MAX_S` | 24 h | Tetto di sicurezza di un light sleep. Con il sensore lo sleep dura fino alla sua scadenza esatta, senza pavimento; il tetto serve alla notte senza sensore, che dorme fino all'apertura della fascia. |
 | `BSEC_MARGINE_POLL_MS` | `1000` ms | Il poll del sensore cade questo margine dopo i 300 s, mai prima: lo 0,3% del periodo, dentro il 6,25% che BSEC tollera. |
 | `BSEC_PERIODO_ULP_S` | `300` s | Cadenza di campionamento del BME680. **Non è un intervallo**, è il modo con cui BSEC è sottoscritto: gli altri sono LP (3 s) e CONT (1 s). Fissa `CYCLE_S` anche col BME280, che non ha vincoli propri. |
@@ -1234,9 +1304,10 @@ in [`Timings.h`](Timings.h) come `#define`, senza override a runtime.
 | `MAINT_STA_TIMEOUT_S` | `15` s | Attesa della rete di casa prima di ripiegare sull'AP di emergenza. |
 | Token margin OAuth | `60` s | `Calendar.h`: refresh anticipato del token Outlook/Google. |
 
-### Flusso al boot — finestra di manutenzione aperta
+### Flusso al boot con la finestra di manutenzione aperta
 
-`setup()` carica le cadenze da NVS (`Timings::begin()`), inizializza i
+`setup()` logga il motivo del riavvio (tag `boot`), arma il task watchdog del
+loop, carica le cadenze da NVS (`Timings::begin()`), inizializza i
 moduli, avvia la STA e il server (`Maintenance::begin()`) e registra la
 tabella dei task. Da qui il `loop()` gira ogni ~10 ms, senza light sleep,
 altrimenti il `WebServer` non risponderebbe. Fuori dalla fascia WiFi con l'ora già
@@ -1273,7 +1344,7 @@ e, scoperta la notte, non fa nè fetch nè frame. Il log scrive al primo frame i
 STA e ora, l'esito del passo e la validità degli slot meteo; a `LOG_LEVEL` 2, il
 valore del `.ino`, anche heap e stack dopo ogni giro con lavoro.
 
-### Flusso a regime — finestra chiusa
+### Flusso a regime con la finestra chiusa
 
 `Maintenance::chiudi()` consegna la radio spenta. Il `loop()` diventa:
 
@@ -1296,7 +1367,12 @@ Proprietà del ciclo:
 - **un risveglio per ciclo**: nessun anticipo, nessun ritento a 30 s, nessun risveglio
   ai bordi della fascia percorso;
 - **di notte** (fuori dalla fascia) solo il passo del sensore, ogni ~301 s, il minimo
-  che conserva l'accuratezza di BSEC; senza sensore, un solo sonno fino all'apertura.
+  che conserva l'accuratezza di BSEC; senza sensore, un solo sonno fino all'apertura;
+- **CPU a 240 MHz solo a radio accesa**: `wifiOn()` porta la CPU a `NETWORK_CPU_MHZ`,
+  `wifiOff()` la riporta a 80 MHz prima del sonno, e la finestra di manutenzione resta
+  a 80 MHz;
+- **watchdog del loop**: il loop lo alimenta a inizio `loop()` e lungo i tratti lenti,
+  e un tratto fermo oltre `LOOP_WDT_TIMEOUT_MS` produce coredump e riavvio.
 
 Ogni esito è loggato con durata e prossimo slot:
 
@@ -1319,9 +1395,9 @@ Ogni esito è loggato con durata e prossimo slot:
 | `wifiOn()` fallito | Nessun tentativo speso, il frame del ciclo si disegna comunque con i dati in cache | Al ciclo successivo |
 | Calendario (eventi 401) | Reset del token in cache del calendario: il refresh si ripara da solo, cache degli eventi preservata | Al ciclo successivo |
 | Calendario senza eventi futuri | Cache **azzerata**: è una risposta valida, non un errore, e il frame del ciclo la mostra | Alla cadenza piena |
-| Cinema o percorso, errore prima del corpo (connessione, HTTP diverso da 200, `Content-Length` sbagliato) | Il buffer in RAM non si apre: l'immagine precedente resta valida e a schermo finchè la sua validità lo consente | Al ciclo successivo, poi alla cadenza (`cine_min` o `route_min`) |
-| Cinema o percorso, corpo interrotto | L'immagine nel buffer non vale più: il riquadro mostra il wallpaper fino al download successivo | Al ciclo successivo, poi alla cadenza |
-| Buffer in RAM non allocabile (heap insufficiente) | Download non avviato, log `buffer non allocabile`; il riquadro mostra il wallpaper | L'allocazione si ritenta prima di ogni download: il riquadro non si disattiva |
+| Cinema o percorso, errore prima del corpo (connessione o TLS, HTTP diverso da 200, `Content-Length` sbagliato) | Il buffer in RAM non si apre: l'immagine precedente resta valida e a schermo finchè la sua validità lo consente; il motivo TLS di una richiesta fallita prima della risposta si logga (tag `tls`) | Al ciclo successivo, poi alla cadenza (`cine_min` o `route_min`) |
+| Cinema o percorso, corpo interrotto (anche oltre `HTTP_BODY_DEADLINE_MS`) | L'immagine nel buffer non vale più: il riquadro mostra il wallpaper fino al download successivo | Al ciclo successivo, poi alla cadenza |
+| Buffer in RAM non allocabile (heap insufficiente) | Download non avviato, prima della GET e dell'handshake e senza invalidare l'immagine valida (`CinemaStore::ensureAllocated()`), log `buffer non allocabile`; il riquadro mostra il wallpaper | L'allocazione si ritenta prima di ogni download: il riquadro non si disattiva |
 | Wallpaper assente o partizione mancante | Il riquadro mostra il wallpaper predefinito del firmware ([wallpaper/img_great_wave.h](wallpaper/img_great_wave.h)) | Al caricamento da `/wallpaper`; senza partizione, dopo un flash via seriale con `partitions.csv` |
 | Tuya (broker, credenziali, PUBACK mancante) | Badge `TUYA ERR` rosso sul bordo inferiore del riquadro Interno, nel frame del ciclo. Nessun effetto sul resto del firmware | Alla cadenza piena `tuya_min`: nessun ritento |
 | BME680 o BME280 (init failed) | Lo scheduler non interroga il sensore (`Indoor::attivo()` falso) e il ciclo diventa interno, ogni `CYCLE_S`; riquadro Interno a `--` | Mai (richiede reboot dopo aver risolto il cablaggio I2C) |
@@ -1385,14 +1461,20 @@ webapp [`webapp/`](webapp/) (vedi [webapp/README.md](webapp/README.md) per l'API
    `CINEMA_ORIGIN` è nel `.ino` ed è l'unico punto con il dominio. Larghezza, altezza e
    piani non possono divergere dal buffer, perchè vengono dalle stesse costanti.
 3. **Download**: `downloadImageToStore()`, comune a cinema e percorso, chiude prima
-   l'eventuale sessione Tuya rimasta aperta nella finestra di manutenzione, poi fa la
-   GET con `CINEMA_HTTP_TIMEOUT_MS`. Il buffer si apre con `CinemaStore::beginWrite()`
-   solo dopo status 200 e `Content-Length` pari a `CINEMA_TOTAL_SZ`, quindi un errore
-   prima del corpo lascia valida l'immagine precedente.
-4. **Lettura**: `Net::BodyStream::readBytes()` a blocchi da 1 KB su stack, copiati nei
-   piani con `CinemaStore::writeChunk()`, che passa dal piano nero al piano colore a
-   metà strada, attendendo le pause fra i blocchi del corpo fino a
-   `CINEMA_HTTP_TIMEOUT_MS` senza dati. Il formato binario è header-less (vedi
+   l'eventuale sessione Tuya rimasta aperta nella finestra di manutenzione, poi alloca i
+   piani con `CinemaStore::ensureAllocated()`, senza invalidare l'immagine valida: con
+   l'heap che non li contiene il server non genera un'immagine che non si potrebbe
+   ricevere. Poi fa la GET con `CINEMA_HTTP_TIMEOUT_MS`; il certificato si verifica solo
+   per il percorso, che porta il token, mentre il cinema è insecure. Il buffer si apre
+   con `CinemaStore::beginWrite()` solo dopo status 200 e `Content-Length` pari a
+   `CINEMA_TOTAL_SZ`, quindi un errore prima del corpo lascia valida l'immagine
+   precedente.
+4. **Lettura**: `Net::readBodyInto()` legge il corpo a blocchi da 1 KB su stack, in una
+   funzione separata e non inline perchè il blocco non pesi sullo stack durante
+   l'handshake, e li passa a `CinemaStore::writeChunk()`, che passa dal piano nero al
+   piano colore a metà strada. Attende le pause fra i blocchi del corpo fino a
+   `CINEMA_HTTP_TIMEOUT_MS` senza dati, e al più `HTTP_BODY_DEADLINE_MS` in tutto. Il
+   formato binario è header-less (vedi
    [webapp/README.md → Formato binario `/cinema/arduino`](webapp/README.md#formato-binario-cinemaarduino)):
    zero parsing lato ESP32, il body HTTP è già nella rappresentazione attesa dal driver.
    Un corpo interrotto invalida l'immagine (`abortWrite()`), e il riquadro mostra il
@@ -1425,25 +1507,30 @@ del passo di rete:
   trova su;
 - **altrimenti, sonda su `/health`**, aperto su entrambi i server e senza lavoro nè API
   a pagamento a monte, abbandonata dopo `CINEMA_PREWARM_TIMEOUT_MS`. Con 200 il server
-  è sveglio e si passa subito alla preparazione. Con `-11` o con un altro codice la
-  richiesta è arrivata a render, che si avvia: la sveglia è registrata e il `run()` del
-  task ritorna `DEFERRED`, così lo slot si apre senza spendere tentativi e il download
-  parte al ciclo dopo. Un errore prima dell'invio non dice niente del server;
-- **server svegliato da almeno `RENDER_SPINUP_MS`**: preparazione, cioè una richiesta
-  all'URL dell'immagine abbandonata dopo `CINEMA_PREWARM_TIMEOUT_MS`. A istanza su la
-  richiesta arriva all'app, che finisce di generare l'immagine anche dopo la
-  disconnessione, mentre l'ESP32 fa meteo e calendari; il download la trova pronta o
-  si aggancia allo stesso calcolo (singleflight della cache). Per il percorso non
-  costa una chiamata in più alla Routes API: routefinder tiene il calcolo in cache per
-  60 s.
+  è sveglio e il cinema passa subito alla preparazione, mentre il percorso si ferma alla
+  sonda. Con `-11` o con un altro codice la richiesta è arrivata a render, che si avvia:
+  la sveglia è registrata e il `run()` del task ritorna `DEFERRED`, così lo slot si apre
+  senza spendere tentativi e il download parte al ciclo dopo. Un errore prima dell'invio
+  non dice niente del server;
+- **server svegliato da almeno `RENDER_SPINUP_MS`**: per il cinema la preparazione, cioè
+  una richiesta all'URL dell'immagine abbandonata dopo `CINEMA_PREWARM_TIMEOUT_MS`. A
+  istanza su la richiesta arriva all'app, che finisce di generare l'immagine anche dopo
+  la disconnessione, mentre l'ESP32 fa meteo e calendari; il download la trova pronta o
+  si aggancia allo stesso calcolo (singleflight della cache). Il percorso non ha la
+  preparazione: si genera in pochi secondi dentro l'attesa del download, e una
+  preparazione più vecchia della cache di 60 s di routefinder farebbe pagare due volte la
+  Routes API, quindi il suo `onRoundStart()` fa solo la sonda.
 
 L'URL dell'immagine non fa da sonda: a cache vuota la generazione supera l'attesa della
 risposta anche a istanza su, e "immagine in preparazione" sembrerebbe "istanza spenta".
-Contatto e sveglia si registrano all'istante di invio della richiesta, così l'età
-calcolata non è mai minore dell'inattività che misura render. Su TLS il
+Una risposta 5xx non conta come contatto con l'app, perchè può essere del proxy di
+render.com durante un deploy o l'avvio e non prova che l'istanza sia su: conta solo un
+codice fra 1 e 499. Contatto e sveglia si registrano all'istante di invio della richiesta,
+così l'età calcolata non è mai minore dell'inattività che misura render. Su TLS il
 fire-and-forget puro non esiste: la richiesta parte solo a handshake completo, che ha
-il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`. Il meccanismo non dipende da scheduler
-esterni, quindi è immune a DST e a deriva di cron.
+il tetto comune `TLS_HANDSHAKE_TIMEOUT_S`, e sonda e preparazione non verificano il
+certificato perchè non portano segreti. Il meccanismo non dipende da scheduler esterni,
+quindi è immune a DST e a deriva di cron.
 
 ### Wallpaper in flash
 
@@ -1543,8 +1630,8 @@ resta spenta e non si contattano API esterne, Tuya compreso. Il percorso
 24 richieste al giorno con la fascia 07:00-09:00, contro 5 000 gratuite al mese dello
 SKU Compute Routes Pro. Una forzatura a Percorso da `/route` ne aggiunge al più 12, una
 per ciclo per `SOURCE_OVERRIDE_MS`. La sonda su `/health` non tocca la Routes API, e
-la preparazione non aggiunge chiamate perchè routefinder tiene il calcolo in cache per
-60 s e il download arriva prima.
+il percorso non ha una preparazione che ne aggiunga: la generazione sta nei 30 s del
+download.
 
 ---
 
@@ -1659,11 +1746,12 @@ Windows) oppure `python tools/epd_image_converter.pyw`.
 
 ## Crediti
 
-- [GxEPD2](https://github.com/ZinggJM/GxEPD2) by Jean-Marc Zingg —
+- [GxEPD2](https://github.com/ZinggJM/GxEPD2) by Jean-Marc Zingg:
   libreria base su cui si innesta il driver custom.
-- [image2cpp](https://javl.github.io/image2cpp/) — convertitore web
+- [image2cpp](https://javl.github.io/image2cpp/): convertitore web
   compatibile con il formato 1bpp B/N accettato da
-  `showImage(const uint8_t*, w, h, ...)`.
+  `GXEPD_BW_IMAGE(ptr, w, h)`, la macro che lo avvolge in un descrittore per
+  `GxEPDImage::showImage()`.
 - Datasheet SSD1677 del controller SOLUM/GDEM133Z91.
 
 ---

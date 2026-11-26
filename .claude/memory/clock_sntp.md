@@ -100,9 +100,10 @@ appartiene a nessuno dei due.
   stessa proprietà poggia la regola notturna del `setup()`: con l'ora valida fuori
   dalla fascia WiFi la finestra di manutenzione non si apre (vedi
   [[scheduler_task_table]]).
-- **Soglia 1700000000 e non 100000**: quest'ultima corrisponde a 27,7 h di
-  uptime, oltre le quali un clock mai sincronizzato diventa indistinguibile da
-  uno valido.
+- **Soglia 1700000000, molto alta di proposito**: prima di SNTP `time()` restituisce
+  l'uptime contato dal 1970, che con `TIME_VALID_EPOCH_MIN` = 1700000000 non la raggiunge
+  in tempi utili, quindi un orologio non sincronizzato non diventa mai indistinguibile da
+  un'ora reale. Una soglia come 100000 s verrebbe superata dopo 27,7 h di uptime.
 
 ## Chi dipende dall'ora assoluta
 
@@ -117,7 +118,8 @@ appartiene a nessuno dei due.
   orologio non valido e le query filtrerebbero da `1970-01-01T00:00:00Z`:
   ordinando per data il device riceverebbe i **primi** eventi del calendario
   invece dei prossimi, con una risposta HTTP 200 che lo scheduler
-  registrerebbe come successo, chiudendo lo slot per la cadenza piena. Con la
+  registrerebbe come successo, chiudendo lo slot per la cadenza piena (i due fetch,
+  comunque, non partono senza ora valida e tornano false). Con la
   precondizione il task resta sospeso, lo slot intatto, e diventa dovuto da sè
   appena l'ora è vera.
 - `Tuya::readyToPublish()` e `Tuya::runPublish()`: TuyaLink firma un timestamp

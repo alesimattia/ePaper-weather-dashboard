@@ -41,7 +41,11 @@ non viene dalla libc, per il motivo nella sezione qui sotto.
 ## Come sono costruiti
 
 `stub/` contiene il minimo indispensabile di piattaforma: `Arduino.h`,
-`Preferences.h`, `WiFi.h`, `esp_sleep.h`, per CinemaStore `esp_heap_caps.h`
+`Preferences.h` (le `put*()` ritornano i byte scritti come quelle vere, e
+`Preferences::scritturaFallisce` inietta un errore di scrittura, su tutte le chiavi
+o solo su `chiaveCheFallisce`), `WiFi.h`, `esp_sleep.h`, `esp_task_wdt.h` (non fa
+niente ma conta le chiamate, `g_wdtResets`, perchè `Scheduler.h` lo include e alimenta
+il watchdog del loop), per CinemaStore `esp_heap_caps.h`
 (allocazioni su `malloc()`, che il test può far fallire con `g_heapEsaurito`), e per
 Tuya `esp_tls.h`, `esp_crt_bundle.h` (che esiste solo perchè `Tuya.h` lo include per
 nome), `mbedtls/md.h`, `lwip/sockets.h`; **nient'altro**. Gli header del
@@ -85,7 +89,11 @@ di un valore diventato illegale perchè un aggiornamento ha alzato il pavimento,
 con riscrittura; cadenza fuori
 dal passo del ciclo respinta con il motivo e, se arriva da NVS, portata al
 multiplo successivo; schema precedente che azzera il namespace; NVS non
-disponibile; schema assente; ripristino dei predefiniti.
+disponibile; schema assente; ripristino dei predefiniti; tetto della cadenza Tuya a
+25 minuti, ricavato dal keepalive, con un valore oltre il tetto respinto da
+`applica()` e riportato al tetto al boot; campione del sensore che scade al secondo
+campione perso per entrambi i sensori; `save()` che ritorna false se una `put*()`
+non scrive, su ogni chiave o su una sola, completando al tentativo successivo.
 
 **`test_scheduler`**: interpretazione della stringa POSIX del fuso e le due
 ore patologiche del cambio (quella inesistente di marzo e quella ripetuta di
@@ -111,8 +119,11 @@ l'ora che arriva dopo i 15 s dal boot, mai, o in piena notte, e con i task che
 dipendono dall'ora nello stesso passo prima del frame; nessun secondo tentativo
 nello stesso ciclo, sia nella finestra di manutenzione (fallimento al boot con il
 frame subito, doppio fallimento, `maxAttempts` a 0, STA giù al ciclo del ritento)
-sia con la radio dello scheduler (nessuna attesa dentro il passo, radio caduta al
-fallimento, due task falliti nello stesso passo); ciclo interno senza sensore;
+sia con la radio dello scheduler (nessuna attesa dentro il passo, due task falliti
+nello stesso passo); radio caduta durante il task, che registra il fallimento come
+saltato (nessun ritento, slot intatto, nessun tentativo speso) e lascia il task
+dovuto al ciclo con la radio su; watchdog del loop alimentato prima di ogni task
+eseguito; ciclo interno senza sensore;
 sensore senza scadenza propria (BME280, `msUntilSensorPoll` assente): ciclo
 interno con la lettura in testa, nessuna lettura nè risveglio di notte, lettura
 prima del frame alla riapertura della fascia;
@@ -123,14 +134,20 @@ sincronizzato; cambio dell'ora legale.
 decimali oltre il sesto, fuori range, forme malformate); URL con coordinate
 negative; round-trip su NVS di arrivo, carburante e fascia cinema; fasce vuote,
 rovesciate, fuori dalla fascia WiFi o sovrapposte respinte, e ritorno ai default
-al boot quando la fascia WiFi non contiene più le fasce; immagine programmata
+al boot quando la fascia WiFi non contiene più le fasce, con la destinazione e il
+carburante salvati che si conservano, e il contrario, coordinate fuori range che
+tornano ai default senza toccare le fasce; `save()` che segnala una scrittura non
+riuscita; immagine programmata
 nelle fasce ai minuti con fine esclusa e senza orologio; immagine mostrata
 (`shownImage()`) con il percorso entro e oltre 3 cadenze, il cinema di oggi e
 quello della sera prima, il buffer che contiene l'altra immagine o niente;
 forzatura a Cinema fuori fascia, che mostra solo un cinema scaricato dopo il suo
 inizio e scade dopo `SOURCE_OVERRIDE_MS` (un millisecondo prima ancora attiva);
 forzatura a Percorso fuori fascia, a Wallpaper dentro la fascia percorso, e
-Automatica che annulla la forzatura. Il test dichiara da sè le coordinate con
+Automatica che annulla la forzatura; percorso con un'età negativa di pochi secondi,
+come dopo una correzione SNTP all'indietro, valido fino a 60 s; cinema sotto
+forzatura dopo 24,8 giorni di uptime, dove la differenza signed fra due istanti di
+`millis()` cambierebbe segno e un download vecchio passerebbe per recente. Il test dichiara da sè le coordinate con
 `ROUTEFINDER_HOST_TEST`: con le virgolette l'include di `Env.h` troverebbe sempre
 quello vero accanto agli header del firmware.
 
@@ -141,7 +158,9 @@ cavallo fra piano nero e piano colore e i byte verificati in entrambi; immagine
 valida solo dopo il commit di un corpo completo, con tipo, epoch e `millis()` del
 download; nessuna scrittura fuori da un download nè oltre la misura; immagine
 precedente invalidata dall'inizio di un nuovo download, commit di un corpo
-interrotto rifiutato, `abortWrite()` che lascia il buffer vuoto.
+interrotto rifiutato, `abortWrite()` che lascia il buffer vuoto; `ensureAllocated()`
+che con l'heap esaurito ritorna false senza avviare nessuna scrittura, alloca i piani
+quando l'heap torna senza invalidare niente, e con un'immagine valida non la tocca.
 
 **`test_tuya`**: il client MQTT di `Tuya.h` contro un `esp-tls` finto
 ([`stub/esp_tls.h`](stub/esp_tls.h)) che fa da broker scriptabile e un
@@ -156,7 +175,13 @@ username, password), SUBSCRIBE e PUBLISH, con il payload identico a quello che
 il cloud ha accettato nella prova dal vivo; CONNACK rifiutato, broker muto con
 i timeout rispettati, PUBACK per un altro packet id, connessione chiusa a metà,
 handshake fallito, campione non valido; letture di un byte alla volta con
-`WANT_READ` e pacchetti più grandi del buffer. Gira tre volte: con
+`WANT_READ` e pacchetti più grandi del buffer. La conferma applicativa del cloud si
+chiede solo nei primi `TUYA_ACK_BOOT_PUBLISHES` publish dopo il boot (`sys.ack`,
+SUBSCRIBE e attesa), mai più oltre e mai con `TUYA_REQUEST_ACK` a 0, perchè una
+risposta arrivata a radio spenta fa registrare a Tuya un Offline `client_closed`; il
+`code` della risposta si cerca nel corpo intero e non nella copia troncata per il
+log; il SUBACK si controlla per packet id e return code (0x80 = rifiutato, senza
+attendere la conferma e senza bloccare la telemetria). Gira tre volte: con
 `TUYA_REQUEST_ACK` a 1 e a 0, perchè i due rami hanno sequenze diverse, e con
 `INDOOR_SENSOR_BME280`, che pubblica 3 property invece di 5. Il test dichiara da
 sè le guardie di `Env.h`, `Indoor.h` e `Net.h`, che veri tirerebbero dentro
@@ -174,12 +199,36 @@ completo, invalido dopo il commit di un frame incompleto), l'accumulo chiuso dop
 commit, il confronto spento e l'altezza coperta.
 `test_partial` copre anche l'esito `Unchanged`: contatori a parte, ultimo frame
 aggiornato, partial ancora ammesso a un ciclo di distanza, e il trait del salto
-con driver finti (con o senza differenziale, con l'API completa o a metà).
+con driver finti (con o senza differenziale, con l'API completa o a metà). Copre
+poi l'isteresi del freddo, che solo `TooCold` arma e solo `Partial` disarma, il
+motivo finale del frame dall'esito di `GxEPDFrame::render()` (`finalReason()`) e
+l'uscita anticipata dalla passata armata: mask con la sola prima pagina
+rifiutata, frame pieno successivo che riscrive tutte le pagine e ricostruisce il
+riferimento.
+
+**`test_showimage`**: `GxEPDImage::showImage()`
+([`GxEPDImage.h`](../GxEPD2_SOLUM_ESL/src/GxEPDImage.h)) come wrapper di
+`drawInvertedBitmap()`, con un display finto che ne replica l'algoritmo e lo stub
+`GxEPD2_EPD.h` (colori, `min`, `max`, `pgm_read_byte`). Copre `Paint::InkOnly`,
+che dipinge solo l'inchiostro con il nero sopra il rosso e lascia la pagina com'è
+sul bianco, `Paint::Opaque`, che è il default e dipinge anche il bianco, il salto
+delle righe sopra la pagina con il page-hint e l'offset dei due piani, e
+un'immagine B/N senza piano rosso.
+
+**`test_tlscache`**: la cache delle sessioni TLS ([`TlsSessionCache.h`](../TlsSessionCache.h)),
+senza mbedTLS. Copre sessioni distinte per host e per modo di verifica, la
+sessione valida solo dopo `commit()`, lo scarto oltre la capacità, la
+sostituzione della meno usata, il riuso dello slot dello stesso host, l'oblio dopo
+un handshake fallito e un nome di host troppo lungo.
 
 ## Cosa NON coprono
 
 Tutto ciò che richiede l'hardware: rendering del pannello, fetch HTTP reali,
-sensore (BME680 o BME280), radio, upload del firmware e del wallpaper con la scrittura della
-partizione ([`WallpaperStore.h`](../WallpaperStore.h)), e per Tuya la rete, il TLS e
-la verifica del certificato. Per quelli vale il collaudo sul
+sensore (BME680 o BME280, compreso il controllo di `ctrl_hum` del BME280),
+radio, upload del firmware e del wallpaper con la scrittura della
+partizione ([`WallpaperStore.h`](../WallpaperStore.h)), il watchdog del loop reale, e
+per Tuya la rete, il TLS e la verifica del certificato. Non si compila su host
+nemmeno [`Calendar.h`](../Calendar.h), che include display, `HTTPClient` e
+ArduinoJson: la validazione delle date ISO e la query di `calendarView` si
+verificano sul dispositivo. Per quelli vale il collaudo sul
 dispositivo descritto nel [README](../README.md).

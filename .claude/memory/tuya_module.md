@@ -1,6 +1,6 @@
 ---
 name: Modulo Tuya (TuyaLink su MQTT)
-description: Tuya.h pubblica il sensore Indoor (5 property col BME680, 3 senza IAQ col BME280) su TuyaLink con un client MQTT minimale su esp-tls; la connessione resta aperta dopo il PUBACK e si rilascia a radio spenta perchè Tuya segna offline sulla chiusura; formato accettato dal cloud, device model, catena TLS, diagnostica dai Device Logs, task dello scheduler, badge TUYA ERR
+description: Tuya.h pubblica il sensore Indoor (5 property col BME680, 3 senza IAQ col BME280) su TuyaLink con un client MQTT minimale su esp-tls; INVARIANTE dell'offline: connessione aperta dopo il PUBACK, mai DISCONNECT nè PINGREQ, keepalive 1200, rilascio solo a radio spenta in ogni punto che la spegne (wifiOff e Maintenance::chiudi); conferma del cloud solo nei primi publish dopo il boot; formato accettato, device model, catena TLS, Device Logs, task dello scheduler, badge TUYA ERR
 type: project
 ---
 
@@ -45,15 +45,18 @@ Il modulo non possiede nessun tempo: è una riga della tabella dei task del
   della sera.
 - Radio giù non alza il guasto: lo scheduler registra `SKIPPED` senza chiamare
   `runPublish()`, quindi lo slot resta intatto e il badge non compare.
-- **`wifiOff()` del `.ino` chiama `Tuya::releaseSession()`** subito dopo
-  `WiFi.mode(WIFI_OFF)`: è l'unico punto in cui lo scheduler spegne la radio, e
-  copre anche la guardia "radio ancora accesa" prima del light sleep.
+- **I due punti che spengono la radio chiamano `Tuya::releaseSession()` subito dopo
+  `WiFi.mode(WIFI_OFF)`**: `wifiOff()` del `.ino`, l'unico con cui lo scheduler
+  spegne la radio, che copre anche la guardia "radio ancora accesa" prima del light
+  sleep, e `Maintenance::chiudi()` alla fine della finestra di manutenzione.
 
 Cadenza in `Timings.h` come `tuya_min`, quindi modificabile da `/config` con
 persistenza NVS. **Il pavimento è `BSEC_PERIODO_ULP_S / 60`**, cioè 5 min:
 sotto, la cache di Indoor non ha un campione nuovo da dare e si ripubblica lo
-stesso. **Il tetto utile è sotto i 30 minuti**: oltre, il dispositivo risulta
-offline fra un publish e il successivo (static_assert sul default).
+stesso. **Il tetto è 25 minuti** (`TUYA_PUBLISH_MIN_CEIL`, il massimo del campo
+anche da `/config`): ricavato dallo stesso vincolo dello static_assert sul default,
+cioè un publish ogni meno di 1,5 volte il keepalive, perchè oltre il dispositivo
+risulta offline fra un publish e il successivo.
 `TUYA_CONNECT_TIMEOUT_MS` / `TUYA_PUBACK_TIMEOUT_MS` / `TUYA_ACK_TIMEOUT_MS` /
 `TUYA_KEEPALIVE_S` stanno in `Timings.h`; in `Tuya.h` restano solo i valori che
 non sono tempi (URI del broker, identifier dei DP, `TUYA_REQUEST_ACK`).
@@ -92,9 +95,11 @@ Conseguenze di design:
   il broker vede solo silenzio e il dispositivo resta online fino al publish
   successivo (30 minuti con 1200 s). Prima di ogni light sleep la connessione è già
   rilasciata.
-- Una connessione rimasta aperta (radio mai spenta dallo scheduler, come nella
-  finestra di manutenzione) si chiude all'inizio del `runPublish()` successivo.
-- **Costo**: una sessione TLS (circa 40 KB di heap) resta occupata fino allo
+- Dentro la finestra di manutenzione, dove la radio non si spegne mai, una
+  connessione rimasta aperta si chiude all'inizio del `runPublish()` successivo; alla
+  chiusura della finestra la rilascia `Maintenance::chiudi()`, a radio già spenta.
+- **Costo**: una sessione TLS (circa 42-47 KB di heap: due buffer mbedTLS da 16,7 KB
+  più contesto e catena del broker) resta occupata fino allo
   spegnimento della radio; per questo Tuya è l'ultimo task. Il log
   `[Tuya] connessione tenuta aperta ... heap libero` lo riporta a ogni publish.
 - Nella finestra di manutenzione la radio non si spegne, e la sessione del ciclo
@@ -105,8 +110,38 @@ Conseguenze di design:
   atteso.
 - **Non verificato (solo sul dispositivo)**: che lo spegnimento della radio non faccia
   uscire un FIN o un RST dallo stack lwIP (distruzione dell'interfaccia con socket
-  aperti). Si controlla nei Device Logs: dopo ogni `Online` non deve comparire un
-  `Offline` con motivo `client_closed`.
+  aperti). Nel core `WiFi.disconnect(true, false)` ferma il WiFi (`esp_wifi_stop()`)
+  prima di distruggere i netif, quindi un abort del PCB parte a radio già ferma. Si
+  controlla nei Device Logs: dopo ogni `Online` non deve comparire un `Offline` con
+  motivo `client_closed`, nemmeno dopo la chiusura della finestra di manutenzione.
+
+### Invariante da non rompere
+
+La correzione dell'offline regge su quattro regole, e violarne una riporta il
+dispositivo Offline nell'app (`client_disconnect` o `client_closed` nei Device Logs):
+
+- la connessione non si chiude mai con la radio accesa;
+- nessun DISCONNECT e nessun PINGREQ, keepalive 1200 dichiarato nel CONNECT;
+- Tuya resta l'ultimo task della tabella;
+- ogni punto che spegne la radio esegue `WiFi.disconnect(true, false)`,
+  `WiFi.mode(WIFI_OFF)` e solo dopo `Tuya::releaseSession()`: oggi `wifiOff()` del
+  `.ino` e `Maintenance::chiudi()`. Un punto nuovo che spegne la radio deve fare lo
+  stesso, perchè il rilascio prima dello spegnimento fa uscire il FIN.
+
+Il rilascio in `chiudi()` serve perchè una sessione aperta nella finestra e
+sopravvissuta allo spegnimento verrebbe chiusa dal `runPublish()` successivo con la
+radio di nuovo accesa: se lo stack non avesse già abortito il PCB alla distruzione
+del netif, il FIN uscirebbe proprio allora. L'unica chiusura a radio accesa ammessa è
+quella di `downloadImageToStore()` dentro la finestra, che libera heap al TLS del
+download. Le HTTPS di `Net.h` (meteo, calendari, immagini) usano `WiFiClientSecure` e
+non condividono niente con la sessione esp-tls di Tuya: cambiarne la configurazione
+TLS, verifica o ripresa delle sessioni, non la tocca.
+
+Un rischio analogo viene dalla conferma del cloud: un `report_response` arrivato dopo
+l'attesa, cioè a radio spenta, viene ritrasmesso dal broker sulla connessione muta, e
+alla riaccensione lo stack risponde RST al segmento di un PCB che non esiste più, che
+Tuya registra come `Offline client_closed` prima del nuovo CONNECT (plausibile, non
+misurato). Per questo la conferma si chiede solo dopo il boot, vedi sotto.
 - `esp_tls_conn_destroy()` non invia nessun close_notify (`libesp-tls.a` non riferisce
   `mbedtls_ssl_close_notify`): è solo il FIN TCP.
 
@@ -196,10 +231,14 @@ identifier fuori dal modello (2003), un valore fuori dai limiti o una scale non
 combaciante il publish risulta riuscito e i valori non compaiono nell'app.
 
 Il `report_response` **non arriva di default**: richiede `"sys":{"ack":1}`. Il modulo lo
-implementa sotto `TUYA_REQUEST_ACK` (default 0 in `Tuya.h`; il `.ino` lo alza a 1 per il
-bring-up e va riabbassato a regime, perchè costa fino a 4 s di radio a publish): a 1
+implementa sotto `TUYA_REQUEST_ACK` (default 0 in `Tuya.h`; il `.ino` lo tiene a 1): a 1
+la conferma si chiede solo nei primi `TUYA_ACK_BOOT_PUBLISHES` (3) publish dopo ogni
+boot, contati in RAM, che bastano a vedere un device model disallineato senza esporre
+ogni ciclo al rischio della risposta tardiva descritto nell'invariante. In quei publish
 aggiunge il campo, sottoscrive il topic di risposta attendendo il SUBACK prima di
-pubblicare, e logga il `code` o il corpo intero in caso di rifiuto. Codici: 0 ok, 1003
+pubblicare (controllato su packet id e return code 0x80: un rifiuto si logga e non
+blocca la telemetria), e logga il `code`, cercato nel corpo intero prima del
+troncamento per il log, o il corpo in caso di rifiuto. A 0 non la chiede mai. Codici: 0 ok, 1003
 formato dati, 1004 device inesistente, 2002 modello non definito, 2003 property non
 definita, 2006 verifica dati fallita. Un rifiuto **non alza il badge**: l'esito di
 `runPublish()` resta quello del PUBACK.
@@ -221,9 +260,9 @@ Intermediate CA DV R1v1 → GoDaddy TLS Root CA R1 → Go Daddy Root Certificate
 
 Il bundle del core (`libmbedtls.a`, `esp_crt_bundle_attach`, 112 root CA) contiene Go
 Daddy Root G2, DigiCert Global Root G2 e Starfield Root G2: per questo il modulo usa il
-bundle e non un PEM, che andrebbe rifatto a ogni rotazione di CA. A differenza degli
-altri moduli, che fanno `setInsecure()`, qui la verifica va fatta: su questa connessione
-transita l'HMAC del DeviceSecret.
+bundle e non un PEM, che andrebbe rifatto a ogni rotazione di CA. La verifica va fatta
+perchè su questa connessione transita l'HMAC del DeviceSecret; le HTTPS di `Net.h` usano
+lo stesso bundle, ma da `WiFiClientSecure` e solo dove portano segreti.
 
 ## Cosa offre il core, e i gotcha di esp-tls
 
@@ -238,8 +277,11 @@ Zero librerie da installare, tutto in `esp32-libs/<versione del core>`: `esp-tls
 - `esp_tls_conn_read/write` ritornano `ESP_TLS_ERR_SSL_WANT_READ/WRITE` da riprovare;
   0 in lettura è connessione chiusa.
 - L'handshake gira nello stack del task Arduino, come quello dei `WiFiClientSecure`
-  degli altri moduli, e costa circa 32 KB di heap per sessione
-  (`CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384`, asymmetric non attivo).
+  degli altri moduli, e costa circa 42-47 KB di heap per sessione
+  (`CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384` per due buffer da 16,7 KB, asymmetric non
+  attivo, `CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE` che tiene la catena). esp-tls in
+  questo core non ha la ripresa delle sessioni (`CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS`
+  spento): ogni CONNECT fa l'handshake completo.
 - Un pacchetto in ingresso più grande del buffer di ricezione (384 byte) si legge e si
   scarta, per restare allineati ai pacchetti successivi; il resto di un pacchetto
   iniziato che non arriva fa considerare persa la sessione.
@@ -287,7 +329,9 @@ scriptabile (`test/stub/esp_tls.h`) e un HMAC-SHA256 indipendente
 Controlla il contenuto di CONNECT, SUBSCRIBE e PUBLISH, che non partano mai DISCONNECT
 nè PINGREQ, che la connessione resti aperta dopo il PUBACK e si rilasci senza scrivere
 byte, la chiusura su ogni fallimento, i timeout con broker muto, le letture frammentate
-e i pacchetti oltre il buffer. Il test dichiara da sè le guardie di `Env.h`, `Indoor.h`
+e i pacchetti oltre il buffer; la conferma del cloud solo nei primi publish dopo il
+boot nei due modi di `TUYA_REQUEST_ACK`, il SUBACK rifiutato o con id estraneo, e il
+`code` oltre il troncamento del log. Il test dichiara da sè le guardie di `Env.h`, `Indoor.h`
 e `Net.h`, che veri tirerebbero dentro credenziali, BSEC e `WiFiClientSecure`. Rete, TLS
 e comportamento dello stack lwip allo spegnimento della radio non sono coperti.
 

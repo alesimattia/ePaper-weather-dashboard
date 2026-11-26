@@ -128,6 +128,29 @@ static void verificaImpostazioni()
   ok(Timings::applica(w, nullptr), "fascia WiFi ristretta a 7..22");
   begin();
   ok(get().cinemaStartMin == 18 * 60 && get().cinemaEndMin == 21 * 60, "  fasce tornate ai default al boot");
+  ok(hasDestination() && get().destinationLngE6 == -13300000 && get().fuel == Fuel::Diesel,
+     "  la destinazione e il carburante salvati si conservano");
+
+  // Il contrario: coordinate non valide in NVS tornano ai default da sole e le
+  // fasce salvate restano. Il ripristino dei tempi svuota anche lo stub di NVS.
+  Timings::ripristinaDefault();
+  Settings v = get();
+  v.destinationLatE6 = 43500000; v.destinationLngE6 = -13300000;
+  v.cinemaStartMin = 19 * 60; v.cinemaEndMin = 22 * 60;
+  ok(apply(v, nullptr) && save(), "arrivo e fascia cinema 19:00-22:00 salvati");
+  Preferences::storeInt["orig_lat"] = 95000000;   // latitudine fuori range
+  begin();
+  ok(get().originLatE6 == DEFAULTS.originLatE6 && !hasDestination() && get().fuel == DEFAULTS.fuel,
+     "partenza fuori range: coordinate e carburante tornano ai default");
+  ok(get().cinemaStartMin == 19 * 60 && get().cinemaEndMin == 22 * 60,
+     "  le fasce salvate restano");
+
+  // Una scrittura che non va a buon fine si segnala: le impostazioni restano
+  // attive in RAM ma il chiamante lo sa.
+  ok(save(), "save() con la NVS sana ritorna true");
+  Preferences::scritturaFallisce = true;
+  ok(!save(), "save() con la NVS che rifiuta le scritture ritorna false");
+  Preferences::scritturaFallisce = false;
   Timings::ripristinaDefault();
 }
 
@@ -199,6 +222,27 @@ static void verificaRiquadro()
   ok(scheduledImage() == ShownImage::Wallpaper, "forzatura a Wallpaper alle 08:00: niente percorso");
   setOverride(Source::Auto);
   ok(activeSource() == Source::Auto && scheduledImage() == ShownImage::Route, "Automatica annulla la forzatura");
+
+  // SNTP può riportare indietro l'orologio dopo il download: un percorso con
+  // un'età negativa di pochi secondi vale ancora, un'incoerenza più grande no.
+  const uint32_t adesso = (uint32_t)g_epochFinta;
+  ok(isRouteFresh(adesso + 5), "percorso scaricato 5 s nel futuro (SNTP all'indietro): ancora valido");
+  ok(isRouteFresh(adesso + 60) && !isRouteFresh(adesso + 61), "  la tolleranza è di 60 s");
+  ok(shownImage(ShownImage::Route, adesso + 5, 0) == ShownImage::Route, "  e il riquadro lo mostra");
+
+  // Oltre 24,8 giorni di uptime la differenza signed fra due istanti di millis()
+  // cambia segno: un cinema scaricato all'avvio non deve risultare successivo
+  // all'inizio di una forzatura partita 24,8 giorni dopo.
+  impostaOra(2026, 11, 6, 12, 0);
+  g_msFinto = 100;
+  const uint32_t scaricatoAllAvvio = g_msFinto;
+  g_msFinto = scaricatoAllAvvio + 0x80000000u + 5000u;
+  setOverride(Source::Cinema);
+  ok(!isCinemaFresh(ieriSera, scaricatoAllAvvio),
+     "forzatura a Cinema dopo 24,8 giorni di uptime: il cinema scaricato all'avvio non vale");
+  g_msFinto += 3000;
+  ok(isCinemaFresh(ieriSera, g_msFinto - 1000), "  quello scaricato dopo l'inizio della forzatura sì");
+  setOverride(Source::Auto);
 }
 
 int main()

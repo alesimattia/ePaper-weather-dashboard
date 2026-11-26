@@ -1,6 +1,6 @@
 ---
 name: Sensore Indoor (BME680 o BME280) - selezione, precisione e tipi
-description: un #define in Indoor.h sceglie BME680 (BSEC) o BME280 (Adafruit forced); cosa si spegne col BME280 e come; guasto I2C silenzioso di Adafruit e controllo di range; BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet, i tipi di Indoor::Sample (campi IAQ solo BME680) e le riduzioni solo al display
+description: un #define in Indoor.h sceglie BME680 (BSEC) o BME280 (Adafruit forced); cosa si spegne col BME280 e come; guasto I2C silenzioso di Adafruit, controllo di range con pressione NaN scartata e ctrl_hum riletto a ogni poll per riconoscere un reset del chip; scadenza del campione a un periodo e mezzo; BSEC espone ogni output come float generico; risoluzione e accuratezza da datasheet, i tipi di Indoor::Sample (campi IAQ solo BME680) e le riduzioni solo al display
 type: reference
 ---
 
@@ -33,18 +33,30 @@ type: reference
 
 - `bme.begin(addr, &Wire)` dopo `Wire.begin(SDA, SCL)`: il `Wire.begin()` interno di BusIO
   a bus avviato (core 3.3.12) fa solo `log_w` e non tocca pin nè clock. Poi
-  `setSampling(MODE_FORCED, X1, X1, X1, FILTER_OFF)` (enum membri della classe, vanno
-  qualificati `Adafruit_BME280::`); il default della libreria è normal x16 continuo.
+  `applySampling()`, che imposta `MODE_FORCED`, X1 su temperatura, pressione e umidità e
+  `FILTER_OFF` (enum membri della classe, vanno qualificati `Adafruit_BME280::`); il
+  default della libreria è normal x16 continuo.
 - **Guasto I2C silenzioso**: `read8/read16/read24` ignorano l'esito di
   `write_then_read` e restituiscono il buffer non riempito (byte 0 = indirizzo del
   registro). `takeForcedMeasurement()` ritorna true a bus morto (stato letto 0xF3, bit
   0x08 a zero). La temperatura che ne esce è ~+180 °C: `poll()` scarta letture fuori
-  da −40..85 °C o 300..1100 hPa e chiama `expireIfStale()`. Umidità già limitata 0..100.
+  da −40..85 °C o 300..1100 hPa e chiama `expireIfStale()`. La pressione si scrive come
+  negazione dell'intervallo valido, così anche un NaN viene scartato (ogni confronto con NaN è
+  falso). Umidità già limitata 0..100.
+- **Reset del chip da sè**: la libreria Adafruit non rilegge mai il registro `ctrl_hum`
+  (0xF2) e tiene la configurazione in una copia software. Un reset del sensore riporta a zero
+  il sovracampionamento dell'umidità (umidità saltata), ma la libreria dà NaN sull'umidità solo
+  per la propria configurazione, quindi non se ne accorge e il chip risponde con un valore
+  plausibile ma falso. `poll()` rilegge `ctrl_hum` via Wire a ogni poll, all'indirizzo con cui
+  il sensore è stato avviato: una lettura I2C fallita scarta la lettura; i bit 2..0 diversi da
+  X1 (reset avvenuto) riapplicano il campionamento con `applySampling()` e scartano la lettura,
+  che riparte al ciclo dopo. In entrambi i casi chiama `expireIfStale()`.
 - Forced X1: misura ~10 ms, nessun autoriscaldamento a 1/300 Hz, temperatura non
   compensata. Datasheet: T ±0,5 °C a 25 °C, RH ±3 %RH, P assoluta ±1 hPa e relativa
   ±0,12 hPa; risoluzione a x1: T 0,005 °C, P 2,62 Pa.
 - Col ciclo interno le letture distano esattamente `CYCLE_S`: `INDOOR_SAMPLE_MAX_AGE_MS`
-  (601 s) fa scadere il campione alla terza lettura persa, non alla seconda.
+  (un periodo e mezzo, 450 s) tollera una lettura persa e fa scadere il campione alla seconda,
+  come col BME680, il cui poll cade a un periodo più il margine.
 - Rischio residuo noto: se il bit "measuring" non è ancora alto quando
   `takeForcedMeasurement()` lo legge, si leggono i dati della misura precedente (al più un
   ciclo di ritardo, mai un valore inventato).
@@ -134,8 +146,9 @@ darebbe passi da 2). L'umidità 0-100 e l'accuratezza 0-3 stanno in 8.
 ## Cosa si mostra sul display
 
 Il campione resta ai tipi sopra, e il display lo arrotonda ulteriormente, solo nel disegno
-(`Indoor::shownTemperature()`, `shownPressure()`, `shownIaq()`): temperatura 0,5 °C,
-umidità intera senza riduzione, pressione 2 mBar, IAQ 10 con l'etichetta calcolata sul
+(`Indoor::shownTemperature()`, `shownPressure()`, `shownIaq()`): temperatura 0,5 °C
+(lo zero esce sempre positivo: fra -0,25 e 0 °C `roundf()` darebbe -0.0, che `%.1f` stampa
+come "-0.0"), umidità intera senza riduzione, pressione 2 mBar, IAQ 10 con l'etichetta calcolata sul
 valore arrotondato, perchè le soglie 50, 100, 150, 200, 250 e 350 sono multiple di 10. Lo
 scopo è che le oscillazioni sotto la risoluzione utile non cambino il frame, vedi
 [[frame_skip_unchanged]]. Il README ha la tabella con risoluzione massima, accuratezza,

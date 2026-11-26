@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "Timings.h"
+#include "GxEPD2_SOLUM_ESL/src/GxEPDFrame.h"
 
 /**
  * Interruttore generale del refresh differenziale, definito nel .ino prima degli
@@ -36,7 +37,7 @@ namespace PartialRefresh
     Partial,        // il frame prova il partial (e come esito finale: partito)
     Disabled,       // interruttore spento o pannello senza differenziale
     NoLastFrame,    // nessun frame precedente: primo dopo il boot
-    LongGap,        // troppo tempo dall'ultimo frame: notte, riavvio, manutenzione
+    LongGap,        // troppo tempo dall'ultimo frame: notte, manutenzione
     ChainLimit,     // tetto di partial consecutivi raggiunto
     SensorInvalid,  // sensore collegato ma senza temperatura: non si sa se la LUT è adatta
     TooCold,        // sotto la soglia di temperatura
@@ -165,7 +166,11 @@ namespace PartialRefresh
   {
     s.hasLastFrame = true;
     s.lastFrameMs = nowMs;
-    s.coldLatched = (decision == Reason::TooCold);
+    // Solo TooCold e Partial vengono da una temperatura valutata: le decisioni
+    // prese prima (LongGap, ChainLimit, SensorInvalid) non dicono niente del
+    // freddo, e azzerando il latch toglierebbero l'isteresi al frame dopo.
+    if (decision == Reason::TooCold) s.coldLatched = true;
+    else if (decision == Reason::Partial) s.coldLatched = false;
     if (dayKey >= 0 && dayKey != s.day.dayKey)
     {
       s.day = { dayKey, 0, 0, 0, 0 };
@@ -188,21 +193,20 @@ namespace PartialRefresh
   // -------------------------------------------------------------------------
   // Aggancio al driver del pannello
   //
-  // Weather::renderFrame() e initDisplay() non sono template, e in una funzione
-  // non template un `if constexpr` scartato verrebbe comunque compilato: un
-  // driver senza l'API non compilerebbe. Gli helper qui sotto sono template sul
-  // tipo del driver, quindi il ramo scartato non si istanzia, e un pannello che
-  // non dichiara hasDifferentialRefresh si comporta come se il differenziale
-  // fosse spento.
+  // Il rilevamento delle API opzionali del driver e il protocollo del frame
+  // stanno nella libreria, in GxEPDFrame.h; qui restano i nomi che il firmware
+  // usa insieme alla politica. Sono template sul tipo del driver, quindi un
+  // pannello che non dichiara hasDifferentialRefresh si comporta come se il
+  // differenziale fosse spento, senza che il ramo scartato si istanzi.
   // -------------------------------------------------------------------------
 
   /** Vero se il driver Panel dichiara hasDifferentialRefresh = true. */
-  template <class Panel, class = void>
-  struct SupportsDifferential : std::false_type {};
-
   template <class Panel>
-  struct SupportsDifferential<Panel, std::void_t<decltype(Panel::hasDifferentialRefresh)>>
-      : std::bool_constant<Panel::hasDifferentialRefresh> {};
+  using SupportsDifferential = GxEPDFrame::SupportsDifferential<Panel>;
+
+  /** Vero se il driver Panel sa saltare il refresh di un frame invariato. */
+  template <class Panel>
+  using SupportsSkip = GxEPDFrame::SupportsSkip<Panel>;
 
   /** Vero se il differenziale è acceso nel firmware e il driver lo supporta. */
   template <class Epd>
@@ -211,70 +215,44 @@ namespace PartialRefresh
     return (DISPLAY_PARTIAL_REFRESH != 0) && SupportsDifferential<Epd>::value;
   }
 
+  /** Accende o spegne il differenziale nel driver; senza l'API non fa niente. */
   template <class Epd>
   inline void setEnabled(Epd& epd, bool on)
   {
-    if constexpr (SupportsDifferential<Epd>::value) epd.setDifferentialRefresh(on);
-    else { (void)epd; (void)on; }
+    GxEPDFrame::setDifferential(epd, on);
   }
-
-  /** Arma il frame; da chiamare prima di firstPage(). Falso senza riferimento. */
-  template <class Epd>
-  inline bool beginFrame(Epd& epd)
-  {
-    if constexpr (SupportsDifferential<Epd>::value) return epd.beginDifferentialFrame();
-    else { (void)epd; return false; }
-  }
-
-  /** Chiude il frame armato. Vero se il partial è partito. */
-  template <class Epd>
-  inline bool endFrame(Epd& epd)
-  {
-    if constexpr (SupportsDifferential<Epd>::value) return epd.endDifferentialFrame();
-    else { (void)epd; return false; }
-  }
-
-  template <class Epd>
-  inline uint8_t chain(Epd& epd)
-  {
-    if constexpr (SupportsDifferential<Epd>::value) return epd.differentialChain();
-    else { (void)epd; return 0; }
-  }
-
-  template <class Epd>
-  inline uint16_t refusedPages(Epd& epd)
-  {
-    if constexpr (SupportsDifferential<Epd>::value) return epd.differentialRefusedPages();
-    else { (void)epd; return 0; }
-  }
-
-  /**
-   * Vero se il driver Panel sa saltare il refresh di un frame identico a quello
-   * sul vetro: ha setSkipUnchanged(bool) e frameSkipped(). Indipendente dal
-   * differenziale, perchè il salto vale anche per un driver che non lo ha.
-   */
-  template <class Panel, class = void>
-  struct SupportsSkip : std::false_type {};
-
-  template <class Panel>
-  struct SupportsSkip<Panel, std::void_t<decltype(std::declval<Panel&>().setSkipUnchanged(true)),
-                                         decltype(std::declval<const Panel&>().frameSkipped())>>
-      : std::true_type {};
 
   /** Accende o spegne il salto nel driver; un driver senza l'API non fa niente. */
   template <class Epd>
   inline void setSkipUnchanged(Epd& epd, bool on)
   {
-    if constexpr (SupportsSkip<Epd>::value) epd.setSkipUnchanged(on);
-    else { (void)epd; (void)on; }
+    GxEPDFrame::setSkipUnchanged(epd, on);
   }
 
-  /** Vero se l'ultimo frame del loop paged è stato saltato perchè invariato. */
+  /** Partial consecutivi dall'ultimo refresh pieno. */
   template <class Epd>
-  inline bool wasSkipped(Epd& epd)
+  inline uint8_t chain(const Epd& epd)
   {
-    if constexpr (SupportsSkip<Epd>::value) return epd.frameSkipped();
-    else { (void)epd; return false; }
+    return GxEPDFrame::chain(epd);
+  }
+
+  /**
+   * Motivo finale di un frame dall'esito di GxEPDFrame::render() e dalla
+   * decisione della politica: un frame armato e non partito è RedChanged se il
+   * driver ha visto il rosso cambiare, altrimenti NoReference (riferimento
+   * perso, per esempio per un guasto del BUSY durante il partial).
+   */
+  inline Reason finalReason(Reason decision, const GxEPDFrame::Outcome& out)
+  {
+    switch (out.result)
+    {
+      case GxEPDFrame::FrameResult::Skipped: return Reason::Unchanged;
+      case GxEPDFrame::FrameResult::Partial: return Reason::Partial;
+      case GxEPDFrame::FrameResult::Refused:
+        return out.refusedPages != 0 ? Reason::RedChanged : Reason::NoReference;
+      case GxEPDFrame::FrameResult::Full: break;
+    }
+    return decision == Reason::Partial ? Reason::NoReference : decision;
   }
 }
 

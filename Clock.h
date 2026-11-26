@@ -41,8 +41,8 @@
  * POSIX TZ string per Europe/Rome con gestione automatica del DST.
  *  - Standard: CET (UTC+1), da ultima domenica di ottobre alle 03:00 locali
  *    a ultima domenica di marzo.
- *  - Estiva:   CEST (UTC+2), da ultima domenica di marzo alle 02:00 UTC
- *    a ultima domenica di ottobre alle 03:00 locali.
+ *  - Estiva:   CEST (UTC+2), da ultima domenica di marzo alle 02:00 locali
+ *    (01:00 UTC) a ultima domenica di ottobre alle 03:00 locali.
  *
  * Applicata da Clock::begin() via setenv("TZ", ...) + tzset(). Dopo l'init,
  * tutte le chiamate a localtime_r() del progetto ritornano componenti locali
@@ -126,8 +126,8 @@ namespace Clock
   /**
    * Vero se l'orologio di sistema è stato sincronizzato, cioè se time()
    * supera TIME_VALID_EPOCH_MIN. Prima della sincronizzazione time()
-   * restituisce l'uptime contato dal 1970, che dopo 27,7 h di accensione
-   * diventa indistinguibile da un'ora reale.
+   * restituisce l'uptime contato dal 1970, che non raggiunge quella soglia
+   * in tempi utili.
    *
    * È l'unica definizione di "ora valida" del firmware: ci poggiano lo
    * scheduler, la precondizione dei task calendario e le guardie dei moduli.

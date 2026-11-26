@@ -20,7 +20,7 @@ trap 'rm -rf "$OUT"' EXIT
 FLAGS="-std=gnu++20 -Istub -I.. -Wall -Wextra -Wno-format-security -Wno-unused-parameter"
 
 falliti=0
-for caso in test_timings test_scheduler test_routefinder test_cinemastore test_tuya test_tuya:-DTUYA_REQUEST_ACK=0 test_tuya:-DINDOOR_SENSOR_BME280 test_partial test_partial:-DDISPLAY_PARTIAL_REFRESH=1 test_framecrc; do
+for caso in test_timings test_scheduler test_routefinder test_cinemastore test_tuya test_tuya:-DTUYA_REQUEST_ACK=0 test_tuya:-DINDOOR_SENSOR_BME280 test_partial test_partial:-DDISPLAY_PARTIAL_REFRESH=1 test_framecrc test_showimage test_tlscache; do
   # Un caso è "nome" oppure "nome:opzioni del compilatore": test_tuya gira tre
   # volte, con e senza la conferma applicativa del cloud e col payload del
   # BME280, e test_partial con l'interruttore del differenziale spento e acceso.

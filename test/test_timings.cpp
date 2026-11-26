@@ -112,6 +112,45 @@ int main()
   Timings::begin();
   ok(get().owmMin == 10, "schema assente: default, non i valori orfani");
 
+  // Il tetto della telemetria Tuya è il multiplo del ciclo più grande sotto 1,5
+  // volte il keepalive: oltre, il dispositivo risulta offline fra due publish.
+  const Campo* campoTuya = nullptr;
+  for (size_t indice = 0; indice < nCampi(); ++indice)
+    if (std::strcmp(campi()[indice].chiave, "tuya_min") == 0) campoTuya = &campi()[indice];
+  ok(campoTuya != nullptr && campoTuya->massimo == TUYA_PUBLISH_MIN_CEIL && TUYA_PUBLISH_MIN_CEIL == 25,
+     "tetto di tuya_min a 25 min, ricavato dal keepalive");
+  Valori t25 = get(); t25.tuyaMin = 25;
+  ok(applica(t25, nullptr), "Tuya a 25 min, il tetto: accettata");
+  Valori t30 = get(); t30.tuyaMin = 30;
+  m = nullptr;
+  ok(!applica(t30, &m) && get().tuyaMin == 25, "Tuya a 30 min: offline fra due publish, respinta, stato invariato");
+  std::printf("   motivo: %s\n", m ? m : "(nessuno)");
+  { Preferences p; p.begin("timings"); p.putUShort("schema", detail::SCHEMA); p.putUShort("tuya_min", 30); p.end(); }
+  Timings::begin();
+  ok(get().tuyaMin == 25, "tuya_min a 30 in NVS: al boot sceso al tetto, 25");
+
+  // Il campione del sensore scade al secondo campione perso, per entrambi i
+  // sensori: il BME680 si interroga a un ciclo più il margine, il BME280 a un
+  // ciclo esatto, e in nessuno dei due casi basta una lettura persa.
+  const uint32_t cicloMs = (uint32_t)CYCLE_S * 1000u;
+  ok(cicloMs + BSEC_MARGINE_POLL_MS < INDOOR_SAMPLE_MAX_AGE_MS,
+     "un campione perso è tollerato, anche col margine del poll BSEC");
+  ok(2 * cicloMs >= INDOOR_SAMPLE_MAX_AGE_MS,
+     "al secondo campione perso il dato scade, anche col BME280 a poll esatti");
+
+  // save() ritorna false se una scrittura fallisce, per esempio a NVS piena, e
+  // le altre chiavi si scrivono comunque.
+  Preferences::store.clear();
+  Preferences::scritturaFallisce = true;
+  ok(!save(), "save() con ogni scrittura fallita ritorna false");
+  ok(Preferences::store.empty(), "  e non ha memorizzato niente");
+  Preferences::chiaveCheFallisce = "goog_min";
+  ok(!save() && Preferences::store.count("owm_min") == 1 && Preferences::store.count("goog_min") == 0,
+     "una sola chiave non scritta: false, le altre scritte");
+  Preferences::scritturaFallisce = false;
+  Preferences::chiaveCheFallisce.clear();
+  ok(save() && Preferences::store.count("goog_min") == 1, "  al tentativo successivo ritorna true e completa");
+
   ripristinaDefault();
   ok(get().owmMin == 10, "ripristinaDefault() riporta ai valori compilati");
 

@@ -183,6 +183,49 @@ namespace Indoor
     inline constexpr uint8_t CHIP_ID   = 0x60;
     inline constexpr uint8_t CALIB_REG = BME280_REGISTER_DIG_T1;
     inline constexpr uint8_t CALIB_LEN = 24;
+
+    /** Indirizzo I2C su cui il sensore è stato avviato, per leggere ctrl_hum. */
+    inline uint8_t bmeAddress = INDOOR_I2C_ADDR;
+
+    /** Registro ctrl_hum del BME280: i bit 2..0 sono il sovracampionamento
+     *  dell'umidità, che un reset del chip riporta a zero (umidità saltata). */
+    inline constexpr uint8_t REG_CTRL_HUM       = BME280_REGISTER_CONTROLHUMID;   // 0xF2
+    inline constexpr uint8_t CTRL_HUM_OSRS_MASK = 0x07;
+
+    /** Sovracampionamento dell'umidità impostato da applySampling(). */
+    inline constexpr uint8_t HUM_OSRS_X1 = (uint8_t)Adafruit_BME280::SAMPLING_X1;
+
+    /**
+     * Forced mode con oversampling x1 su temperatura, pressione e umidità e
+     * filtro spento. Il sensore misura solo quando poll() lo chiede e poi torna
+     * in sleep: il default della libreria è normal mode x16, che misura di
+     * continuo e scalda il sensore. La chiamano begin() e poll(), quando
+     * scopre che il chip si è resettato.
+     */
+    inline void applySampling()
+    {
+      bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                      Adafruit_BME280::SAMPLING_X1,    // temperatura
+                      Adafruit_BME280::SAMPLING_X1,    // pressione
+                      Adafruit_BME280::SAMPLING_X1,    // umidità
+                      Adafruit_BME280::FILTER_OFF);
+    }
+
+    /**
+     * Legge ctrl_hum dal chip via Wire. La libreria Adafruit non lo rilegge mai
+     * e tiene il valore impostato in una copia software, quindi un reset del
+     * chip passa inosservato.
+     * @return false se la lettura I2C non riesce.
+     */
+    inline bool readCtrlHum(uint8_t& value)
+    {
+      Wire.beginTransmission(bmeAddress);
+      Wire.write(REG_CTRL_HUM);
+      if (Wire.endTransmission() != 0) return false;
+      if (Wire.requestFrom(bmeAddress, (uint8_t)1) != 1) return false;
+      value = (uint8_t)Wire.read();
+      return true;
+    }
 #endif
 
     /**
@@ -532,20 +575,14 @@ namespace Indoor
     lastStateSaveMs = millis();
     LOG("BME680", "init ok, ULP 5 min");
 #else
+    bmeAddress = addr;
     if (!bme.begin(addr, &Wire))
     {
       LOG("BME280", "init failed a 0x%02X: nessuna risposta o chip ID diverso da 0x60", (unsigned)addr);
       return;
     }
 
-    // Forced mode: il sensore misura solo quando poll() lo chiede e poi torna
-    // in sleep. Il default della libreria è normal mode x16, che misura di
-    // continuo e scalda il sensore.
-    bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                    Adafruit_BME280::SAMPLING_X1,    // temperatura
-                    Adafruit_BME280::SAMPLING_X1,    // pressione
-                    Adafruit_BME280::SAMPLING_X1,    // umidità
-                    Adafruit_BME280::FILTER_OFF);
+    applySampling();
     LOG("BME280", "init ok, forced mode");
 #endif
     sensorOk = true;
@@ -639,18 +676,41 @@ namespace Indoor
    * perchè con il sensore non inizializzato la libreria userebbe un
    * dispositivo I2C mai creato. In forced mode ogni 5 minuti il sensore non
    * si scalda da sè, quindi la temperatura non va compensata.
+   *
+   * Prima di ogni misura rilegge ctrl_hum: se il sensore si è resettato da sè
+   * ha l'umidità saltata, la libreria non se ne accorge (tiene la propria copia
+   * software della configurazione) e ne esce un valore plausibile ma falso. In
+   * quel caso riapplica il campionamento e scarta la lettura.
    */
   inline void poll()
   {
     using namespace detail;
 
+    uint8_t ctrlHum = 0;
+    if (!readCtrlHum(ctrlHum))
+    {
+      LOG("BME280", "lettura di ctrl_hum fallita: lettura scartata");
+      expireIfStale();
+      return;
+    }
+    if ((ctrlHum & CTRL_HUM_OSRS_MASK) != HUM_OSRS_X1)
+    {
+      LOG("BME280", "ctrl_hum 0x%02X: il sensore si è resettato, riapplico il campionamento e scarto la lettura",
+          (unsigned)ctrlHum);
+      applySampling();
+      expireIfStale();
+      return;
+    }
+
     // Su un errore I2C la libreria non segnala nulla: read8/read24 restituiscono
     // il buffer non riempito, con in testa l'indirizzo del registro, e la
     // temperatura che ne esce supera di molto gli 85 °C. Il range operativo
     // del datasheet scarta la lettura invece di mostrare un valore inventato.
+    // La pressione si scrive come negazione dell'intervallo valido, così anche
+    // un NaN viene scartato: ogni confronto con NaN è falso.
     const float t = bme.takeForcedMeasurement() ? bme.readTemperature() : NAN;
     const float p = bme.readPressure() / 100.0f;   // Pa -> mBar (= hPa)
-    if (isnan(t) || t < -40.0f || t > 85.0f || p < 300.0f || p > 1100.0f)
+    if (isnan(t) || t < -40.0f || t > 85.0f || !(p >= 300.0f && p <= 1100.0f))
     {
       LOG("BME280", "lettura fallita: T=%.1f P=%.1f", t, p);
       expireIfStale();
@@ -685,10 +745,12 @@ namespace Indoor
    * Le replica tools/layout_preview.py per l'anteprima.
    */
 
-  /** Temperatura arrotondata a 0,5 °C. */
+  /** Temperatura arrotondata a 0,5 °C. Fra -0,25 e 0 °C roundf() dà -0.0, che
+   *  "%.1f" stampa come "-0.0": lo zero esce sempre positivo. */
   inline float shownTemperature(float celsius)
   {
-    return roundf(celsius * 2.0f) / 2.0f;
+    const float shown = roundf(celsius * 2.0f) / 2.0f;
+    return shown == 0.0f ? 0.0f : shown;
   }
 
   /** Pressione in mBar arrotondata a 2 mBar. */

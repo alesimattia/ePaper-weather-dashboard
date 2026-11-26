@@ -1,6 +1,6 @@
 ---
 name: Architettura della libreria GxEPD2_SOLUM_ESL (submodule bi-driver)
-description: Come è fatto il submodule con più driver custom - ombrello di selezione GxEPD2_SOLUM.h, pinout uniforme, namespace GxEPDImage condiviso, contratto che un nuovo driver deve rispettare, come si compilano i suoi examples
+description: Come è fatto il submodule con più driver custom, ombrello di selezione GxEPD2_SOLUM.h (selezione, altezza della page, alias del display, beginBus), pinout uniforme, GxEPDImage condiviso (showImage sopra drawInvertedBitmap), GxEPDFrame (un frame intero sopra il loop paged), esito del BUSY, API opt-in del partial nell'esempio, contratto che un nuovo driver deve rispettare, come si compilano i suoi examples
 type: reference
 ---
 
@@ -14,11 +14,16 @@ N: quello che segue è il meccanismo, non un dettaglio di uno dei due.
 src/GxEPD2_SOLUM.h                  ombrello di selezione, unico header che gli sketch includono
 src/GxEPD2_SOLUM_Pins.h             struct di pinout uniforme fra i driver
 src/GxEPDImage.h                    namespace GxEPDImage + template showImage(), condiviso
+src/GxEPDFrame.h                    un frame intero sopra il loop paged: GxEPDFrame::render()
+src/GxEPD2_SOLUM_BusyFault.h        enum dell'esito dell'attesa del BUSY, senza dipendenze
+src/GxEPD2_SOLUM_Differential.h     macchina a stati del refresh differenziale, senza I/O, vedi [[differential_refresh]]
 src/GxEPD2_SOLUM_FrameCrc.h         confronto del frame con quello sul vetro, puro e condiviso
 src/GxEPD2_SOLUM_097c_960x672.h     driver 9.7" SSD1677, vedi [[gxepd2_097c_driver]]
 src/GxEPD2_SOLUM_122c_960x768.h     driver 12.2" SSD16xx, vedi [[gxepd2_122c_driver]]
 examples/097c/panel_diagnostic/     suite del 9.7", sketch multi-file: .ino + Config/Report/
-                                    Graphics/Controller/Probes*.h, tutto a SPI diretta
+                                    Graphics/Controller/Probes*.h, tutto a SPI diretta; con
+                                    PartialProbeDriver.h, le API opt-in del partial
+examples/097c/differential_check/   verifica sul vetro del differenziale con il codice vero del driver
 examples/12_2c/dual_panel_finder/   unico example del 12.2": probe del silicio a SPI
                                     diretta + verifica del driver, due fasi separabili
 docs/097c/, docs/122c/              materiale per pannello (cablaggi, foto FCC, identificazione)
@@ -29,15 +34,10 @@ README.md                           libreria + driver 9.7"; README_122c.md il 12
 
 **Ombrello `src/GxEPD2_SOLUM.h`.** È l'idioma di `GxEPD2_display_selection_new_style.h` upstream
 (dove `GxEPD2_DRIVER_CLASS` e `MAX_HEIGHT()` sono macro), portato **dentro** la libreria invece che
-negli esempi. Uno sketch non nomina mai la classe concreta:
-
-```cpp
-#define SOLUM_PANEL_122C            // unica riga che cambia fra un pannello e l'altro
-#include <GxEPD2_3C.h>
-#include <GxEPD2_SOLUM.h>
-GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)>
-    display(GxEPD2_SOLUM_DRIVER_CLASS(GxEPD2_SOLUM_Pins{ 15, 27, 26, 25, 33, 35, 13, 12, 14 }));
-```
+negli esempi. Uno sketch non nomina mai la classe concreta: definisce `SOLUM_PANEL_097C` oppure
+`SOLUM_PANEL_122C` prima dell'include e costruisce `GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, altezza
+della page>` passando al driver una `GxEPD2_SOLUM_Pins`; il define è l'unica riga che cambia fra un
+pannello e l'altro. L'ombrello include anche `GxEPDFrame.h` e `GxEPD2_SOLUM_Differential.h`.
 
 - `SOLUM_PANEL_097C` / `SOLUM_PANEL_122C`: da definire **prima** dell'include. Zero o due danno
   `#error` (verificato: la build fallisce al preprocessore con quel messaggio).
@@ -47,30 +47,76 @@ GxEPD2_3C<GxEPD2_SOLUM_DRIVER_CLASS, SOLUM_MAX_HEIGHT(GxEPD2_SOLUM_DRIVER_CLASS)
   a 1 bpp, con cap a `EPD::HEIGHT`. Su un pannello 960 px di larghezza dà **273 righe = ~65 KB** di
   buffer: va bene per uno sketch di prova, non per un firmware che ha altro in RAM. Il consumer
   `A:\epd` non la usa e tiene `Panel::HEIGHT / 8` (~20 KB, otto page).
+- `SOLUM_PAGE_HEIGHT(EPD, PAGES)`: altezza della page per un numero di pagine scelto, arrotondata
+  per eccesso, così `PAGES` pagine coprono sempre il pannello. `GxEPD2_SOLUM_Display<PH>` è l'alias
+  del `GxEPD2_3C` del driver selezionato, con un `static_assert`: con il refresh differenziale il
+  riferimento regge al più 16 pagine (`GxEPD2_SOLUM_Differential::MAX_PAGES`), e con page più basse
+  il partial non partirebbe mai, senza nessun errore. Il consumer `A:\epd` costruisce il
+  `GxEPD2_3C` a mano con `Layout::PAGE_HEIGHT`, cioè otto pagine.
+- `GxEPD2_SOLUM::beginBus(spi, sck, miso, mosi, cs, hz)`: apre il bus sui pin della board e
+  restituisce le `SPISettings` (MSB first, modo 0, 10 MHz di default) da passare all'overload nativo
+  `GxEPD2_3C::init(diag, initial, reset_ms, pulldown, spi, settings)`, che chiama `selectSPI()` prima
+  di `init()`. Nessun driver apre il bus nè ne conosce i pin: li sceglie lo sketch.
 
 **Pinout uniforme `GxEPD2_SOLUM_Pins`.** È ciò che rende un driver sostituibile con l'altro: i
 pannelli non hanno lo stesso numero di segnali (il 12.2" ha due CS e due BUSY perchè ha due
 controller) e senza una firma comune cambiare pannello vorrebbe dire riscrivere la riga di
-costruzione del display. Campi in ordine: `cs, dc, rst, busy, cs2, busy2, sck, miso, mosi`; `-1`
-significa assente e i campi non passati lo prendono dal default member initializer (serve C++14+,
-il core ESP32 compila a gnu++17). Ogni driver ha un `explicit Driver(const GxEPD2_SOLUM_Pins&)` che
-delega al proprio costruttore nativo leggendo i campi che gli servono.
-
-Nota sullo snippet qui sopra: serve a mostrare la forma della struct, non un pinout valido. Il `33`
-è il CS del secondo controller e su questa board va sostituito con **32**, perchè il 33 non è
-portato fuori — vedi [[waveshare_esp32_driver_board]] e [[gxepd2_122c_driver]].
+costruzione del display. Campi in ordine: `cs, dc, rst, busy, cs2, busy2` (i pin del bus SPI non
+stanno nella struct); `-1` significa assente e i campi non passati lo prendono dal default member
+initializer (serve C++14+, il core ESP32 compila a gnu++17). Ogni driver ha un
+`explicit Driver(const GxEPD2_SOLUM_Pins&)` che delega al proprio costruttore nativo leggendo i
+campi che gli servono. Su questa board il CS del secondo controller del 12.2" è il GPIO 32 e non il
+33, che non è portato fuori: vedi [[waveshare_esp32_driver_board]] e [[gxepd2_122c_driver]].
 
 **Contratto di `GxEPDImage.h`.** Il namespace e il template `showImage()` sono **unici** per la
 libreria, non duplicati per driver: due header driver possono stare nella stessa translation unit.
 Il template è indipendente dal silicio e pretende due soli metodi pubblici da ogni driver,
-`setPaged()` e `showImagePageHint()`. `showImage()` compone i piani black e red e non tocca un
-eventuale terzo piano; le primitive del giallo (`writeImageYellow`, `preserveYellow`,
-`isYellowPreserved`) sono API opzionali del singolo driver: il 12.2" le dichiara senza corpo per
-compatibilità di API, il 9.7" non le dichiara.
+`setPaged()` e `showImagePageHint()`; sul display usa solo l'API di `GxEPD2_3C` (`pageHeight()`,
+`getRotation()`, `height()`, `fillRect()`, `drawInvertedBitmap()`). È un wrapper di
+`drawInvertedBitmap()`: disegna prima il piano rosso e poi il nero, così dove entrambi sono accesi
+vince il nero, e salta a priori le righe sopra la pagina corrente. `Paint::Opaque` (il default)
+dipinge prima un `fillRect` bianco sulle stesse righe, `Paint::InkOnly` solo nero e rosso, per
+un'immagine su fondo bianco: `GxEPD2_3C` riparte da un buffer bianco a ogni pagina, quindi il
+bianco serve solo a coprire ciò che la stessa pagina ha disegnato sotto l'immagine. `showImage()`
+compone i piani black e red e non tocca un eventuale terzo piano; le primitive del giallo
+(`writeImageYellow`, `preserveYellow`, `isYellowPreserved`) sono API opzionali del singolo
+driver: il 12.2" le dichiara senza corpo per compatibilità di API, il 9.7" non le dichiara.
+
+**Un frame intero: `GxEPDFrame::render()`.** Sta in `GxEPDFrame.h`, sopra il loop paged di
+`GxEPD2_3C`, e incapsula il protocollo con il driver: imposta la finestra piena, arma il
+differenziale prima di `firstPage()` se chi chiama lo consente e il driver ha un riferimento, esce
+dalla passata armata alla prima pagina rifiutata (le pagine dopo non cambierebbero l'esito), rifà il
+frame in pieno con una seconda passata non armata e riconosce il salto del frame invariato. Lo
+sketch passa solo il disegno di una pagina, che può essere chiamato due volte per pagina quando il
+partial viene rifiutato, e il booleano "prova il partial". L'esito (`Outcome`) dice `Full`, `Partial`,
+`Skipped` o `Refused`, se il frame era armato, la mask delle pagine rifiutate (con l'uscita
+anticipata contiene la sola prima pagina rifiutata, ed è 0 quando il partial non è partito per un
+altro motivo), il guasto del BUSY e la durata dell'ultimo refresh. Le API del driver che usa sono
+tutte facoltative e si rilevano dal tipo con trait template e `if constexpr`: `SupportsDifferential`
+(`hasDifferentialRefresh`), `SupportsSkip` (`setSkipUnchanged()` più `frameSkipped()`) e
+`SupportsBusyFault` (`busyFault()` più `lastUpdateMs()`). Un driver che non le dichiara fa un
+refresh pieno a ogni frame, come un driver GxEPD2 qualunque, e il ramo assente non si istanzia: il
+12.2" dichiara solo il salto del frame invariato. La politica che decide se provare il partial
+resta nel firmware, vedi [[differential_refresh]].
+
+**Esito del BUSY.** `GxEPD2_SOLUM_BusyFault.h` definisce l'enum `GxEPD2_SOLUM_BusyFault` senza
+dipendenze: `None`, `TooShort` (il BUSY è sceso prima della durata minima plausibile di un refresh,
+quindi il controller non ha eseguito la waveform) e `Timeout` (ancora alto allo scadere
+dell'attesa). Un driver che lo espone, oggi il solo 9.7", dichiara `busyFault()` e
+`lastUpdateMs()`: con un guasto il refresh non convalida nè il frame nè il riferimento del
+differenziale e chi legge l'esito rifà il frame in pieno. Dettaglio in [[gxepd2_097c_driver]].
+
+**API opt-in del partial.** `drawImagePartial()` e le altre (`writeImageBlack()`, `writeImageRed()`,
+`writeImageToPrevious()`, `writeScreenBufferPrevious()`, `refreshPartial()`, `setPartialLut()`) non
+stanno nel driver ma nella sottoclasse `GxEPD2_SOLUM_097c_PartialProbe`, in
+`examples/097c/panel_diagnostic/PartialProbeDriver.h`. `panel_diagnostic` la include per tenerla
+compilata insieme al driver ma non la istanzia, perchè le sonde lavorano a SPI diretta; per usarla si
+costruisce il display con la sottoclasse al posto del driver. Il firmware non le chiama. I limiti
+noti di queste API e gli interventi rimandati sul driver stanno in `A:\epd\ISSUES.md`.
 
 **API opzionale del salto del refresh.** Non è parte del contratto: un driver che riceve i piani a
 pagine dal template può usare `GxEPD2_SOLUM_FrameCrc.h` ed esporre `setSkipUnchanged(bool)` e
-`frameSkipped()`. Il firmware le rileva con un trait che le chiede entrambe (come
+`frameSkipped()`. `GxEPDFrame` le rileva con un trait che le chiede entrambe (come
 `hasDifferentialRefresh` per il differenziale) e un driver senza l'API ignora le chiamate. Il
 confronto è sulla forma `writeImage(black, color)` del template; ogni cambio del vetro deve
 invalidare il frame mostrato. Vedi [[frame_skip_unchanged]].
@@ -112,7 +158,7 @@ libreria*):
 6. `library.properties` non si tocca: `includes=GxEPD2_SOLUM.h`, non i driver.
 
 **Compilare gli examples del submodule.** Non li compila il build del firmware (Arduino concatena i
-`.ino` solo dalla root dello sketch), e la libreria **non** va installata come libreria Arduino —
+`.ino` solo dalla root dello sketch), e la libreria **non** va installata come libreria Arduino:
 lo sketch consumer la include per path relativo e installarla creerebbe due path per lo stesso
 header (vedi [[build_toolchain_arduino]]). Si compilano passando la cartella come libreria solo per
 quella build:
@@ -132,5 +178,7 @@ più RAM di `dual_panel_finder` per i buffer delle bande e della taratura.
 
 **Consumer.** `A:\epd` usa la libreria come submodule: i suoi `Layout_097c.h` / `Layout_122c.h`
 definiscono il proprio `SOLUM_PANEL_*`, includono `GxEPD2_SOLUM_ESL/src/GxEPD2_SOLUM.h` ed
-espongono `Layout::Panel`, `Layout::PAGE_HEIGHT`, `Layout::makePanel()` — vedi
-[[layout_separation]].
+espongono `Layout::Panel`, `Layout::PAGE_HEIGHT`, `Layout::makePanel()`, vedi
+[[layout_separation]]. Il `.ino` apre il bus con `beginBus()` e l'overload nativo di `init()`,
+`Weather::renderFrame()` disegna con `GxEPDFrame::render()` e `drawTestBackground()` con
+`showImage()` in `Paint::InkOnly`.

@@ -3,6 +3,8 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <driver/gpio.h>
 
 /**
@@ -13,8 +15,9 @@
 /**
  * Il bus HSPI non lo abilita nessuna macro: GxEPD2 e i driver del submodule
  * prendono il bus dall'oggetto passato a selectSPI(), e non leggono simboli di
- * configurazione. Il remap sta quindi tutto in initDisplay(), in due chiamate:
- * hspi.begin(13, 12, 14, 15) e display.epd2.selectSPI(...).
+ * configurazione. Il remap sta quindi tutto in initDisplay(), in una chiamata:
+ * l'overload nativo di display.init() che riceve bus e impostazioni, con il bus
+ * aperto da GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, ...).
  *
  * Ed è obbligatorio, non stilistico: la Waveshare E-Paper ESP32 Driver Board
  * scambia SCK e MOSI rispetto al default HSPI (SCK sul 13, MOSI sul 14), e il
@@ -49,17 +52,16 @@
  * frame come sempre e il driver, che riceve i due piani una pagina alla volta,
  * confronta il piano rosso con quello dell'ultimo frame pieno: se è identico
  * parte il partial, altrimenti il pannello non si tocca e il frame si rifà in
- * pieno (Weather::renderFrame()). Il meccanismo sta nella sezione REFRESH
+ * pieno (GxEPDFrame::render() della libreria). Il meccanismo sta nella sezione REFRESH
  * DIFFERENZIALE del driver, la politica (catena massima di partial, soglia di
  * temperatura, distanza massima dall'ultimo frame) in PartialRefresh.h e
  * Timings.h.
  *
  * Gli elementi che cambiano a ogni ciclo, come la temperatura del riquadro
  * Interno, sono in nero perchè un testo rosso che si sposta impedirebbe il
- * partial. Il firmware non chiama le sei API opt-in del vecchio partial,
- * che lavorano fuori dal template: drawImagePartial(), drawImagePartialPart(),
- * refreshPartial(), writeImageToPrevious(), writeScreenBufferPrevious() e
- * setPartialLut().
+ * partial. Le API opt-in del vecchio partial, che lavorano fuori dal
+ * template, non stanno nel driver di produzione ma nell'esempio
+ * examples/097c/panel_diagnostic della libreria.
  *
  * Prima di abilitarlo su un pannello nuovo conviene provare l'esempio
  * GxEPD2_SOLUM_ESL/examples/097c/differential_check, che verifica sul vetro le
@@ -86,6 +88,23 @@
  * risoluzione utile non cambino il frame.
  */
 #define DISPLAY_SKIP_UNCHANGED 1
+
+/**
+ * HTTPS dei produttori di rete (Net.h). TLS_VERIFY a 1 verifica il certificato
+ * dove passano segreti, con il bundle CA del core; a 0 tutto torna insecure,
+ * come uscita di emergenza. TLS_SESSION_RESUME a 1 riprende le sessioni con i
+ * ticket e salta l'handshake completo, la parte di calcolo della radio accesa;
+ * a 0 ogni connessione fa l'handshake completo, per confrontare i tempi.
+ */
+#define TLS_VERIFY 1
+#define TLS_SESSION_RESUME 1
+
+/**
+ * Frequenza della CPU durante il passo di rete, fra wifiOn() e wifiOff(): gli
+ * handshake TLS sono calcolo a radio accesa, e finire prima spegne prima la
+ * radio. Fuori dal passo di rete resta quella della configurazione della board.
+ */
+#define NETWORK_CPU_MHZ 240
 
 /**
  * Verbosita' dei log seriali (Log.h). 0 = nessun log, 1 = operativi,
@@ -213,30 +232,6 @@ static_assert(!Layout::Panel::hasFastPartialUpdate,
 			  "DISPLAY_PARTIAL_REFRESH. Rimettere false nel driver.");
 
 /**
- * Inizializza il bus HSPI e il display in orientamento landscape fisso.
- * Chiamato una sola volta in setup().
- *
- * Contratto d'uso del driver per tutto il firmware, e qui è il posto giusto
- * perchè è dove si scelgono bus e modalità:
- *   - SOLO full-window. setFullWindow() vale per l'intera sessione, e
- *     Weather::renderFrame() la richiama a ogni frame come difesa. In
- *     partial-window il template chiamerebbe writeImagePart(black, color) e
- *     poi refresh(x, y, w, h), che sul driver 097c fa comunque un refresh
- *     pieno: nessun guadagno e una modalità in più da mantenere. Il partial
- *     passa invece dal refresh differenziale del loop paged a finestra piena
- *     (setDifferentialRefresh() qui sotto, il resto in Weather::renderFrame()).
- *   - le sei API del partial del driver NON vanno chiamate da qui:
- *     drawImagePartial(), drawImagePartialPart(), refreshPartial(),
- *     writeImageToPrevious(), writeScreenBufferPrevious() e setPartialLut(). Sono
- *     opt-in e lavorano fuori dal template, quindi basta non chiamarle; una
- *     scrittura estranea al loop paged spegnerebbe comunque il riferimento del
- *     differenziale.
- *   - il resto lo gestisce il driver da sè: init dei due piani alla prima
- *     scrittura, ricarica della waveform dall'OTP a ogni refresh pieno, e
- *     ripulitura della RAM al risveglio da hibernate(), che con un riferimento
- *     valido non manda il controller in deep sleep.
- */
-/**
  * Attesa del BUSY del pannello in light sleep invece che a CPU accesa: un
  * refresh pieno dura ~24 s, ed è la voce più costosa del ciclo dopo la radio.
  * GxEPD2 la chiama in _waitWhileBusy() finchè il BUSY resta attivo e ricontrolla
@@ -249,6 +244,9 @@ static_assert(!Layout::Panel::hasFastPartialUpdate,
  */
 static void waitBusyAsleep(const void*)
 {
+	// Ogni fetta dell'attesa è progresso del refresh, anche con l'attesa attiva
+	// della finestra di manutenzione: il watchdog del loop non deve scattare.
+	esp_task_wdt_reset();
 	if (WiFi.getMode() != WIFI_OFF || Layout::BUSY_WAKE_PIN < 0)
 	{
 		delay(1);
@@ -266,18 +264,31 @@ static void waitBusyAsleep(const void*)
 	gpio_wakeup_disable(busyPin);
 }
 
+/**
+ * Inizializza il bus HSPI e il display in orientamento landscape fisso.
+ * Chiamato una sola volta in setup().
+ *
+ * Contratto d'uso del driver per tutto il firmware, e qui è il posto giusto
+ * perchè è dove si scelgono bus e modalità. Solo full-window: init() la imposta
+ * e GxEPDFrame::render() la richiama a ogni frame come difesa, perchè in
+ * partial-window il template chiamerebbe refresh(x, y, w, h), che sul driver
+ * 097c fa comunque un refresh pieno. Il partial passa invece dal refresh
+ * differenziale del loop paged a finestra piena, acceso qui sotto e guidato da
+ * GxEPDFrame::render(). Le API opt-in del vecchio partial stanno nell'esempio
+ * panel_diagnostic della libreria, non nel driver. Il resto lo gestisce il
+ * driver da sè: init dei due piani alla prima scrittura, ricarica della
+ * waveform dall'OTP a ogni refresh pieno, e ripulitura della RAM al risveglio
+ * da hibernate(), che con un riferimento valido non manda il controller in
+ * deep sleep.
+ */
 void initDisplay()
 {
-	hspi.begin(13, 12, 14, 15); // SCK, MISO, MOSI, SS (HSPI bus, board-specific)
-	/**
-	 * 10 MHz è il massimo raccomandato per i pannelli SSD1677 sul cablaggio
-	 * della Waveshare ESP32 Driver Board senza adattamenti.
-	 */
-	display.epd2.selectSPI(hspi, SPISettings(10000000, MSBFIRST, SPI_MODE0));
-	display.init(115200, true, 2, false);
+	// Overload nativo di GxEPD2_3C: selectSPI() prima di init(). SCK, MISO, MOSI e
+	// SS sono quelli della board (HSPI con SCK e MOSI scambiati); 10 MHz è il
+	// massimo raccomandato per i pannelli SSD1677 sul suo cablaggio.
+	display.init(115200, true, 2, false, hspi, GxEPD2_SOLUM::beginBus(hspi, 13, 12, 14, 15, 10000000));
 	display.epd2.setBusyCallback(waitBusyAsleep);
 	display.setRotation(Layout::ROTATION);
-	display.setFullWindow();
 	// Un driver senza il differenziale ignora la chiamata: resta sul refresh pieno.
 	PartialRefresh::setEnabled(display.epd2, DISPLAY_PARTIAL_REFRESH != 0);
 	// Indipendente dal differenziale; un driver senza l'API ignora la chiamata.
@@ -345,7 +356,7 @@ static bool buildCinemaUrl(char *url, size_t size)
 
 /**
  * Compone l'URL del percorso con partenza, arrivo e carburante di Routefinder e
- * la misura del riquadro. Serve al download e alla preparazione (wakeOrPrepare()).
+ * la misura del riquadro. Serve al download: il percorso non ha preparazione.
  * @return false se l'URL non entra in `size`.
  */
 static bool buildRouteUrl(char *url, size_t size)
@@ -374,6 +385,13 @@ static bool isServerAwake(RenderServer &server)
 		return false;
 	}
 	return true;
+}
+
+/** Vero se la risposta viene dall'app: un 5xx può essere del proxy di
+ *  render.com durante un deploy o l'avvio, e non prova che l'istanza sia su. */
+static bool isAppResponse(int code)
+{
+	return code > 0 && code < 500;
 }
 
 /**
@@ -433,23 +451,25 @@ static void noteServerWake(RenderServer &server, uint32_t sentMs)
  * intero, con il tetto comune TLS_HANDSHAKE_TIMEOUT_S. Quello che si abbandona
  * è la RISPOSTA: con setTimeout() breve la GET ritorna appena scaduta l'attesa
  * degli header, ed end() chiude il socket.
+ * Sonda e preparazione non portano segreti, quindi il certificato non si
+ * verifica.
  * @param what "sonda" o "preparazione", per il log.
  * @return il codice HTTP; HTTPC_ERROR_READ_TIMEOUT (-11) se la richiesta è
  *         partita senza risposta, un altro negativo se non è partita.
  */
-static int prewarmServer(RenderServer &server, const char *what, const char *url, const char *token)
+static int prewarmServer(RenderServer &server, const char *what, const char *url)
 {
-	WiFiClientSecure client;
+	Net::TlsClient client;
 	HTTPClient http;
 	http.setTimeout(CINEMA_PREWARM_TIMEOUT_MS);
-	if (!Net::beginHttps(http, client, url))
+	if (!Net::beginHttps(http, client, url, false))
 	{
 		LOG("img", "%s %s: http.begin fallita", server.flow, what);
 		return HTTPC_ERROR_CONNECTION_REFUSED;
 	}
-	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
 	const uint32_t t0 = millis();
 	const int code = http.GET();
+	if (code < 0 && code != HTTPC_ERROR_READ_TIMEOUT) Net::logTlsFailure(server.flow, client, code);
 	http.end();
 	LOG("img", "%s %s -> %d in %lu ms, heap libero %lu", server.flow, what, code,
 		(unsigned long)(millis() - t0), (unsigned long)ESP.getFreeHeap());
@@ -474,7 +494,8 @@ static int prewarmServer(RenderServer &server, const char *what, const char *url
  *     prepara subito; con -11 o con un altro codice la richiesta è arrivata a
  *     render, che si avvia, e il download si rinvia (isDownloadDeferred());
  *     un errore prima dell'invio non dice niente del server;
- *   - server svegliato a un ciclo precedente: preparazione.
+ *   - server svegliato a un ciclo precedente: preparazione, se chi chiama
+ *     passa l'URL dell'immagine.
  *
  * La preparazione chiede l'URL vero dell'immagine e ne abbandona la risposta:
  * a istanza su la richiesta arriva all'app, che finisce di generare l'immagine
@@ -482,9 +503,12 @@ static int prewarmServer(RenderServer &server, const char *what, const char *url
  * dell'immagine non fa da sonda perchè a cache vuota la generazione supera
  * l'attesa della risposta anche a istanza su. Sul percorso la preparazione non
  * costa una chiamata in più alla Routes API: routefinder tiene il calcolo in
- * cache per 60 s e il download arriva prima.
+ * cache per 60 s, ma un download che arrivasse dopo, con meteo e calendari
+ * lenti nello stesso passo, la farebbe pagare due volte: per questo il
+ * percorso, che si genera in pochi secondi dentro l'attesa del download, fa
+ * solo la sonda e passa imageUrl nullo.
  */
-static void wakeOrPrepare(RenderServer &server, const char *imageUrl, const char *token)
+static void wakeOrPrepare(RenderServer &server, const char *imageUrl)
 {
 	if (isServerAwake(server))
 	{
@@ -496,7 +520,7 @@ static void wakeOrPrepare(RenderServer &server, const char *imageUrl, const char
 	if (!isServerStarted(server))
 	{
 		const uint32_t probeMs = millis();
-		const int code = prewarmServer(server, "sonda", server.healthUrl, nullptr);
+		const int code = prewarmServer(server, "sonda", server.healthUrl);
 		if (code != HTTP_CODE_OK)
 		{
 			if (code > 0 || code == HTTPC_ERROR_READ_TIMEOUT) noteServerWake(server, probeMs);
@@ -504,8 +528,9 @@ static void wakeOrPrepare(RenderServer &server, const char *imageUrl, const char
 		}
 		noteServerContact(server, probeMs);
 	}
+	if (imageUrl == nullptr) return;
 	const uint32_t prepareMs = millis();
-	if (prewarmServer(server, "preparazione", imageUrl, token) > 0) noteServerContact(server, prepareMs);
+	if (isAppResponse(prewarmServer(server, "preparazione", imageUrl))) noteServerContact(server, prepareMs);
 }
 
 /**
@@ -521,13 +546,13 @@ static bool isDownloadDeferred(RenderServer &server)
 static void prewarmCinemaServer()
 {
 	char url[160];
-	if (buildCinemaUrl(url, sizeof(url))) wakeOrPrepare(g_cinema_server, url, nullptr);
+	if (buildCinemaUrl(url, sizeof(url))) wakeOrPrepare(g_cinema_server, url);
 }
 
+/** Solo sonda e sveglia: vedi wakeOrPrepare() per il perchè della preparazione assente. */
 static void prewarmRouteServer()
 {
-	char url[256];
-	if (buildRouteUrl(url, sizeof(url))) wakeOrPrepare(g_route_server, url, ROUTEFINDER_TOKEN);
+	wakeOrPrepare(g_route_server, nullptr);
 }
 
 /** Riga di log di un download fallito, con la durata e la memoria: è la
@@ -545,11 +570,14 @@ static void logDownloadFailure(const char *flow, const char *what, long value, u
  * Layout::CINEMA_*. Cadenza e ritenti sono dello scheduler; qui si scarica e
  * basta, con la radio già connessa.
  *
- * Il buffer si apre solo dopo status 200 e Content-Length giusto, quindi un
- * errore prima del corpo lascia valida l'immagine precedente; un corpo
- * interrotto la perde, e il riquadro mostra il wallpaper fino al ritento.
- * Ogni risposta HTTP, anche un errore, conta come contatto con il server: è
- * ciò che evita la sonda al ciclo successivo.
+ * I piani si allocano prima della GET, senza invalidare l'immagine: con
+ * l'heap che non li contiene il server non genera un'immagine che non si
+ * potrebbe ricevere. Il buffer si apre solo dopo status 200 e Content-Length
+ * giusto, quindi un errore prima del corpo lascia valida l'immagine
+ * precedente; un corpo interrotto la perde, e il riquadro mostra il wallpaper
+ * fino al ritento. Ogni risposta dell'app, anche un errore sotto il 500, conta
+ * come contatto con il server: è ciò che evita la sonda al ciclo successivo.
+ * Il certificato si verifica quando la richiesta porta il token.
  * @param server server render.com da cui si scarica, per la sonda condizionata.
  * @param token valore dell'header X-Routefinder-Token, nullptr se non serve.
  * @param timeoutMs dello stesso tipo del parametro di HTTPClient::setTimeout(),
@@ -570,24 +598,31 @@ static bool downloadImageToStore(RenderServer &server, const char *url, const ch
 	// http lo usa: con begin(url) il core ne creerebbe uno interno, senza modo
 	// di limitarne l'handshake. I server rispondono con Content-Length anche in
 	// HTTP/1.0, quindi il controllo sulla dimensione resta valido.
-	WiFiClientSecure client;
+	Net::TlsClient client;
 	HTTPClient http;
 	// Attesa della generazione dell'immagine a istanza già su: lo spin-up non si
 	// attende mai qui (isDownloadDeferred()). Vale anche come attesa massima
 	// senza dati durante il corpo.
 	http.setTimeout(timeoutMs);
 	const uint32_t t0 = millis();
-	if (!Net::beginHttps(http, client, url))
+	if (!CinemaStore::ensureAllocated())
+	{
+		logDownloadFailure(flow, "buffer non allocabile, byte", (long)Layout::CINEMA_TOTAL_SZ, t0);
+		return false;
+	}
+	if (!Net::beginHttps(http, client, url, token != nullptr))
 	{
 		LOG("img", "%s: HTTP begin fallita", flow);
 		return false;
 	}
 	if (token != nullptr) http.addHeader("X-Routefinder-Token", token);
 	int code = http.GET();
-	if (code > 0) noteServerContact(server, t0);
+	esp_task_wdt_reset();
+	if (isAppResponse(code)) noteServerContact(server, t0);
 	if (code != 200)
 	{
 		logDownloadFailure(flow, "HTTP status", code, t0);
+		Net::logTlsFailure(flow, client, code);
 		http.end();
 		return false;
 	}
@@ -605,25 +640,17 @@ static bool downloadImageToStore(RenderServer &server, const char *url, const ch
 		return false;
 	}
 
-	// BodyStream attende le pause fra i blocchi del corpo: un blocco resta corto
-	// solo a connessione chiusa, su errore TLS o dopo timeoutMs senza dati, il
-	// timeout che http.setTimeout() ha dato allo stream.
-	Net::BodyStream body(http.getStream());
-	uint8_t chunk[1024];
-	uint32_t received = 0;
-	while (received < Layout::CINEMA_TOTAL_SZ)
+	// Net::readBodyInto() attende le pause fra i blocchi del corpo e si ferma solo
+	// a connessione chiusa, su errore TLS, dopo timeoutMs senza dati o alla
+	// scadenza totale del corpo.
+	const uint32_t received = Net::readBodyInto(http, Layout::CINEMA_TOTAL_SZ,
+		[](const uint8_t *data, size_t length) { return CinemaStore::writeChunk(data, length); });
+	if (received != Layout::CINEMA_TOTAL_SZ)
 	{
-		const uint32_t remaining = Layout::CINEMA_TOTAL_SZ - received;
-		const size_t wanted = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
-		const size_t got = body.readBytes(chunk, wanted);
-		if (got != wanted || !CinemaStore::writeChunk(chunk, got))
-		{
-			logDownloadFailure(flow, "corpo interrotto al byte", (long)(received + got), t0);
-			http.end();
-			CinemaStore::abortWrite();
-			return false;
-		}
-		received += got;
+		logDownloadFailure(flow, "corpo interrotto al byte", (long)received, t0);
+		http.end();
+		CinemaStore::abortWrite();
+		return false;
 	}
 	http.end();
 
@@ -748,9 +775,9 @@ static bool tuyaReady() { return Tuya::readyToPublish(); }
  * prima del frame, e non è arbitrario:
  *
  *   - percorso e cinema dopo meteo e calendari: i loro onRoundStart()
- *     (wakeOrPrepare()) mandano all'inizio del passo la sonda o la
- *     preparazione dell'immagine, e il tempo di rete degli altri copre la
- *     generazione lato server. Con il server ancora in avvio il download si
+ *     (wakeOrPrepare()) mandano all'inizio del passo la sonda o, per il
+ *     cinema, la preparazione dell'immagine, e il tempo di rete degli altri
+ *     copre la generazione lato server. Con il server ancora in avvio il download si
  *     rinvia al ciclo dopo (Outcome::DEFERRED), quindi lo spin-up di
  *     render.com non si attende mai dentro il passo. Non girano mai nello
  *     stesso ciclo, perchè le loro fasce non si sovrappongono;
@@ -795,15 +822,19 @@ static constexpr uint8_t TASK_COUNT = sizeof(TASK_TABLE) / sizeof(TASK_TABLE[0])
  * riquadro che cadono nella pagina corrente: il percorso o il cinema in RAM
  * quando sono l'immagine programmata e ancora valida, altrimenti il wallpaper
  * caricato nella partizione o, senza, quello predefinito del firmware
- * (img_great_wave_desc). La scelta si rifà a ogni
- * frame, quindi un cambio di fascia, di forzatura o di validità compare al
- * ciclo successivo. Le righe si tagliano all'altezza CINEMA_H, e il
- * descrittore ridotto punta agli stessi dati, senza copie.
+ * (img_great_wave_desc). La scelta si rifà alla prima pagina di ogni passata e
+ * vale per le altre, quindi un cambio di fascia, di forzatura o di validità
+ * compare al frame successivo e non divide mai il riquadro fra due immagini.
+ * Le righe si tagliano all'altezza CINEMA_H, e il descrittore ridotto punta
+ * agli stessi dati, senza copie. Il riquadro è il primo elemento della pagina,
+ * che parte bianca, quindi si dipinge solo l'inchiostro.
+ * Usato da Weather::detail::drawPage().
  */
-void drawTestBackground()
+void drawTestBackground(bool firstPageOfPass)
 {
-	const Routefinder::ShownImage shown =
-		Routefinder::shownImage(storedImage(), CinemaStore::downloadedAt(), CinemaStore::downloadedMs());
+	static Routefinder::ShownImage shown = Routefinder::ShownImage::Wallpaper;
+	if (firstPageOfPass)
+		shown = Routefinder::shownImage(storedImage(), CinemaStore::downloadedAt(), CinemaStore::downloadedMs());
 	GxEPDImage::Descriptor downloaded = {
 		GxEPDImage::FORMAT_BWR_1BPP, Layout::CINEMA_W, Layout::CINEMA_H,
 		CinemaStore::plane(0), CinemaStore::plane(1), nullptr,
@@ -822,7 +853,7 @@ void drawTestBackground()
 		image.data1 ? image.data1 + skippedBytes : nullptr,
 		image.data2 ? image.data2 + skippedBytes : nullptr,
 	};
-	GxEPDImage::showImage(display, rows, Layout::CINEMA_X, top);
+	GxEPDImage::showImage(display, rows, Layout::CINEMA_X, top, GxEPDImage::Paint::InkOnly);
 }
 
 /** Canale e BSSID dell'ultima connessione riuscita. Stanno in RAM, che il
@@ -836,6 +867,7 @@ static bool waitWifiConnected(uint32_t t0, uint32_t deadlineMs)
 {
 	while (WiFi.status() != WL_CONNECTED && (millis() - t0) < deadlineMs)
 	{
+		esp_task_wdt_reset();
 		delay(WIFI_ATTESA_POLL_MS);
 	}
 	return WiFi.status() == WL_CONNECTED;
@@ -858,8 +890,31 @@ static bool waitWifiConnected(uint32_t t0, uint32_t deadlineMs)
  * risincronizza ogni ora con Clock::resyncIfStale(), che non blocca.
  * @return true se connesso entro il timeout.
  */
+/**
+ * Porta la CPU a NETWORK_CPU_MHZ per il passo di rete. Sopra 80 MHz l'APB resta
+ * a 80, quindi UART, SPI, I2C e millis() non cambiano; un chip certificato solo
+ * per 160 MHz rifiuta 240 e ripiega lì, e il ripiego si logga una volta.
+ */
+static void raiseCpuForNetwork()
+{
+	static bool fallbackLogged = false;
+	if (setCpuFrequencyMhz(NETWORK_CPU_MHZ)) return;
+	const bool fallback = setCpuFrequencyMhz(160);
+	if (fallbackLogged) return;
+	fallbackLogged = true;
+	if (fallback) LOG("cpu", "%u MHz non accettati: passo di rete a 160 MHz", (unsigned)NETWORK_CPU_MHZ);
+	else LOG("cpu", "frequenza del passo di rete non impostabile, resta %lu MHz", (unsigned long)getCpuFrequencyMhz());
+}
+
+/** Riporta la CPU alla frequenza della configurazione della board, prima di dormire. */
+static void restoreCpuAfterNetwork()
+{
+	setCpuFrequencyMhz(F_CPU / 1000000UL);
+}
+
 static bool wifiOn()
 {
+	raiseCpuForNetwork();
 	WiFi.mode(WIFI_STA);
 	const uint32_t t0 = millis();
 	bool connected = false;
@@ -907,7 +962,9 @@ static bool wifiOn()
 
 /**
  * Spegne completamente il WiFi (disconnect + WIFI_OFF) per minimizzare il
- * consumo fra un fetch e l'altro: ~120 mA attivo vs ~30 mA a radio spenta.
+ * consumo fra un fetch e l'altro: ~120 mA attivo vs ~30 mA a radio spenta, e
+ * riporta la CPU alla frequenza della board. Gira anche dopo una connessione
+ * fallita e dalla guardia di Scheduler::sleepUntilNextEvent().
  *
  * disconnect(true, false) [wifioff=true, eraseap=false]: spegne la radio ma
  * non cancella la configurazione salvata. Da sola quella configurazione non
@@ -924,12 +981,48 @@ static void wifiOff()
 	// La connessione Tuya resta aperta dopo il publish e si rilascia solo a
 	// radio spenta: con la radio su la chiusura farebbe segnare offline il device.
 	Tuya::releaseSession();
+	restoreCpuAfterNetwork();
+}
+
+/** Motivo dell'ultimo riavvio in parole, per il log del boot. */
+static const char *resetReasonText(esp_reset_reason_t reason)
+{
+	switch (reason)
+	{
+	case ESP_RST_POWERON:   return "accensione";
+	case ESP_RST_EXT:       return "pin di reset";
+	case ESP_RST_SW:        return "riavvio software";
+	case ESP_RST_PANIC:     return "panic";
+	case ESP_RST_INT_WDT:   return "watchdog degli interrupt";
+	case ESP_RST_TASK_WDT:  return "watchdog del loop";
+	case ESP_RST_WDT:       return "altro watchdog";
+	case ESP_RST_DEEPSLEEP: return "risveglio da deep sleep";
+	case ESP_RST_BROWNOUT:  return "brownout";
+	default:                return "altro";
+	}
+}
+
+/**
+ * Task watchdog sul loop, che il core lascia spento: un blocco senza limite
+ * congelerebbe il dispositivo fino a un power cycle. Il timeout è unico per
+ * tutto il watchdog, quindi sale da 5 s a LOOP_WDT_TIMEOUT_MS anche per l'idle
+ * del core 0, che resta sorvegliato; allo scatto il panic scrive il coredump e
+ * riavvia. Il light sleep non va escluso: l'idle del core 0 è sorvegliato già
+ * oggi e il dispositivo dorme cicli interi senza che il watchdog scatti.
+ */
+static void startLoopWatchdog()
+{
+	const esp_task_wdt_config_t config = { LOOP_WDT_TIMEOUT_MS, 1U << 0, true };
+	if (esp_task_wdt_reconfigure(&config) != ESP_OK || esp_task_wdt_add(nullptr) != ESP_OK)
+		LOG("boot", "watchdog del loop non attivato");
 }
 
 void setup()
 {
 	Serial.begin(115200);
 	delay(1000);
+	LOG("boot", "motivo del riavvio: %s", resetReasonText(esp_reset_reason()));
+	startLoopWatchdog();
 
 	// Prima di ogni modulo: le cadenze salvate in NVS vanno lette e portate
 	// dentro i limiti prima che qualcuno le usi.
@@ -1012,6 +1105,7 @@ void setup()
  */
 void loop()
 {
+	esp_task_wdt_reset();
 	if (Maintenance::finestraAperta())
 	{
 		Maintenance::servi();
@@ -1047,8 +1141,8 @@ void loop()
 	 * _PowerOff() interno a hibernate() è un no-op e resta solo il comando di
 	 * deep sleep. Con un riferimento valido il controller resta invece in
 	 * Sleep (25-40 uA) e conserva le due RAM, che il frame successivo usa per
-	 * il partial. Idempotente: nei giri senza ridisegno la chiamata non fa
-	 * niente.
+	 * il partial. Idempotente: dopo il primo deep sleep, nei giri senza
+	 * ridisegno la chiamata non manda niente al controller.
 	 *
 	 * Al risveglio dal deep sleep non serve fare niente da qui: alla prima
 	 * scrittura il driver esegue reset hardware, SWRESET e init, e ripulisce i
