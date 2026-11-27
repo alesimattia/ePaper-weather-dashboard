@@ -434,29 +434,67 @@ namespace Weather
     }
 
     /**
-     * Disegna un blocco meteo del banner centrato sul proprio asse: orario,
-     * icona, temperatura percepita e la riga sotto, etichetta o
-     * precipitazioni. Il blocco corrente salta l'orario, che drawBanner()
-     * scrive accanto al titolo "Meteo". Uno slot non valido non ha icona e
-     * mostra "--", perchè l'icona di ripiego sembrerebbe un dato.
+     * Divide sul posto il testo in due righe che rientrano in maxW nel font
+     * corrente, spezzando su uno spazio e mai dentro una parola. Fra i punti
+     * possibili sceglie quello con la riga più lunga più corta, così le due
+     * righe restano bilanciate; senza un punto valido il testo resta intatto.
+     *
+     * @return true se ha diviso: la prima riga resta in text, la seconda va in second.
+     */
+    inline bool splitInTwoLines(char* text, char* second, size_t secondLen, int16_t maxW)
+    {
+      const size_t length = strlen(text);
+      size_t  bestSplit = 0;
+      int16_t bestWidth = INT16_MAX;
+      for (size_t i = 1; i + 1 < length; ++i)
+      {
+        if (text[i] != ' ') continue;
+        text[i] = '\0';
+        const int16_t firstWidth  = Graphics::textWidth(text);
+        const int16_t secondWidth = Graphics::textWidth(text + i + 1);
+        text[i] = ' ';
+        const int16_t widest = firstWidth > secondWidth ? firstWidth : secondWidth;
+        if (widest <= maxW && widest < bestWidth)
+        {
+          bestWidth = widest;
+          bestSplit = i;
+        }
+      }
+      if (bestSplit == 0) return false;
+      text[bestSplit] = '\0';
+      copyStr(second, secondLen, text + bestSplit + 1);
+      return true;
+    }
+
+    /**
+     * Disegna un blocco meteo del banner centrato su axisX: orario, icona,
+     * temperatura percepita e la riga sotto, etichetta o precipitazioni. Uno
+     * slot non valido non ha icona e mostra "--", perchè l'icona di ripiego
+     * sembrerebbe un dato.
+     *
+     * Il blocco corrente salta l'orario, che sta accanto al titolo "Meteo", ha
+     * la temperatura in nero perchè in rosso ogni suo cambio impedirebbe il
+     * refresh parziale, e alza icona e temperatura di un passo di riga perchè
+     * una riga di più parole vada sempre su due righe.
      *
      * @param slotIdx  indice dello slot in `slots[]`: 0 = corrente, 1..3 = previsioni.
-     * @param blockX   x (px) del margine sinistro del blocco.
-     * @param blockW   larghezza (px) del blocco.
+     * @param axisX    asse (px) di icona, temperatura e riga sotto.
+     * @param descW    larghezza (px) dell'area della riga sotto, centrata su axisX.
      */
-    inline void renderBlock(uint8_t slotIdx, int16_t blockX, int16_t blockW)
+    inline void renderBlock(uint8_t slotIdx, int16_t axisX, int16_t descW)
     {
-      const int16_t centerX  = blockX + blockW / 2;
-      const int16_t descMaxW = blockW - 2 * Layout::WX_DESC_SIDE_PAD;
-      const WeatherSlot& s   = slots[slotIdx];
+      const WeatherSlot& s     = slots[slotIdx];
+      const bool     isCurrent = (slotIdx == 0);
+      const int16_t  lift      = isCurrent ? Layout::CURRENT_DESC_LINE_PITCH : 0;
+      const uint16_t tempColor = isCurrent ? GxEPD_BLACK : GxEPD_RED;
 
-      if (slotIdx != 0)
+      if (!isCurrent)
       {
         // Uno slot scaduto conserva l'epoch, ma l'ora sopra un "--" non è un dato.
         char hhmm[6];
         formatHHMM(s.valid ? s.epoch : 0, hhmm);
         display.setFont(Layout::FONT_BODY);
-        Graphics::drawCentered(hhmm, centerX, Layout::WX_TIME_BASELINE, GxEPD_BLACK);
+        Graphics::drawCentered(hhmm, axisX, Layout::WX_TIME_BASELINE, GxEPD_BLACK);
       }
 
       /**
@@ -467,40 +505,54 @@ namespace Weather
       if (s.valid)
       {
         const WeatherIcons::Icon& icon = WeatherIcons::forCondition(s.conditionId, s.night);
-        const int16_t iconX = centerX - WeatherIcons::SIDE / 2;
-        const int16_t iconY = Layout::WX_ICON_Y + (Layout::ICON_SIZE - WeatherIcons::SIDE) / 2;
+        const int16_t iconX = axisX - WeatherIcons::SIDE / 2;
+        const int16_t iconY = Layout::WX_ICON_Y - lift + (Layout::ICON_SIZE - WeatherIcons::SIDE) / 2;
         if (icon.black)
           display.drawBitmap(iconX, iconY, icon.black, WeatherIcons::SIDE, WeatherIcons::SIDE, GxEPD_BLACK);
         if (icon.red)
           display.drawBitmap(iconX, iconY, icon.red, WeatherIcons::SIDE, WeatherIcons::SIDE, GxEPD_RED);
       }
 
-      /** Temperatura percepita in rosso, con il pallino disegnato come
-       *  cerchietto (i font 7b non hanno il glifo °). */
+      /** Temperatura percepita con il pallino disegnato come cerchietto (i
+       *  font 7b non hanno il glifo °). */
       display.setFont(Layout::FONT_LARGE_BOLD);
       if (s.valid)
       {
         char numStr[8];
         formatRoundedTemp(s.feelsLikeC, numStr, sizeof(numStr));
-        drawTempWithDegree(numStr, centerX, Layout::WX_TEMP_BASELINE, GxEPD_RED, 3, 18, true);
+        drawTempWithDegree(numStr, axisX, Layout::WX_TEMP_BASELINE - lift, tempColor, 3, 18, true);
       }
       else
       {
-        Graphics::drawCentered("--", centerX, Layout::WX_TEMP_BASELINE, GxEPD_RED);
+        Graphics::drawCentered("--", axisX, Layout::WX_TEMP_BASELINE - lift, tempColor);
       }
 
-      // Una riga troppo larga per FONT_BODY passa a FONT_SMALL; il troncamento
-      // resta come salvaguardia, ma etichette e "pop% mm" entrano sempre.
+      // Nel blocco corrente una riga di più parole va sempre su due righe. Una
+      // riga, o una delle due, che non entra in FONT_BODY passa a FONT_SMALL;
+      // il troncamento resta come salvaguardia.
       char descBuf[24];
+      char secondLine[24] = "";
       if (s.valid) composeDescLine(s, descBuf, sizeof(descBuf));
       else         strcpy(descBuf, "--");
+      const bool splitWords = isCurrent && strchr(descBuf, ' ') != nullptr;
       display.setFont(Layout::FONT_BODY);
-      if (Graphics::textWidth(descBuf) > descMaxW)
+      if (splitWords ? !splitInTwoLines(descBuf, secondLine, sizeof(secondLine), descW)
+                     : Graphics::textWidth(descBuf) > descW)
       {
         display.setFont(Layout::FONT_SMALL);
-        Graphics::truncateToWidth(descBuf, descMaxW);
+        if (splitWords ? !splitInTwoLines(descBuf, secondLine, sizeof(secondLine), descW)
+                       : Graphics::textWidth(descBuf) > descW)
+          Graphics::truncateToWidth(descBuf, descW);
       }
-      Graphics::drawCentered(descBuf, centerX, Layout::WX_DESC_BASELINE, GxEPD_BLACK);
+      if (secondLine[0] != '\0')
+      {
+        Graphics::drawCentered(descBuf, axisX, Layout::WX_DESC_BASELINE - Layout::CURRENT_DESC_LINE_PITCH, GxEPD_BLACK);
+        Graphics::drawCentered(secondLine, axisX, Layout::WX_DESC_BASELINE, GxEPD_BLACK);
+      }
+      else
+      {
+        Graphics::drawCentered(descBuf, axisX, Layout::WX_DESC_BASELINE, GxEPD_BLACK);
+      }
     }
 
     /**
@@ -524,16 +576,14 @@ namespace Weather
     }
 
     /**
-     * Disegna una riga della colonna alba/tramonto: icona rossa e orario nero,
-     * centrati insieme su centerX.
+     * Disegna un gruppo della riga alba/tramonto, icona rossa e orario nero, a
+     * partire da leftX: l'icona sta ferma qualunque siano le cifre.
      */
-    inline void drawSunRow(const uint8_t* icon, const char* txt, int16_t centerX, int16_t baselineY)
+    inline void drawSunRow(const uint8_t* icon, const char* txt, int16_t leftX, int16_t baselineY)
     {
-      const int16_t totalW = Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP + Graphics::textWidth(txt);
-      const int16_t startX = centerX - totalW / 2;
-      display.drawBitmap(startX, Graphics::smallIconY(baselineY), icon,
+      display.drawBitmap(leftX, Graphics::smallIconY(baselineY), icon,
                          Layout::SMALL_ICON_SIZE, Layout::SMALL_ICON_SIZE, GxEPD_RED);
-      Graphics::drawLeftAligned(txt, startX + Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP,
+      Graphics::drawLeftAligned(txt, leftX + Layout::SMALL_ICON_SIZE + Layout::SMALL_ICON_GAP,
                                 baselineY, GxEPD_BLACK);
     }
 
@@ -559,14 +609,17 @@ namespace Weather
      *
      * Va chiamata dentro il loop paged, da renderSunColumn.
      *
-     * Geometria: la cella logica del widget è larga Layout::TRB_W, con
-     * origine a (centerX - bufCenterX, baselineY + Layout::TRB_CELL_Y_OFFSET).
-     * La barra sta a cellY + 7 spessa 4 px, il triangolo ha la base sul bordo
-     * alto della cella e il vertice sulla barra. Ogni cifra si posiziona con
-     * il proprio bearing e il proprio cerchietto con la propria altezza.
+     * Geometria: la cella logica del widget è larga Layout::TRB_W, quanto il
+     * grafico con le sue etichette, con origine a (centerX - TRB_W / 2,
+     * baselineY + Layout::TRB_CELL_Y_OFFSET). L'inchiostro della cifra
+     * sinistra parte dal bordo sinistro della cella e il cerchietto della
+     * destra finisce sul suo ultimo pixel, a filo di grafico e asse. La barra
+     * sta a cellY + 7 spessa 4 px, il triangolo ha la base sul bordo alto
+     * della cella e il vertice sulla barra. Ogni cifra si posiziona con il
+     * proprio bearing e il proprio cerchietto con la propria altezza.
      *
-     * @param centerX    centro orizzontale (display) del punto medio della
-     *                   barra, allineato col centro della colonna sole.
+     * @param centerX    centro orizzontale (display) della cella, lo stesso
+     *                   asse del grafico.
      * @param baselineY  baseline delle cifre (= Layout::TRB_BASELINE).
      */
     inline void drawTempRangeBar(int16_t centerX, int16_t baselineY)
@@ -586,7 +639,6 @@ namespace Weather
       display.getTextBounds(labL, 0, 0, &x1L, &y1L, &wL, &hL);
       display.getTextBounds(labR, 0, 0, &x1R, &y1R, &wR, &hR);
 
-      const int16_t PAD      = 2;
       // Il triangolo sporge di TRI_HALF oltre l'estremo della barra quando la
       // percepita lo raggiunge: il distacco dalle cifre lo copre e lascia
       // una colonna libera prima del loro inchiostro.
@@ -599,11 +651,10 @@ namespace Weather
 
       // Estremi della barra dentro la cella, e origine della cella sul
       // display: un unico conto per barra, triangolo e cifre.
-      const int16_t barLeft    = PAD + labSlotL + GAP;
-      const int16_t barRight   = Layout::TRB_W - PAD - labSlotR - GAP;
+      const int16_t barLeft    = labSlotL + GAP;
+      const int16_t barRight   = Layout::TRB_W - labSlotR - GAP;
       const int16_t barWidth   = barRight - barLeft;
-      const int16_t bufCenterX = (barLeft + barRight) / 2;
-      const int16_t cellX      = centerX - bufCenterX;
+      const int16_t cellX      = centerX - Layout::TRB_W / 2;
       const int16_t cellY      = baselineY + Layout::TRB_CELL_Y_OFFSET;
 
       const int16_t barY  = 7;
@@ -626,13 +677,13 @@ namespace Weather
       display.setTextColor(GxEPD_BLACK);
 
       // Cifra sinistra con il cerchietto dei gradi vicino al suo apice.
-      display.setCursor(cellX + PAD - x1L, baselineY);
+      display.setCursor(cellX - x1L, baselineY);
       display.print(labL);
-      const int16_t degXL = cellX + PAD + (int16_t)wL + DEG_GAP + degR;
+      const int16_t degXL = cellX + (int16_t)wL + DEG_GAP + degR;
       display.drawCircle(degXL, baselineY - (int16_t)hL + degR + 1, degR, GxEPD_BLACK);
 
       // Cifra destra, con bearing e altezza propri.
-      const int16_t rightLabX = cellX + Layout::TRB_W - PAD - labSlotR;
+      const int16_t rightLabX = cellX + Layout::TRB_W - labSlotR;
       display.setCursor(rightLabX - x1R, baselineY);
       display.print(labR);
       const int16_t degXR = rightLabX + (int16_t)wR + DEG_GAP + degR;
@@ -675,8 +726,8 @@ namespace Weather
      * Disegna il mini-chart temperatura sopra la slider temp-range.
      * Larghezza Layout::TC_W centrata su `centerX`, altezza Layout::TC_H
      * a partire da `topY`. Curva, asse, tick, ore e pallino stanno a destra
-     * della colonna Layout::TC_LABEL_W, dove si allineano a destra le
-     * temperature minima e massima, in FONT_SMALL come le ore.
+     * della colonna Layout::TC_LABEL_W, dove si allineano a destra i limiti
+     * dell'asse delle temperature, in FONT_SMALL come le ore.
      *
      * @param centerX centro orizzontale (display) del chart.
      * @param topY    y assoluto del bordo superiore dell'area chart.
@@ -721,22 +772,19 @@ namespace Weather
       const int16_t plotTop = topY + 6;
       const int16_t plotBot = axisY - 1;
 
-      /** Range Y con clamp minimo di 1°C per evitare divisioni piatte. */
+      /** Range Y su gradi interi, il minimo per difetto e il massimo per
+       *  eccesso, così le etichette sono i limiti veri dell'asse; almeno un
+       *  grado fra i due, perchè dati tutti uguali a un intero darebbero un
+       *  range nullo. */
       float tmin = pts[0].t, tmax = pts[0].t;
       for (size_t i = 1; i < n; ++i)
       {
         if (pts[i].t < tmin) tmin = pts[i].t;
         if (pts[i].t > tmax) tmax = pts[i].t;
       }
-      // Le etichette mostrano i valori dei dati, non il margine aggiunto qui
-      // sotto per dare altezza a una curva piatta.
-      const float dataMin = tmin, dataMax = tmax;
-      if (tmax - tmin < 1.0f)
-      {
-        const float mid = (tmax + tmin) * 0.5f;
-        tmin = mid - 0.5f;
-        tmax = mid + 0.5f;
-      }
+      tmin = floorf(tmin);
+      tmax = ceilf(tmax);
+      if (tmax - tmin < 1.0f) tmax = tmin + 1.0f;
 
       /** Mappature epoch->x e t->y. Clamp ai bordi per non sforare. */
       auto mapX = [&](time_t e) -> int16_t
@@ -853,13 +901,13 @@ namespace Weather
       drawHour(eMid, xMid,       false, false);
       drawHour(e1,   chartR - 1, false, true);
 
-      /** Temperature massima e minima allineate a destra verso la curva, con
-       *  la massima che parte dalla cima dell'area di plot. */
+      /** Limiti dell'asse allineati a destra verso la curva, con il massimo
+       *  che parte dalla cima dell'area di plot. */
       char numBuf[8];
       const int16_t labRightX = chartL - 3;
-      formatRoundedTemp(dataMax, numBuf, sizeof(numBuf));
+      formatRoundedTemp(tmax, numBuf, sizeof(numBuf));
       Graphics::drawRightAligned(numBuf, labRightX, plotTop + Graphics::capHeight(), GxEPD_BLACK);
-      formatRoundedTemp(dataMin, numBuf, sizeof(numBuf));
+      formatRoundedTemp(tmin, numBuf, sizeof(numBuf));
       Graphics::drawRightAligned(numBuf, labRightX, axisY - 1, GxEPD_BLACK);
 
       /** Pallino sulla temperatura corrente (sopra la curva). */
@@ -926,8 +974,9 @@ namespace Weather
 
 #ifdef INDOOR_SENSOR_BME680
       // Qualità dell'aria: etichetta e indice, con l'accuratezza come pedice.
-      // Se testo e pedice superano il margine destro del riquadro, il testo
-      // ripiega su FONT_SMALL come le righe dei blocchi meteo.
+      // Se il pedice, che parte dal cursore dopo il testo, supera il margine
+      // destro del riquadro, il testo ripiega su FONT_SMALL come le righe dei
+      // blocchi meteo.
       char accStr[4];
       snprintf(accStr, sizeof(accStr), "%u", (unsigned)s.iaqAccuracy);
       display.setFont(Layout::FONT_SMALL);
@@ -938,7 +987,8 @@ namespace Weather
         // Etichetta e numero dallo stesso valore arrotondato: restano coerenti.
         const uint16_t iaqShown = Indoor::shownIaq(s.iaq);
         snprintf(buf, sizeof(buf), "%s %u", Indoor::iaqLabel(iaqShown), (unsigned)iaqShown);
-        if (textX + Graphics::textWidth(buf) + subscriptW > Layout::INDOOR_X + Layout::INDOOR_W - Layout::BOX_PAD)
+        if (Graphics::cursorEndX(buf, textX, Layout::FONT_BODY) + subscriptW
+            > Layout::INDOOR_X + Layout::INDOOR_W - Layout::BOX_PAD)
           display.setFont(Layout::FONT_SMALL);
       }
       else strcpy(buf, "--");
@@ -956,8 +1006,9 @@ namespace Weather
      * Disegna la colonna sole nel riquadro Meteo, a destra del blocco
      * corrente: in cima il grafico della temperatura percepita
      * (@widget storico-temperature), sotto la barra mattino/sera
-     * (@widget slider-temp-range) e in fondo alba e tramonto di oggi con le
-     * icone in rosso, centrati su Layout::SUN_COL_CENTER_X.
+     * (@widget slider-temp-range) e in fondo alba e tramonto di oggi sulla
+     * stessa riga, con le icone in rosso, tutti centrati su
+     * Layout::SUN_COL_CENTER_X.
      */
     inline void renderSunColumn()
     {
@@ -967,10 +1018,10 @@ namespace Weather
       display.setFont(Layout::FONT_BODY);
       char hhmm[6];
       formatHHMM(sunriseEpoch, hhmm);
-      drawSunRow(INDOOR_ICON_SUNRISE, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUNRISE_BASELINE);
+      drawSunRow(INDOOR_ICON_SUNRISE, hhmm, Layout::SUNRISE_X, Layout::SUN_ROW_BASELINE);
 
       formatHHMM(sunsetEpoch, hhmm);
-      drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUN_COL_CENTER_X, Layout::SUNSET_BASELINE);
+      drawSunRow(INDOOR_ICON_SUNSET, hhmm, Layout::SUNSET_X, Layout::SUN_ROW_BASELINE);
     }
 
     /** Titolo del riquadro Meteo, misurato per accodargli l'orario. */
@@ -1040,10 +1091,11 @@ namespace Weather
         drawIndoorTuyaBadge();
 
       renderIndoorBox();
-      renderBlock(0, Layout::CURRENT_BLOCK_X, Layout::CURRENT_BLOCK_W);
+      renderBlock(0, Layout::CURRENT_AXIS_X, Layout::CURRENT_DESC_W);
       renderSunColumn();
       for (uint8_t i = 0; i < 3; ++i)
-        renderBlock(1 + i, Layout::FORECAST_X + i * Layout::FORECAST_BLOCK_W, Layout::FORECAST_BLOCK_W);
+        renderBlock(1 + i, Layout::FORECAST_X + i * Layout::FORECAST_BLOCK_W + Layout::FORECAST_BLOCK_W / 2,
+                    Layout::FORECAST_BLOCK_W - 2 * Layout::WX_DESC_SIDE_PAD);
     }
 
     /**

@@ -120,15 +120,17 @@ di `PARTIAL_TEMP_HYSTERESIS_C`.
 ## Perchè questi elementi sono in nero
 
 Un testo rosso che cambia a ogni ciclo o a ogni fetch impedisce il partial. Sono in nero la temperatura
-del riquadro Interno e il suo "--" e il tratto previsione del grafico.
+del riquadro Interno e il suo "--", la temperatura del blocco meteo corrente e il suo "--" (cambia a
+ogni fetch) e il tratto previsione del grafico.
 La previsione è tratteggiata (`TC_DASH_ON` e `TC_DASH_OFF` in `Layout_common.h`) per restare
 distinguibile dal passato; la fase parte dal vertice "adesso", con un contatore locale a
 `drawTempChart` che avanza solo sui passi della previsione, e va replicata uguale in
-`tools/layout_preview.py`. Restano rossi, con il loro ritmo di cambio: temperature e icone dei blocchi
-meteo (le previsioni `hourly[3/6/9]` scorrono con l'ora), eventi di oggi e cella di oggi, icone di
+`tools/layout_preview.py`. Restano rossi, con il loro ritmo di cambio: temperature delle previsioni e
+icone dei blocchi meteo (le previsioni `hourly[3/6/9]` scorrono con l'ora, l'icona corrente cambia con
+la condizione), eventi di oggi e cella di oggi, icone di
 alba e tramonto, badge Tuya, cinema (una volta al giorno) e percorso. **Il percorso dalle 7 alle 9 si
 scarica a ogni ciclo e contiene rosso che cambia quasi sempre**, quindi quei frame sono quasi tutti
-pieni. Mettere in nero anche le temperature meteo rende poco: la quota di partial ha comunque il tetto
+pieni. Mettere in nero anche le temperature delle previsioni rende poco: la quota di partial ha comunque il tetto
 N/(N+1) della catena e un frame rifiutato azzera la catena.
 
 ## Verifica

@@ -90,12 +90,11 @@ static void verificaImpostazioni()
 
   Settings s = get();
   s.destinationLatE6 = 43500000; s.destinationLngE6 = -13300000;
-  s.fuel = Fuel::Diesel;
   s.cinemaStartMin = 19 * 60; s.cinemaEndMin = 22 * 60;
   const char* motivo = nullptr;
-  ok(apply(s, &motivo) && save(), "arrivo, carburante e fascia cinema applicati e salvati");
+  ok(apply(s, &motivo) && save(), "arrivo e fascia cinema applicati e salvati");
   begin();
-  ok(hasDestination() && get().fuel == Fuel::Diesel && get().destinationLngE6 == -13300000 &&
+  ok(hasDestination() && get().destinationLngE6 == -13300000 &&
          get().cinemaStartMin == 19 * 60 && get().cinemaEndMin == 22 * 60,
      "  riletti da NVS dopo un riavvio");
 
@@ -103,8 +102,8 @@ static void verificaImpostazioni()
   const int n = buildUrl(url, sizeof url, "https://x", 610, 290, "bwr");
   ok(n > 0 && n < (int)sizeof url &&
          strcmp(url, "https://x/route?origin=43.615800,13.518900&destination=43.500000,-13.300000"
-                     "&fuel=diesel&width=610&height=290&format=arduino&colors=bwr&dither=floyd") == 0,
-     "URL con coordinata negativa");
+                     "&eco=false&width=610&height=290&format=arduino&colors=bwr&dither=floyd") == 0,
+     "URL con coordinata negativa e il solo percorso più veloce");
 
   Settings f = get(); f.windowStartMin = 540; f.windowEndMin = 540;
   ok(!apply(f, nullptr) && get().windowStartMin == 420, "fascia vuota respinta, stato invariato");
@@ -128,8 +127,8 @@ static void verificaImpostazioni()
   ok(Timings::applica(w, nullptr), "fascia WiFi ristretta a 7..22");
   begin();
   ok(get().cinemaStartMin == 18 * 60 && get().cinemaEndMin == 21 * 60, "  fasce tornate ai default al boot");
-  ok(hasDestination() && get().destinationLngE6 == -13300000 && get().fuel == Fuel::Diesel,
-     "  la destinazione e il carburante salvati si conservano");
+  ok(hasDestination() && get().destinationLngE6 == -13300000,
+     "  la destinazione salvata si conserva");
 
   // Il contrario: coordinate non valide in NVS tornano ai default da sole e le
   // fasce salvate restano. Il ripristino dei tempi svuota anche lo stub di NVS.
@@ -140,8 +139,8 @@ static void verificaImpostazioni()
   ok(apply(v, nullptr) && save(), "arrivo e fascia cinema 19:00-22:00 salvati");
   Preferences::storeInt["orig_lat"] = 95000000;   // latitudine fuori range
   begin();
-  ok(get().originLatE6 == DEFAULTS.originLatE6 && !hasDestination() && get().fuel == DEFAULTS.fuel,
-     "partenza fuori range: coordinate e carburante tornano ai default");
+  ok(get().originLatE6 == DEFAULTS.originLatE6 && !hasDestination(),
+     "partenza fuori range: le coordinate tornano ai default");
   ok(get().cinemaStartMin == 19 * 60 && get().cinemaEndMin == 22 * 60,
      "  le fasce salvate restano");
 
@@ -157,7 +156,10 @@ static void verificaImpostazioni()
 static void verificaRiquadro()
 {
   using namespace Routefinder;
+  // Entrambe le fasce esplicite: quella del cinema salvata dalle verifiche delle
+  // impostazioni resterebbe in RAM e sposterebbe gli orari attesi qui sotto.
   Settings s = get(); s.windowStartMin = 7 * 60 + 30; s.windowEndMin = 9 * 60;
+  s.cinemaStartMin = 18 * 60; s.cinemaEndMin = 21 * 60;
   ok(apply(s, nullptr), "fascia percorso 07:30-09:00, cinema 18:00-21:00");
   setOverride(Source::Auto);
   g_msFinto = 1000000;

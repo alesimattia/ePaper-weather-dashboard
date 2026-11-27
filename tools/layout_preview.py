@@ -511,6 +511,10 @@ class Frame:
     def text_width(self, text):
         return self.c.text_bounds(text)[2]
 
+    def cursor_end_x(self, text, left_x):
+        """Graphics::cursorEndX(): cursore dopo l'ultimo carattere di draw_left(), senza disegnare."""
+        return left_x - self.c.text_bounds(text)[0] + sum(glyph[3] for glyph in map(self.c.font.glyph, text) if glyph)
+
     def cap_height(self):
         return self.c.text_bounds("H")[3]
 
@@ -657,10 +661,11 @@ class Frame:
             c.fill_rect(right_x - width - 4, border_y - 1, width + 8, 3, WHITE)
             self.draw_right("TUYA ERR", right_x, border_y + self.cap_height() // 2, RED)
         self.draw_indoor()
-        self.draw_block(0, L["CURRENT_BLOCK_X"], L["CURRENT_BLOCK_W"])
+        self.draw_block(0, L["CURRENT_AXIS_X"], L["CURRENT_DESC_W"])
         self.draw_sun_column()
         for index in range(3):
-            self.draw_block(1 + index, L["FORECAST_X"] + index * L["FORECAST_BLOCK_W"], L["FORECAST_BLOCK_W"])
+            self.draw_block(1 + index, L["FORECAST_X"] + index * L["FORECAST_BLOCK_W"] + L["FORECAST_BLOCK_W"] // 2,
+                            L["FORECAST_BLOCK_W"] - 2 * L["WX_DESC_SIDE_PAD"])
 
     def draw_weather_title_time(self):
         """Weather::drawWeatherTitleTime(): orario del corrente in FONT_BODY sulla baseline del titolo
@@ -700,39 +705,56 @@ class Frame:
         self.draw_left("mBar", end + L["INDOOR_UNIT_GAP"], L["INDOOR_ROW3_BASELINE"], BLACK)
         if not self.sources["indoor_has_iaq"]:
             return
-        # L'IAQ ripiega su FONT_SMALL quando con il pedice supera il margine destro del riquadro.
+        # L'IAQ ripiega su FONT_SMALL quando il pedice, che parte dal cursore dopo il testo, supera il
+        # margine destro del riquadro.
         accuracy = str(SAMPLE_INDOOR["acc"])
         subscript_w = L["INDOOR_UNIT_GAP"] + self.text_width(accuracy)
         iaq = shown_iaq(SAMPLE_INDOOR["iaq"])
         text = f"{iaq_label(iaq)} {iaq}"
         self.font("BODY")
-        if text_x + self.text_width(text) + subscript_w > L["INDOOR_X"] + L["INDOOR_W"] - L["BOX_PAD"]:
+        if self.cursor_end_x(text, text_x) + subscript_w > L["INDOOR_X"] + L["INDOOR_W"] - L["BOX_PAD"]:
             self.font("SMALL")
         end = row("AIR_QUALITY", text, L["INDOOR_ROW4_BASELINE"])
         self.font("SMALL")
         self.draw_left(accuracy, end + L["INDOOR_UNIT_GAP"],
                        L["INDOOR_ROW4_BASELINE"] + L["INDOOR_SUBSCRIPT_DROP"], BLACK)
 
-    def draw_block(self, slot_index, block_x, block_w):
+    def split_in_two_lines(self, text, max_w):
+        """splitInTwoLines(): due righe entro max_w nel font corrente, spezzate su uno spazio, con la
+        riga più lunga più corta; None se nessuno spazio va bene."""
+        best = None
+        for index in range(1, len(text) - 1):
+            if text[index] != " ":
+                continue
+            first, second = text[:index], text[index + 1:]
+            widest = max(self.text_width(first), self.text_width(second))
+            if widest <= max_w and (best is None or widest < best[0]):
+                best = (widest, first, second)
+        return None if best is None else best[1:]
+
+    def draw_block(self, slot_index, axis_x, desc_w):
         """Weather::renderBlock(): orario, icona, percepita e riga sotto (etichetta o pioggia). Il
-        blocco corrente salta l'orario, che sta accanto al titolo Meteo."""
+        blocco corrente salta l'orario, che sta accanto al titolo Meteo, ha la percepita in nero,
+        icona e percepita un passo di riga più in alto e la riga sotto di più parole su due righe."""
         L, c = self.L, self.c
         side, icons, conditions, fallback = self.sources["weather_icons"]
         slot = SAMPLE_SLOTS[slot_index]
-        center_x = block_x + block_w // 2
-        if slot_index != 0:
+        is_current = slot_index == 0
+        lift = L["CURRENT_DESC_LINE_PITCH"] if is_current else 0
+        if not is_current:
             self.font("BODY")
-            self.draw_centered((NOW + timedelta(hours=3 * slot_index)).strftime("%H:%M"), center_x, L["WX_TIME_BASELINE"], BLACK)
+            self.draw_centered((NOW + timedelta(hours=3 * slot_index)).strftime("%H:%M"), axis_x, L["WX_TIME_BASELINE"], BLACK)
 
         row = next((cond for cond in conditions if cond[0] <= slot["id"] <= cond[1]), None)
         black, red = icons[(row[3] if slot["night"] else row[2]) if row else fallback]
-        icon_x = center_x - side // 2
-        icon_y = L["WX_ICON_Y"] + (L["ICON_SIZE"] - side) // 2
+        icon_x = axis_x - side // 2
+        icon_y = L["WX_ICON_Y"] - lift + (L["ICON_SIZE"] - side) // 2
         c.bitmap(icon_x, icon_y, black, side, side, BLACK)
         c.bitmap(icon_x, icon_y, red, side, side, RED)
 
         self.font("LARGE_BOLD")
-        self.temp_with_degree(str(round_half_away(slot["feels"])), center_x, L["WX_TEMP_BASELINE"], RED, 3, 18, True)
+        self.temp_with_degree(str(round_half_away(slot["feels"])), axis_x, L["WX_TEMP_BASELINE"] - lift,
+                              BLACK if is_current else RED, 3, 18, True)
 
         has_rain = slot["rain"] is not None and slot["rain"] > 0
         has_snow = slot["snow"] is not None and slot["snow"] > 0
@@ -741,26 +763,37 @@ class Frame:
         else:
             volume = (slot["rain"] if has_rain else 0.0) + (slot["snow"] if has_snow else 0.0)
             text = f"{round_half_away(slot['pop'] * 100)}% {volume:.1f}mm"
-        max_w = block_w - 2 * L["WX_DESC_SIDE_PAD"]
-        self.font("BODY")
-        if self.text_width(text) > max_w:
-            self.font("SMALL")
-            text = self.truncate(text, max_w)
-        self.draw_centered(text, center_x, L["WX_DESC_BASELINE"], BLACK)
+        # Nel corrente una riga di più parole va sempre su due righe; ciò che non entra in FONT_BODY
+        # passa a FONT_SMALL e poi si tronca.
+        split_words = is_current and " " in text
+        lines = None
+        for font in ("BODY", "SMALL"):
+            self.font(font)
+            if split_words:
+                split = self.split_in_two_lines(text, desc_w)
+                if split:
+                    lines = list(split)
+                    break
+            elif self.text_width(text) <= desc_w:
+                lines = [text]
+                break
+        if lines is None:
+            lines = [self.truncate(text, desc_w)]
+        if len(lines) == 2:
+            self.draw_centered(lines[0], axis_x, L["WX_DESC_BASELINE"] - L["CURRENT_DESC_LINE_PITCH"], BLACK)
+        self.draw_centered(lines[-1], axis_x, L["WX_DESC_BASELINE"], BLACK)
 
     def draw_sun_column(self):
-        """Weather::renderSunColumn(): grafico in cima, barra mattino/sera, alba e tramonto in fondo."""
+        """Weather::renderSunColumn(): grafico in cima, barra mattino/sera, alba e tramonto sulla stessa
+        riga in fondo, ogni gruppo dal suo bordo sinistro come drawSunRow()."""
         L, c, icons = self.L, self.c, self.sources["small_icons"]
-        center_x = L["SUN_COL_CENTER_X"]
         self.draw_temp_chart(L["TC_CENTER_X"], L["TC_TOP_Y"])
-        self.draw_temp_range_bar(center_x, L["TRB_BASELINE"])
+        self.draw_temp_range_bar(L["SUN_COL_CENTER_X"], L["TRB_BASELINE"])
         self.font("BODY")
-        for icon, moment, baseline in (("SUNRISE", SAMPLE_SUN[0], L["SUNRISE_BASELINE"]),
-                                       ("SUNSET", SAMPLE_SUN[1], L["SUNSET_BASELINE"])):
-            text = moment.strftime("%H:%M")
-            start = center_x - c_div(L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"] + self.text_width(text), 2)
-            c.bitmap(start, self.small_icon_y(baseline), icons[icon], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], RED)
-            self.draw_left(text, start + L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"], baseline, BLACK)
+        baseline = L["SUN_ROW_BASELINE"]
+        for icon, moment, left in (("SUNRISE", SAMPLE_SUN[0], L["SUNRISE_X"]), ("SUNSET", SAMPLE_SUN[1], L["SUNSET_X"])):
+            c.bitmap(left, self.small_icon_y(baseline), icons[icon], L["SMALL_ICON_SIZE"], L["SMALL_ICON_SIZE"], RED)
+            self.draw_left(moment.strftime("%H:%M"), left + L["SMALL_ICON_SIZE"] + L["SMALL_ICON_GAP"], baseline, BLACK)
 
     def draw_temp_range_bar(self, center_x, baseline):
         """Weather::drawTempRangeBar(): barra, triangolo sulla percepita e cifre di mattino e sera."""
@@ -771,21 +804,21 @@ class Frame:
         label_l, label_r = str(round_half_away(morn)), str(round_half_away(eve))
         x1_l, _, w_l, h_l = c.text_bounds(label_l)
         x1_r, _, w_r, h_r = c.text_bounds(label_r)
-        pad, tri_half, deg_gap, deg_r = 2, 5, 2, 2
+        tri_half, deg_gap, deg_r = 5, 2, 2
         gap = tri_half + 2
         slot_l, slot_r = w_l + deg_gap + 2 * deg_r + 1, w_r + deg_gap + 2 * deg_r + 1
-        bar_left, bar_right = pad + slot_l + gap, L["TRB_W"] - pad - slot_r - gap
+        bar_left, bar_right = slot_l + gap, L["TRB_W"] - slot_r - gap
         bar_w = bar_right - bar_left
-        cell_x = center_x - (bar_left + bar_right) // 2
+        cell_x = center_x - L["TRB_W"] // 2
         cell_y = baseline + L["TRB_CELL_Y_OFFSET"]
         c.fill_rect(cell_x + bar_left, cell_y + 7, bar_w, 4, BLACK)
         low, high = min(morn, eve), max(morn, eve)
         ratio = 0.5 if high - low < 0.5 else min(max((current - low) / (high - low), 0.0), 1.0)
         cursor = cell_x + bar_left + int(ratio * bar_w + 0.5)
         c.fill_triangle(cursor - tri_half, cell_y, cursor + tri_half, cell_y, cursor, cell_y + 7, BLACK)
-        c.print(label_l, cell_x + pad - x1_l, baseline, BLACK)
-        c.draw_circle(cell_x + pad + w_l + deg_gap + deg_r, baseline - h_l + deg_r + 1, deg_r, BLACK)
-        right_label_x = cell_x + L["TRB_W"] - pad - slot_r
+        c.print(label_l, cell_x - x1_l, baseline, BLACK)
+        c.draw_circle(cell_x + w_l + deg_gap + deg_r, baseline - h_l + deg_r + 1, deg_r, BLACK)
+        right_label_x = cell_x + L["TRB_W"] - slot_r
         c.print(label_r, right_label_x - x1_r, baseline, BLACK)
         c.draw_circle(right_label_x + w_r + deg_gap + deg_r, baseline - h_r + deg_r + 1, deg_r, BLACK)
 
@@ -800,12 +833,11 @@ class Frame:
         chart_l, chart_r = center_x - L["TC_W"] // 2 + L["TC_LABEL_W"], center_x + L["TC_W"] // 2
         axis_y = top_y + L["TC_H"] - L["TC_AXIS_PAD_BOT"]
         plot_top, plot_bottom = top_y + 6, axis_y - 1
-        t_min, t_max = min(p[1] for p in points), max(p[1] for p in points)
-        # Le etichette mostrano i valori dei dati, non il margine di una curva piatta.
-        data_min, data_max = t_min, t_max
+        # Gradi interi, minimo per difetto e massimo per eccesso, con almeno un grado fra i due.
+        t_min = float(math.floor(min(p[1] for p in points)))
+        t_max = float(math.ceil(max(p[1] for p in points)))
         if t_max - t_min < 1.0:
-            middle = (t_max + t_min) * 0.5
-            t_min, t_max = middle - 0.5, middle + 0.5
+            t_max = t_min + 1.0
 
         def map_x(epoch):
             return min(max(chart_l + c_div((chart_r - chart_l) * (epoch - e0), e1 - e0), chart_l), chart_r)
@@ -858,8 +890,8 @@ class Frame:
             if clamp_right and text_x + x1 + width > chart_r:
                 text_x = chart_r - width - x1
             c.print(text, text_x, label_y, BLACK)
-        self.draw_right(str(round_half_away(data_max)), chart_l - 3, plot_top + self.cap_height(), BLACK)
-        self.draw_right(str(round_half_away(data_min)), chart_l - 3, axis_y - 1, BLACK)
+        self.draw_right(str(round_half_away(t_max)), chart_l - 3, plot_top + self.cap_height(), BLACK)
+        self.draw_right(str(round_half_away(t_min)), chart_l - 3, axis_y - 1, BLACK)
         c.fill_circle(map_x(now), map_y(SAMPLE_SLOTS[0]["feels"]), L["TC_DOT_R"], BLACK)
 
 

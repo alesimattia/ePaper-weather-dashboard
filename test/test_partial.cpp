@@ -63,11 +63,12 @@ struct PanelWith
   bool enabled = false;
   bool armResult = true;
   bool fired = true;
+  uint16_t refused = 0;
   void setDifferentialRefresh(bool on) { enabled = on; }
   bool beginDifferentialFrame() { return armResult; }
   bool endDifferentialFrame() { return fired; }
   uint8_t differentialChain() const { return 3; }
-  uint16_t differentialRefusedPages() const { return 0x0A; }
+  uint16_t differentialRefusedPages() const { return refused; }
 };
 struct PanelWithout {};
 struct PanelNegated { static const bool hasDifferentialRefresh = false; };
@@ -88,6 +89,30 @@ struct PanelSkipAndDiff : PanelWith
   bool frameSkipped() const { return skipped; }
 };
 struct PanelHalfSkip { void setSkipUnchanged(bool) {} };   // senza frameSkipped(): non vale
+
+/** Display finto per GxEPDFrame::render(): conta le passate del loop paged e le
+ *  pagine disegnate, così si vedono uscita anticipata e rifacimento in pieno. */
+template <class Epd>
+struct FakeDisplay
+{
+  Epd epd2;
+  int pages = 3;
+  int page = 0;
+  int passes = 0;
+  int drawn = 0;
+  void setFullWindow() {}
+  void firstPage() { page = 0; ++passes; }
+  bool nextPage() { return ++page < pages; }
+};
+
+/** Un frame su un display finto, con il disegno che conta solo le pagine. */
+template <class Epd>
+static GxEPDFrame::Outcome renderFake(FakeDisplay<Epd>& display, bool tryPartial)
+{
+  display.passes = 0;
+  display.drawn = 0;
+  return GxEPDFrame::render(display, [&display](uint16_t) { ++display.drawn; }, tryPartial);
+}
 
 static_assert(PartialRefresh::SupportsDifferential<PanelWith>::value, "PanelWith deve essere riconosciuto");
 static_assert(!PartialRefresh::SupportsDifferential<PanelWithout>::value, "PanelWithout non ha l'API");
@@ -423,19 +448,31 @@ int main()
   // Aggancio al driver
   // -----------------------------------------------------------------------
   {
-    PanelWith with;
-    PanelWithout without;
-    PanelNegated negated;
-    setEnabled(with, true);
-    ok(with.enabled, "con l'API setEnabled() arriva al driver");
-    ok(beginFrame(with) && endFrame(with), "con l'API beginFrame() e endFrame() arrivano al driver");
-    with.armResult = false;
-    ok(!beginFrame(with), "il driver che non arma lo dice");
-    ok(chain(with) == 3 && refusedPages(with) == 0x0A, "catena e mask arrivano dal driver");
-    setEnabled(without, true);
-    ok(!beginFrame(without) && !endFrame(without) && chain(without) == 0 && refusedPages(without) == 0,
+    // Gli agganci passano da GxEPDFrame::render(), il protocollo di ogni frame del firmware.
+    using GxEPDFrame::FrameResult;
+    FakeDisplay<PanelWith> with;
+    setEnabled(with.epd2, true);
+    ok(with.epd2.enabled, "con l'API setEnabled() arriva al driver");
+    GxEPDFrame::Outcome out = renderFake(with, true);
+    ok(out.armed && out.result == FrameResult::Partial && with.passes == 1 && with.drawn == with.pages,
+       "con l'API il frame si arma e il partial parte in una sola passata");
+    with.epd2.fired = false;
+    with.epd2.refused = 0x0A;
+    out = renderFake(with, true);
+    ok(out.result == FrameResult::Refused && out.refusedPages == 0x0A && with.passes == 2,
+       "rosso cambiato: frame rifiutato con la mask del driver e rifatto in pieno");
+    ok(with.drawn == 1 + with.pages, "la passata armata esce alla prima pagina rifiutata");
+    with.epd2.armResult = false;
+    out = renderFake(with, true);
+    ok(!out.armed && out.result == FrameResult::Full && with.passes == 1, "il driver che non arma fa un frame pieno");
+    ok(chain(with.epd2) == 3, "la catena arriva dal driver");
+    FakeDisplay<PanelWithout> without;
+    setEnabled(without.epd2, true);
+    out = renderFake(without, true);
+    ok(!out.armed && out.result == FrameResult::Full && chain(without.epd2) == 0,
        "un pannello senza l'API resta sul refresh pieno");
-    ok(!beginFrame(negated), "hasDifferentialRefresh = false vale come assente");
+    FakeDisplay<PanelNegated> negated;
+    ok(!renderFake(negated, true).armed, "hasDifferentialRefresh = false vale come assente");
 #if DISPLAY_PARTIAL_REFRESH
     ok(isAvailable<PanelWith>() && !isAvailable<PanelWithout>() && !isAvailable<PanelNegated>(),
        "interruttore acceso: disponibile solo con un driver che lo dichiara");
@@ -446,24 +483,28 @@ int main()
 
   {
     // Aggancio del salto: indipendente dal differenziale.
-    PanelSkip skip;
-    PanelSkipAndDiff both;
-    PanelWith diffOnly;
-    PanelWithout none;
-    PanelHalfSkip half;
-    setSkipUnchanged(skip, true);
-    ok(skip.skipOn, "con l'API setSkipUnchanged() arriva al driver");
-    skip.skipped = true;
-    ok(wasSkipped(skip), "wasSkipped() legge l'esito del driver");
-    setSkipUnchanged(both, true);
-    both.skipped = true;
-    ok(both.skipOn && wasSkipped(both), "un driver con differenziale e salto li usa entrambi");
-    ok(!wasSkipped(diffOnly) && !wasSkipped(none) && !wasSkipped(half),
-       "un driver senza l'API completa non salta mai");
-    setSkipUnchanged(diffOnly, true);
-    setSkipUnchanged(none, true);
-    setSkipUnchanged(half, true);
-    ok(true, "setSkipUnchanged() su un driver senza l'API non fa niente");
+    using GxEPDFrame::FrameResult;
+    FakeDisplay<PanelSkip> skip;
+    setSkipUnchanged(skip.epd2, true);
+    ok(skip.epd2.skipOn, "con l'API setSkipUnchanged() arriva al driver");
+    skip.epd2.skipped = true;
+    ok(renderFake(skip, true).result == FrameResult::Skipped, "render() legge l'esito del salto dal driver");
+    FakeDisplay<PanelSkipAndDiff> both;
+    setSkipUnchanged(both.epd2, true);
+    both.epd2.skipped = true;
+    both.epd2.fired = false;
+    const GxEPDFrame::Outcome out = renderFake(both, true);
+    ok(both.epd2.skipOn && out.armed && out.result == FrameResult::Skipped && both.passes == 1,
+       "con differenziale e salto un frame armato invariato si salta, senza passata piena");
+    FakeDisplay<PanelWith> diffOnly;
+    FakeDisplay<PanelWithout> none;
+    FakeDisplay<PanelHalfSkip> half;
+    setSkipUnchanged(diffOnly.epd2, true);
+    setSkipUnchanged(none.epd2, true);
+    setSkipUnchanged(half.epd2, true);
+    ok(renderFake(diffOnly, false).result == FrameResult::Full && renderFake(none, true).result == FrameResult::Full &&
+           renderFake(half, true).result == FrameResult::Full,
+       "un driver senza l'API completa non salta mai, e setSkipUnchanged() non fa niente");
   }
 
   if (falliti) { std::printf("\n%d test FALLITI\n", falliti); return 1; }

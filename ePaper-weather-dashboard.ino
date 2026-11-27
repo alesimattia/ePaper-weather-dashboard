@@ -355,7 +355,7 @@ static bool buildCinemaUrl(char *url, size_t size)
 }
 
 /**
- * Compone l'URL del percorso con partenza, arrivo e carburante di Routefinder e
+ * Compone l'URL del percorso con partenza e arrivo di Routefinder e
  * la misura del riquadro. Serve al download: il percorso non ha preparazione.
  * @return false se l'URL non entra in `size`.
  */

@@ -379,13 +379,10 @@ namespace Maintenance
         "<form method=POST action=/route>"
         "<label>Partenza (lat, lng) <input name=origin value=\"%s\" size=26 required></label><br>"
         "<label>Arrivo (lat, lng) <input name=destination value=\"%s\" size=26 required></label>"
-        " (dal tasto destro su Google Maps)<br>"
-        "<label>Carburante <select name=fuel>";
-
-    static const char ROUTE_OPZIONE_FMT[] PROGMEM = "<option value=%u%s>%s</option>";
+        " (dal tasto destro su Google Maps)";
 
     static const char ROUTE_SORGENTE_TESTA_FMT[] PROGMEM =
-        "</select></label><fieldset><legend>Riquadro in alto a sinistra: %s</legend>";
+        "<fieldset><legend>Riquadro in alto a sinistra: %s</legend>";
 
     static const char ROUTE_RADIO_FMT[] PROGMEM =
         "<label><input type=radio name=source value=%u%s> %s</label><br>";
@@ -412,7 +409,7 @@ namespace Maintenance
     }
 
     /**
-     * Pagina del riquadro: partenza, arrivo e carburante del percorso, sorgente
+     * Pagina del riquadro: partenza e arrivo del percorso, sorgente
      * forzata per SOURCE_OVERRIDE_MS e fasce di percorso e cinema. Nella pagina
      * finiscono solo stringhe del firmware e numeri riformattati, mai testo
      * arrivato dal client.
@@ -429,12 +426,6 @@ namespace Maintenance
       char riga[480];
       int n = snprintf_P(riga, sizeof riga, ROUTE_TESTA_FMT, origine, arrivo);
       server.sendContent(riga, (size_t)n);
-      for (uint8_t i = 0; i < Routefinder::FUEL_COUNT; ++i)
-      {
-        n = snprintf_P(riga, sizeof riga, ROUTE_OPZIONE_FMT, (unsigned)i,
-                       (uint8_t)s.fuel == i ? " selected" : "", Routefinder::fuelLabel((Routefinder::Fuel)i));
-        server.sendContent(riga, (size_t)n);
-      }
       char sorgente[48];
       describeSource(sorgente, sizeof sorgente);
       n = snprintf_P(riga, sizeof riga, ROUTE_SORGENTE_TESTA_FMT, sorgente);
@@ -508,11 +499,6 @@ namespace Maintenance
                                          candidato.destinationLatE6, candidato.destinationLngE6))
         segnala("Arrivo");
       uint16_t v = 0;
-      if (server.hasArg("fuel"))
-      {
-        if (leggiNumero(server.arg("fuel"), v) && v < Routefinder::FUEL_COUNT) candidato.fuel = (Routefinder::Fuel)v;
-        else segnala("Carburante");
-      }
       Routefinder::Source sorgenteRichiesta = Routefinder::activeSource();
       if (server.hasArg("source"))
       {
@@ -536,7 +522,7 @@ namespace Maintenance
       {
         salvato = Routefinder::save();
         // Solo una scelta diversa riavvia la forzatura: risalvare il form per
-        // cambiare il carburante non allunga quella in corso.
+        // cambiare un altro campo non allunga quella in corso.
         if (sorgenteRichiesta != Routefinder::activeSource()) Routefinder::setOverride(sorgenteRichiesta);
         const Routefinder::Settings& s = Routefinder::get();
         char origine[40], arrivo[40], sorgente[48];
@@ -544,9 +530,9 @@ namespace Maintenance
         Routefinder::formatCoordinates(arrivo, sizeof arrivo, s.destinationLatE6, s.destinationLngE6);
         describeSource(sorgente, sizeof sorgente);
         const int n = snprintf(riga, sizeof riga,
-                               "<li>Partenza %s<li>Arrivo %s<li>%s<li>Riquadro: %s"
+                               "<li>Partenza %s<li>Arrivo %s<li>Riquadro: %s"
                                "<li>Fascia percorso %02u:%02u-%02u:%02u<li>Fascia cinema %02u:%02u-%02u:%02u",
-                               origine, arrivo, Routefinder::fuelLabel(s.fuel), sorgente,
+                               origine, arrivo, sorgente,
                                (unsigned)(s.windowStartMin / 60), (unsigned)(s.windowStartMin % 60),
                                (unsigned)(s.windowEndMin / 60), (unsigned)(s.windowEndMin % 60),
                                (unsigned)(s.cinemaStartMin / 60), (unsigned)(s.cinemaStartMin % 60),

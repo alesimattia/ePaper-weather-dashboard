@@ -88,15 +88,6 @@ namespace Routefinder
     Wallpaper = 3    // wallpaper della partizione in flash
   };
 
-  /** Carburante passato alla Routes API. I valori sono quelli in NVS. */
-  enum class Fuel : uint8_t
-  {
-    Gasoline = 0,
-    Diesel   = 1,
-    Hybrid   = 2,
-    Electric = 3
-  };
-
   /** Immagine che il riquadro deve disegnare adesso, o contenuto del buffer
    *  in RAM, dove Wallpaper vuol dire buffer vuoto. */
   enum class ShownImage : uint8_t { Route, Cinema, Wallpaper };
@@ -109,7 +100,6 @@ namespace Routefinder
     int32_t  originLngE6;
     int32_t  destinationLatE6;
     int32_t  destinationLngE6;
-    Fuel     fuel;
     uint16_t windowStartMin;
     uint16_t windowEndMin;
     uint16_t cinemaStartMin;
@@ -129,7 +119,6 @@ namespace Routefinder
   inline constexpr Settings DEFAULTS = {
       toE6(ROUTEFINDER_ORIGIN_LAT),      toE6(ROUTEFINDER_ORIGIN_LON),
       toE6(ROUTEFINDER_DESTINATION_LAT), toE6(ROUTEFINDER_DESTINATION_LON),
-      Fuel::Gasoline,
       (uint16_t)ROUTE_WINDOW_START_MIN, (uint16_t)ROUTE_WINDOW_END_MIN,
       (uint16_t)CINEMA_WINDOW_START_MIN, (uint16_t)CINEMA_WINDOW_END_MIN,
   };
@@ -146,23 +135,17 @@ namespace Routefinder
     inline Source   overrideSource  = Source::Auto;
     inline uint32_t overrideStartMs = 0;
 
-    /** Valore di `fuel` nella querystring del servizio, per enum. */
-    inline constexpr const char* FUEL_PARAMS[] = {"gasoline", "diesel", "hybrid", "electric"};
-    /** Etichette italiane della pagina /route, nello stesso ordine. */
-    inline constexpr const char* FUEL_LABELS[] = {"Benzina", "Diesel", "Ibrido", "Elettrico"};
+    /** Etichette italiane delle sorgenti nella pagina /route, nell'ordine di Source. */
     inline constexpr const char* SOURCE_LABELS[] = {"Automatica", "Cinema", "Percorso", "Wallpaper"};
 
     inline bool latitudeInRange(int32_t e6)  { return e6 >= -90000000 && e6 <= 90000000; }
     inline bool longitudeInRange(int32_t e6) { return e6 >= -180000000 && e6 <= 180000000; }
   }
 
-  inline constexpr uint8_t FUEL_COUNT   = 4;
   inline constexpr uint8_t SOURCE_COUNT = 4;
 
   inline const Settings& get() { return detail::settings; }
 
-  inline const char* fuelParam(Fuel f)   { return detail::FUEL_PARAMS[(uint8_t)f < FUEL_COUNT ? (uint8_t)f : 0]; }
-  inline const char* fuelLabel(Fuel f)   { return detail::FUEL_LABELS[(uint8_t)f < FUEL_COUNT ? (uint8_t)f : 0]; }
   inline const char* sourceLabel(Source s) { return detail::SOURCE_LABELS[(uint8_t)s < SOURCE_COUNT ? (uint8_t)s : 0]; }
 
   /**
@@ -180,14 +163,13 @@ namespace Routefinder
     return nullptr;
   }
 
-  /** Motivo del rifiuto di coordinate e carburante di `s`, o nullptr se sono validi. */
+  /** Motivo del rifiuto delle coordinate di `s`, o nullptr se sono valide. */
   inline const char* invalidPlaceReason(const Settings& s)
   {
     if (!detail::latitudeInRange(s.originLatE6) || !detail::longitudeInRange(s.originLngE6))
       return "partenza fuori range";
     if (!detail::latitudeInRange(s.destinationLatE6) || !detail::longitudeInRange(s.destinationLngE6))
       return "arrivo fuori range";
-    if ((uint8_t)s.fuel >= FUEL_COUNT) return "carburante sconosciuto";
     return nullptr;
   }
 
@@ -230,9 +212,6 @@ namespace Routefinder
     auto putInt = [&](const char* k, int32_t v) {
       if (prefs.getInt(k, INT32_MIN) != v && prefs.putInt(k, v) == 0) written = false;
     };
-    auto putByte = [&](const char* k, uint8_t v) {
-      if (prefs.getUChar(k, 0xFF) != v && prefs.putUChar(k, v) == 0) written = false;
-    };
     auto putShort = [&](const char* k, uint16_t v) {
       if (prefs.getUShort(k, 0xFFFF) != v && prefs.putUShort(k, v) == 0) written = false;
     };
@@ -240,7 +219,6 @@ namespace Routefinder
     putInt("orig_lng", s.originLngE6);
     putInt("dest_lat", s.destinationLatE6);
     putInt("dest_lng", s.destinationLngE6);
-    putByte("fuel", (uint8_t)s.fuel);
     putShort("win_start", s.windowStartMin);
     putShort("win_end", s.windowEndMin);
     putShort("cine_start", s.cinemaStartMin);
@@ -256,7 +234,9 @@ namespace Routefinder
    * default di Env.h. Un gruppo non valido torna ai default da solo: le fasce
    * (anche solo perchè la fascia WiFi è stata ristretta da /config/reset) senza
    * toccare le coordinate, e viceversa, così una fascia da correggere non fa
-   * perdere la destinazione salvata.
+   * perdere la destinazione salvata. Una chiave `fuel` nel namespace si ignora:
+   * cambiare SCHEMA per toglierla riporterebbe ai default partenza, arrivo e
+   * fasce salvati.
    */
   inline void begin()
   {
@@ -274,7 +254,6 @@ namespace Routefinder
       settings.originLngE6      = prefs.getInt("orig_lng", DEFAULTS.originLngE6);
       settings.destinationLatE6 = prefs.getInt("dest_lat", DEFAULTS.destinationLatE6);
       settings.destinationLngE6 = prefs.getInt("dest_lng", DEFAULTS.destinationLngE6);
-      settings.fuel             = (Fuel)prefs.getUChar("fuel", (uint8_t)DEFAULTS.fuel);
       settings.windowStartMin   = prefs.getUShort("win_start", DEFAULTS.windowStartMin);
       settings.windowEndMin     = prefs.getUShort("win_end", DEFAULTS.windowEndMin);
       settings.cinemaStartMin   = prefs.getUShort("cine_start", DEFAULTS.cinemaStartMin);
@@ -285,12 +264,11 @@ namespace Routefinder
     const char* placeReason = invalidPlaceReason(settings);
     if (placeReason)
     {
-      LOG("route", "coordinate o carburante non validi (%s): torno ai predefiniti", placeReason);
+      LOG("route", "coordinate non valide (%s): torno ai predefiniti", placeReason);
       settings.originLatE6      = DEFAULTS.originLatE6;
       settings.originLngE6      = DEFAULTS.originLngE6;
       settings.destinationLatE6 = DEFAULTS.destinationLatE6;
       settings.destinationLngE6 = DEFAULTS.destinationLngE6;
-      settings.fuel             = DEFAULTS.fuel;
     }
     const char* windowsReason = invalidWindowsReason(settings, Timings::get());
     if (windowsReason)
@@ -406,7 +384,9 @@ namespace Routefinder
 
   /**
    * URL dell'immagine per il pannello: misura e piani li decide il chiamante
-   * dal layout, così non possono divergere dal buffer che li riceve.
+   * dal layout, così non possono divergere dal buffer che li riceve. Chiede il
+   * solo percorso più veloce: la riga e la linea dell'alternativa eco ruberebbero
+   * al tracciato lo spazio che gli dà lo zoom più alto.
    * @return lunghezza come snprintf; un valore >= size indica troncamento.
    */
   inline int buildUrl(char* buf, size_t size, const char* origin, uint16_t width, uint16_t height,
@@ -416,9 +396,9 @@ namespace Routefinder
     char from[40], to[40];
     formatCoordinates(from, sizeof from, s.originLatE6, s.originLngE6);
     formatCoordinates(to, sizeof to, s.destinationLatE6, s.destinationLngE6);
-    return snprintf(buf, size, "%s/route?origin=%s&destination=%s&fuel=%s&width=%u&height=%u"
+    return snprintf(buf, size, "%s/route?origin=%s&destination=%s&eco=false&width=%u&height=%u"
                     "&format=arduino&colors=%s&dither=floyd",
-                    origin, from, to, fuelParam(s.fuel), (unsigned)width, (unsigned)height, colors);
+                    origin, from, to, (unsigned)width, (unsigned)height, colors);
   }
 
   /** Minuti dalla mezzanotte locale, o -1 senza orologio valido. */

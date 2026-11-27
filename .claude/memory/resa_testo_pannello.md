@@ -1,6 +1,6 @@
 ---
 name: Resa del testo sul pannello
-description: I font GFX sono a 7 bit e scartano in silenzio ogni byte fuori da 0x20-0x7E; conversione UTF-8 alla ricezione con Graphics::foldToFontCharset (vocale più apostrofo, byte di controllo in spazio); titolo vuoto degli eventi come "(senza titolo)"; etichette meteo brevi dal codice condizione, passaggio a FONT_SMALL e troncamento che rimisura il ".." 
+description: I font GFX sono a 7 bit e scartano in silenzio ogni byte fuori da 0x20-0x7E; conversione UTF-8 alla ricezione con Graphics::foldToFontCharset (vocale più apostrofo, byte di controllo in spazio); titolo vuoto degli eventi come "(senza titolo)"; etichette meteo brevi dal codice condizione, sempre su due righe nel blocco corrente se hanno più parole, passaggio a FONT_SMALL e troncamento che rimisura il ".." 
 type: project
 ---
 
@@ -30,10 +30,17 @@ più lungo dell'originale e i buffer fissi restano validi. Per i titoli degli ev
 vuoto o ridotto a soli spazi dopo la conversione diventa "(senza titolo)", altrimenti la
 riga mostrerebbe solo l'orario (vedi [[calendar_module]]).
 
-**Riga sotto la temperatura dei blocchi meteo.** `renderBlock()` ha
-`larghezza del blocco - 2 × WX_DESC_SIDE_PAD` utili: 152 px nel blocco corrente,
-138 nelle previsioni. Oltre, il testo passa a `FONT_SMALL` e, se ancora non entra,
-viene troncato. Le etichette di `icons_weather.h` e la riga "pop% X.Xmm" sono
+**Riga sotto la temperatura dei blocchi meteo.** `renderBlock()` riceve l'asse del
+blocco e l'area della riga: nelle previsioni `larghezza del blocco - 2 ×
+WX_DESC_SIDE_PAD` (138 px), nel corrente la colonna larga quanto "Temporale" a
+`BOX_PAD` dal bordo del riquadro (`CURRENT_DESC_W`). Nel corrente una riga di più
+parole va sempre su due righe con `splitInTwoLines()` (mai dentro una parola; fra i
+punti validi quello con la riga più lunga più corta), anche quando entrerebbe su una,
+per scelta dell'utente; se una delle due non entra passa a `FONT_SMALL` e solo alla
+fine tronca. Le parole singole e le righe delle previsioni passano a `FONT_SMALL` se
+non entrano e poi troncano. Ogni riga si disegna con `Graphics::drawCentered()`
+sull'asse, perchè in ogni blocco l'area della riga è centrata sull'asse. Le
+etichette di `icons_weather.h` e la riga "pop% X.Xmm" sono
 scelte e misurate perchè entrino sempre in 12pt o in 9pt: il testo `lang=it` di
 OpenWeather non si usa più perchè sforava anche in 9pt ("temporale con pioggia
 leggera" 241 px). Una riga "etichetta + mm" invece sforerebbe, per questo il

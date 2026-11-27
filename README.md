@@ -298,7 +298,7 @@ Adafruit_GFX (`<Fonts/*.h>`).
 | `FONT_SMALL`           | `FreeSans9pt7b`      | 9 pt        | Intestazione e numeri della griglia del mese; orario e data degli eventi; unità e pedice del riquadro Interno; ore e min/max del mini-grafico; cifre della barra temp-range; badge `TUYA ERR`; righe meteo e IAQ che non entrano in 12 pt |
 | `FONT_BODY`            | `FreeSans12pt7b`     | 12 pt       | Titolo degli eventi; orario, etichetta e riga precipitazioni dei blocchi meteo; orario del meteo corrente accanto al titolo Meteo; IAQ e pressione del riquadro Interno; alba e tramonto |
 | `FONT_LARGE`           | `FreeSans18pt7b`     | 18 pt       | Temperatura e umidità del riquadro Interno |
-| `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo, in rosso |
+| `FONT_LARGE_BOLD`      | `FreeSansBold18pt7b` | 18 pt bold  | Temperatura percepita dei blocchi meteo, in rosso nelle previsioni e in nero nel corrente |
 | `FONT_TITLE`           | `FreeSansBold12pt7b` | 12 pt bold  | Titoli dei riquadri sul bordo superiore, compreso il mese |
 
 Note pratiche:
@@ -551,15 +551,21 @@ Fetch OpenWeather One Call 3.0 e rendering del banner meteo.
 - Il WiFi non è gestito qui: `runFetch()` presuppone STA già connessa
   (`wifiOn()`/`wifiOff()` sono dello scheduler).
 - **Banner**: 3 riquadri fieldset alti 196 px in fondo allo schermo (raggio
-  12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 180w
-  (T/RH/pressione e IAQ in quarta riga solo col BME680, badge `TUYA ERR` sul bordo inferiore), **Meteo** 300w
-  (orario del meteo corrente accanto al titolo; a sinistra il blocco corrente
-  con icona 88w × 88h, temperatura percepita in rosso ed etichetta; a destra la
-  colonna sole con in cima il mini-grafico della temperatura percepita da 3 ore
-  fa a ~9 ore avanti, tutto in nero, passato pieno e previsione tratteggiata,
-  sotto la **barra temp-range** morn↔eve in nero con indicatore triangolare
-  sulla percepita corrente, e in fondo alba e tramonto), **Previsioni** 440w
-  (3 blocchi da 146w). Utility condivise in [`Graphics.h`](Graphics.h).
+  12 px, titolo in `FONT_TITLE` sul bordo superiore): **Interno** 170w, la
+  misura minima per la riga IAQ del BME680 in 9pt
+  (T/RH/pressione e IAQ in quarta riga solo col BME680, badge `TUYA ERR` sul bordo inferiore), **Meteo** 310w
+  (orario del meteo corrente accanto al titolo; a sinistra, accanto al grafico,
+  il blocco corrente con icona 88w × 88h e temperatura percepita in nero,
+  entrambe un passo di riga più in alto che nelle previsioni, ed etichetta che
+  con più di una parola va sempre su due righe, senza spezzare le parole, in
+  una colonna larga quanto "Temporale"; a destra la colonna sole con in cima il
+  mini-grafico della temperatura percepita da 3 ore fa a ~9 ore avanti, tutto in
+  nero, passato pieno e previsione tratteggiata, con l'asse delle temperature
+  sui gradi interi che contengono i dati, sotto la **barra temp-range**
+  morn↔eve in nero, larga quanto il grafico con le sue etichette, con
+  indicatore triangolare sulla percepita corrente, e in fondo alba e tramonto
+  sulla stessa riga, larga quanto grafico e barra), **Previsioni** 440w (3 blocchi da 146w, con
+  la temperatura in rosso). Utility condivise in [`Graphics.h`](Graphics.h).
 - **Gate del frame**: è dello scheduler, uguale per i due proprietari della
   radio. Il frame del ciclo parte solo a passo di rete concluso, cioè quando ogni
   task dovuto ha avuto il suo esito; nella finestra di manutenzione il passo
@@ -893,7 +899,7 @@ l'ultima richiesta.
 | `/config` | GET | form dei tempi, con minimo e predefinito accanto a ogni campo |
 | `/config` | POST | valida i campi ricevuti e li salva su NVS |
 | `/config/reset` | POST | cancella gli override e torna ai valori compilati |
-| `/route` | GET | form del riquadro: partenza, arrivo e carburante del percorso, sorgente forzata con i minuti residui, fasce di percorso e cinema |
+| `/route` | GET | form del riquadro: partenza e arrivo del percorso, sorgente forzata con i minuti residui, fasce di percorso e cinema |
 | `/route` | POST | valida e salva su NVS, in blocco come `/config`; la sorgente non si salva, avvia o annulla una forzatura |
 | `/wallpaper` | GET | stato del wallpaper (assente, o presente con la CRC) e form di caricamento, con la misura attesa |
 | `/wallpaper` | POST | upload multipart del file `.bin` nella partizione `wallpaper` |
@@ -968,10 +974,12 @@ Nella fascia percorso il riquadro mostra il **percorso del mattino**, nella fasc
 la programmazione cinema (vedi [Cinema e wallpaper](#cinema-e-wallpaper)), altrove, o
 senza orologio, il wallpaper. L'immagine del percorso la calcola il servizio [`routefinder/`](routefinder/) (submodule, FastAPI su
 render.com come la webapp): percorso più veloce col traffico dalla Google Routes API,
-alternativa a minor consumo per il carburante scelto, mappa Google con il tracciato in
-rosso e un riquadro in alto a destra con tempo stimato, ritardo dovuto al traffico,
-distanza e ora del calcolo, negli stessi font del pannello. Il firmware la riceve nel
-formato di `/cinema/arduino`, alla misura `CINEMA_W × CINEMA_H`.
+mappa Google con il tracciato in rosso a zoom frazionario, che riempie lo spazio libero,
+e un riquadro basso in alto a destra con tempo stimato e ora del calcolo, ritardo dovuto
+al traffico e distanza, negli stessi font del pannello. Il firmware chiede sempre il solo
+percorso più veloce (`eco=false` fisso nell'URL): l'alternativa a minor consumo, che il
+servizio aggiunge per default, ruberebbe spazio al tracciato. La riceve nel formato di
+`/cinema/arduino`, alla misura `CINEMA_W × CINEMA_H`.
 
 Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespace
 `routefinder`), con i default da `Env.h`:
@@ -979,7 +987,6 @@ Impostazioni da `/route` della finestra di manutenzione, salvate in NVS (namespa
 | Campo | Default | Note |
 |---|---|---|
 | Partenza, arrivo | `ROUTEFINDER_ORIGIN_*` (o `LAT`/`LON`), `ROUTEFINDER_DESTINATION_*` | "lat, lng" come li copia Google Maps; arrivo a 0,0 = percorso sospeso |
-| Carburante | Benzina | Benzina, Diesel, Ibrido, Elettrico |
 | Fascia percorso | 07:00-09:00 | `win_start` / `win_end`, ai minuti, fine esclusa |
 | Fascia cinema | 18:00-21:00 | `cine_start` / `cine_end`, stessa convenzione |
 
@@ -995,7 +1002,7 @@ forzare a Cinema, Percorso o Wallpaper per `SOURCE_OVERRIDE_MS` (1 h), misurata 
 `millis()`, che avanza anche in light sleep e non chiede l'ora; poi torna Automatica, e
 Automatica annulla subito una forzatura. La forzatura sta solo in RAM, quindi un
 riavvio torna ad Automatica, e la sua ora riparte da capo solo se si sceglie una
-sorgente diversa da quella in vigore: risalvare il form per cambiare il carburante non
+sorgente diversa da quella in vigore: risalvare il form per cambiare un altro campo non
 la allunga. La sorgente in vigore decide anche quale task di rete è attivo (`Routefinder::scheduledImage()`),
 quindi **routefinder si contatta solo nella fascia percorso o durante una forzatura a
 Percorso**, e il cinema solo nella fascia cinema o durante una forzatura a Cinema.
@@ -1150,8 +1157,8 @@ affiancate, 16 px fra zone impilate:
 |-------------------|---------------------------|---------------------------------------------------------|
 | Riquadro          | `x=10..620, y=10..450`    | Percorso, cinema o wallpaper (610w × 440h BWR)          |
 | Scheda calendario | `x=630..950, y=14..450`   | Fieldset con il mese sul bordo, griglia 7×6, filetto a y=179, poi 6 eventi da 43 px (Outlook + Google merged) |
-| Banner Interno    | `x=10..190,  y=466..662`  | 180w × 196h, righe T/RH/P più IAQ in quarta col BME680, badge `TUYA ERR` sul bordo inferiore |
-| Banner Meteo      | `x=200..500, y=466..662`  | 300w × 196h, blocco corrente 160w + colonna sole 140w, orario del corrente accanto al titolo |
+| Banner Interno    | `x=10..180,  y=466..662`  | 170w × 196h, righe T/RH/P più IAQ in quarta col BME680, badge `TUYA ERR` sul bordo inferiore |
+| Banner Meteo      | `x=190..500, y=466..662`  | 310w × 196h, colonna del corrente 110w da x=202 con asse a x=257, grafico (104h), barra e riga alba/tramonto 174w a x=320..494, orario del corrente accanto al titolo |
 | Banner Previsioni | `x=510..950, y=466..662`  | 440w × 196h, 3 blocchi da 146w                          |
 
 Sul pannello SOLUM 12.2" (960w × 768h) X e larghezze sono identici. Il

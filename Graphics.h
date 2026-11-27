@@ -150,6 +150,27 @@ namespace Graphics
   }
 
   /**
+   * X del cursore che drawLeftAligned() restituirebbe partendo da leftX,
+   * misurata senza disegnare: supera la fine dell'inchiostro del bearing
+   * destro dell'ultimo carattere. Il font è quello corrente, passato perchè
+   * Adafruit_GFX non lo espone. Usato da Weather.h (renderIndoorBox).
+   */
+  inline int16_t cursorEndX(const char* txt, int16_t leftX, const GFXfont* font)
+  {
+    int16_t  x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+    int16_t endX = leftX - x1;
+    for (const char* p = txt; *p != '\0'; ++p)
+    {
+      const uint8_t c = (uint8_t)*p;
+      if (c >= font->first && c <= font->last)
+        endX += font->glyph[c - font->first].xAdvance;
+    }
+    return endX;
+  }
+
+  /**
    * Tronca sul posto la stringa finchè la sua resa con ".." in coda rientra
    * in maxW. Il candidato si misura con i puntini già scritti, perchè ".."
    * può essere più largo dei caratteri che sostituisce; gli spazi rimasti in

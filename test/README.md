@@ -132,10 +132,11 @@ sincronizzato; cambio dell'ora legale.
 
 **`test_routefinder`**: parser delle coordinate "lat, lng" (segni, spazi,
 decimali oltre il sesto, fuori range, forme malformate); URL con coordinate
-negative; round-trip su NVS di arrivo, carburante e fascia cinema; fasce vuote,
+negative e il solo percorso più veloce (`eco=false`); round-trip su NVS di arrivo
+e fascia cinema; fasce vuote,
 rovesciate, fuori dalla fascia WiFi o sovrapposte respinte, e ritorno ai default
-al boot quando la fascia WiFi non contiene più le fasce, con la destinazione e il
-carburante salvati che si conservano, e il contrario, coordinate fuori range che
+al boot quando la fascia WiFi non contiene più le fasce, con la destinazione
+salvata che si conserva, e il contrario, coordinate fuori range che
 tornano ai default senza toccare le fasce; `save()` che segnala una scrittura non
 riuscita; immagine programmata
 nelle fasce ai minuti con fine esclusa e senza orologio; immagine mostrata
@@ -204,7 +205,10 @@ poi l'isteresi del freddo, che solo `TooCold` arma e solo `Partial` disarma, il
 motivo finale del frame dall'esito di `GxEPDFrame::render()` (`finalReason()`) e
 l'uscita anticipata dalla passata armata: mask con la sola prima pagina
 rifiutata, frame pieno successivo che riscrive tutte le pagine e ricostruisce il
-riferimento.
+riferimento. Gli agganci al driver passano da `GxEPDFrame::render()` su un display
+finto che conta passate e pagine: partial in una passata, rifiuto con la mask del
+driver e rifacimento in pieno, driver che non arma, pannello senza l'API o che la
+nega, salto del frame invariato con e senza differenziale.
 
 **`test_showimage`**: `GxEPDImage::showImage()`
 ([`GxEPDImage.h`](../GxEPD2_SOLUM_ESL/src/GxEPDImage.h)) come wrapper di
